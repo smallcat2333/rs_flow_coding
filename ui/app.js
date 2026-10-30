@@ -142,6 +142,14 @@ function curEntry() {
   return null;
 }
 
+/** 锁状态变化后同步左侧树中该图的锁标签（锁释放不触发文件变化通知，需主动刷新）。 */
+async function syncTreeLock(path) {
+  if (!path) return;
+  const lock = await invoke('lock_status', { path });
+  for (const a of st.apps) for (const f of a.files) if (f.path === path) f.lock = lock;
+  renderTree();
+}
+
 /** 顶栏：当前 APP、图名、状态分布、锁。 */
 function renderCurrentBar() {
   const e = curEntry();
@@ -257,14 +265,21 @@ async function releaseNow() {
   try { await invoke('release_lock', { path: st.cur }); } catch (e) { saveState('释放锁失败：' + e, true); }
   st.holding = false;
   renderCurrentBar();
+  await syncTreeLock(st.cur);
 }
 
 /** 查询当前图锁；被 Agent 持有则进入只读。 */
 async function checkLock() {
   if (!st.cur) return;
   const l = await invoke('lock_status', { path: st.cur });
-  if (l && l.owner === 'agent') await enterReadOnly(l);
-  else if (st.readOnly) await leaveReadOnly();
+  const e = curEntry();
+  if (e && (e.file.lock?.owner || '') !== (l?.owner || '')) {
+    e.file.lock = l;
+    renderTree();
+  }
+  if (l && l.owner === 'agent') {
+    if (!st.readOnly) await enterReadOnly(l);
+  } else if (st.readOnly) await leaveReadOnly();
 }
 
 /** 进入只读：遮罩挡住编辑器交互（轮询由常驻锁巡检负责）。 */

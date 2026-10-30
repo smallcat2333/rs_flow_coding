@@ -39,7 +39,7 @@
     async summary() {
       const list = Object.keys(files).map((p) => ({
         path: p, name: p.split('/').pop(), counts: counts(files[p]),
-        lock: agentLock ? { owner: 'agent', pid: 1, since: Date.now() / 1000 } : null, error: null,
+        lock: agentLock ? { owner: 'agent', pid: 1, since: Date.now() / 1000 } : userLock ? { owner: 'user', pid: 2, since: 0 } : null, error: null,
       }));
       const total = {};
       list.forEach((f) => Object.entries(f.counts).forEach(([k, v]) => total[k] = (total[k] || 0) + v));
