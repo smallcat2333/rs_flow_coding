@@ -1,0 +1,7 @@
+/src-tauri/target/
+/src-tauri/gen/
+/ui/drawio/
+/.cache/
+__pycache__/
+*.py[cod]
+.idea/

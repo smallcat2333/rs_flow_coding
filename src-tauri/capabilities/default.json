@@ -1,0 +1,8 @@
+{
+  "identifier": "main-capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Flow Coding</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="side">
+    <header id="totals">
+      <div class="total review" title="黄 起草待审 + 灰虚线 计划删除"><b id="t-user">0</b><span>待你审</span></div>
+      <div class="total agent" title="红 有问题 + 蓝 想法 + 绿 已确认 + 绿虚线 确认删除"><b id="t-agent">0</b><span>待 Agent</span></div>
+    </header>
+    <div id="side-tools">
+      <button id="btn-refresh" title="重新读取已知目录并统计">刷新</button>
+      <button id="btn-rescan" title="遍历项目根，重新发现 docs/flow 目录">全量扫描</button>
+      <button id="btn-roots" title="配置项目根目录">项目根</button>
+    </div>
+    <div id="legend"></div>
+    <div id="tree"></div>
+    <div id="side-msg"></div>
+  </aside>
+
+  <main id="main">
+    <div id="bar">
+      <span id="cur-app"></span>
+      <span id="cur-name">未打开流程图</span>
+      <span id="cur-counts"></span>
+      <span id="lock-badge"></span>
+      <span id="save-state"></span>
+      <span class="spacer"></span>
+      <button id="btn-history" disabled>历史对比</button>
+    </div>
+    <div id="editor-wrap">
+      <iframe id="editor" title="draw.io"></iframe>
+      <div id="readonly-mask" hidden><div>Agent 正在编辑，暂时只读<br><small id="mask-detail"></small></div></div>
+      <div id="empty" class="empty">从左侧选择一张流程图</div>
+    </div>
+  </main>
+
+  <section id="history" hidden>
+    <header>
+      <b>历史快照</b>
+      <span class="hint">勾选两个版本对比（旧 → 新）</span>
+      <span class="spacer"></span>
+      <button id="btn-hist-view" disabled>查看所选旧版</button>
+      <button id="btn-hist-restore" disabled>回滚到所选旧版</button>
+      <button id="btn-hist-close">关闭</button>
+    </header>
+    <div id="hist-body">
+      <table id="hist-table"><thead><tr><th></th><th>时间</th><th>来源</th><th>状态分布</th></tr></thead><tbody></tbody></table>
+      <div id="diff"><div class="empty">选择两个快照查看差异</div></div>
+    </div>
+  </section>
+
+  <div id="viewer" hidden>
+    <header><b id="viewer-title">旧版查看（只读）</b><span class="spacer"></span><button id="btn-viewer-close">关闭</button></header>
+    <iframe id="viewer-frame" title="旧版"></iframe>
+  </div>
+
+  <div id="roots-dlg" hidden>
+    <div class="dlg">
+      <b>项目根目录（每行一个）</b>
+      <textarea id="roots-text" rows="6" spellcheck="false"></textarea>
+      <div class="dlg-btns"><button id="roots-cancel">取消</button><button id="roots-ok">保存并扫描</button></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

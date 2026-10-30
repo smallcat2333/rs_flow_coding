@@ -1,0 +1,100 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font: 13px/1.4 "Microsoft YaHei UI", "Segoe UI", sans-serif; color: #24292f; }
+body { display: flex; overflow: hidden; background: #f6f8fa; }
+button { font: inherit; padding: 3px 10px; border: 1px solid #d0d7de; border-radius: 5px; background: #fff; cursor: pointer; }
+button:hover:not(:disabled) { background: #f3f4f6; }
+button:disabled { opacity: .5; cursor: default; }
+.spacer { flex: 1; }
+.empty { color: #8c959f; padding: 24px; text-align: center; }
+
+/* 侧栏 */
+#side { width: 330px; min-width: 260px; display: flex; flex-direction: column; border-right: 1px solid #d0d7de; background: #fff; }
+#totals { display: flex; gap: 8px; padding: 10px; }
+.total { flex: 1; border-radius: 8px; padding: 8px 10px; display: flex; align-items: baseline; gap: 8px; }
+.total b { font-size: 22px; }
+.total.review { background: #fff2cc; }
+.total.agent { background: #dae8fc; }
+#side-tools { display: flex; gap: 6px; padding: 0 10px 8px; }
+#legend { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 10px 8px; color: #57606a; font-size: 12px; }
+#legend span { display: inline-flex; align-items: center; gap: 4px; }
+#tree { flex: 1; overflow: auto; padding-bottom: 12px; }
+#side-msg { padding: 6px 10px; color: #cf222e; font-size: 12px; white-space: pre-wrap; }
+#side-msg:empty { display: none; }
+.group { padding: 8px 10px 2px; color: #8c959f; font-size: 12px; }
+.app { margin: 2px 6px; border-radius: 6px; }
+.app > .app-head { display: flex; align-items: center; gap: 6px; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
+.app > .app-head:hover { background: #f3f4f6; }
+.app-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-new { padding: 0 6px; font-size: 12px; }
+.files { padding-left: 14px; }
+.app.collapsed .files { display: none; }
+.file { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.file:hover { background: #f3f4f6; }
+.file.active { background: #ddf4ff; }
+.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file .err { color: #cf222e; }
+.lock-dot { font-size: 11px; padding: 0 4px; border-radius: 3px; background: #fff8c5; color: #9a6700; }
+
+/* 状态徽标 */
+.badges { display: inline-flex; gap: 3px; }
+.badge { min-width: 18px; padding: 0 4px; border-radius: 4px; font-size: 11px; text-align: center; border: 1px solid rgba(0,0,0,.12); }
+.sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.25); display: inline-block; }
+.s-none { background: #fff; }
+.s-review { background: #fff2cc; }
+.s-plan_delete { background: #f5f5f5; border-style: dashed; border-color: #666; }
+.s-issue { background: #f8cecc; }
+.s-idea { background: #dae8fc; }
+.s-confirmed { background: #d5e8d4; }
+.s-confirm_delete { background: #d5e8d4; border-style: dashed; border-color: #666; }
+.s-unknown { background: repeating-linear-gradient(45deg, #eee, #eee 3px, #ccc 3px, #ccc 6px); }
+
+/* 主区 */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid #d0d7de; background: #fff; min-height: 38px; }
+#cur-app { color: #8c959f; }
+#cur-name { font-weight: 600; }
+#lock-badge:empty, #save-state:empty { display: none; }
+#lock-badge { padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+#lock-badge.user { background: #ddf4ff; color: #0969da; }
+#lock-badge.agent { background: #fff8c5; color: #9a6700; }
+#save-state { color: #8c959f; font-size: 12px; }
+#save-state.error { color: #cf222e; }
+#editor-wrap { flex: 1; position: relative; }
+#editor { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+#editor-wrap .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #f6f8fa; }
+#readonly-mask { position: absolute; inset: 0; background: rgba(255, 248, 197, .35); display: flex; align-items: flex-start; justify-content: center; padding-top: 60px; }
+#readonly-mask > div { background: #fff8c5; border: 1px solid #d4a72c; padding: 10px 18px; border-radius: 8px; text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+[hidden] { display: none !important; }
+
+/* 历史 */
+#history { position: fixed; left: 330px; right: 0; bottom: 0; height: 42%; background: #fff; border-top: 2px solid #0969da; display: flex; flex-direction: column; box-shadow: 0 -6px 20px rgba(0,0,0,.08); }
+#history > header, #viewer > header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #d0d7de; }
+.hint { color: #8c959f; font-size: 12px; }
+#hist-body { flex: 1; display: flex; min-height: 0; }
+#hist-table { width: 46%; border-collapse: collapse; display: block; overflow: auto; }
+#hist-table th, #hist-table td { padding: 4px 8px; border-bottom: 1px solid #eaeef2; text-align: left; white-space: nowrap; }
+#hist-table thead th { position: sticky; top: 0; background: #f6f8fa; }
+#hist-table tr.sel { background: #ddf4ff; }
+.src { font-size: 11px; padding: 0 5px; border-radius: 3px; background: #eaeef2; }
+.src.agent { background: #fff8c5; }
+.src.user { background: #ddf4ff; }
+.src.restore { background: #ffebe9; }
+#diff { flex: 1; overflow: auto; border-left: 1px solid #d0d7de; }
+#diff table { width: 100%; border-collapse: collapse; }
+#diff th, #diff td { padding: 4px 8px; border-bottom: 1px solid #eaeef2; text-align: left; vertical-align: top; }
+#diff thead th { position: sticky; top: 0; background: #f6f8fa; }
+.k-added { color: #1a7f37; }
+.k-removed { color: #cf222e; }
+.k-changed { color: #9a6700; }
+.arrow { color: #8c959f; padding: 0 4px; }
+.diff-sum { padding: 6px 8px; color: #57606a; }
+
+/* 旧版查看 */
+#viewer { position: fixed; inset: 40px 60px; background: #fff; border: 1px solid #d0d7de; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.25); display: flex; flex-direction: column; z-index: 20; }
+#viewer-frame { flex: 1; border: 0; }
+
+/* 对话框 */
+#roots-dlg { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; z-index: 30; }
+.dlg { background: #fff; padding: 14px; border-radius: 8px; width: 560px; display: flex; flex-direction: column; gap: 8px; }
+.dlg textarea { font: 12px Consolas, monospace; padding: 6px; }
+.dlg-btns { display: flex; justify-content: flex-end; gap: 8px; }
