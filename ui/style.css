@@ -36,7 +36,7 @@ input, textarea { color: var(--fg); background: var(--bg); border: 1px solid var
 body.dragging-side iframe { pointer-events: none; }
 /* 顶部入口一行：最左刷新，右侧展开/收纳、搜索、设置；搜索框悬浮在工具行下方，不挤占树高度。 */
 #side-tools { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 10px; flex-shrink: 0; }
-#side-tools nav { display: flex; gap: 2px; }
+#side-tools nav, .side-tools-left { display: flex; gap: 2px; }
 .icon-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 6px; background: transparent; border-color: transparent; border-radius: 5px; flex-shrink: 0; }
 .icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .icon-button[aria-expanded="true"] { background: var(--hover); border-color: var(--border); }

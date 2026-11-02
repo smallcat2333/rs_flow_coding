@@ -1,0 +1,45 @@
+/* 使用说明弹层：沿用设置弹层的主题与无边框样式；顶部两个页签切换图文说明与视频介绍。 */
+#guide-dialog { width: min(980px, calc(100vw - 32px)); height: min(720px, calc(100vh - 32px)); padding: 0; border: 0; outline: 0; border-radius: 8px; background: var(--bg); color: var(--fg); box-shadow: 0 12px 40px var(--shadow); }
+#guide-dialog[open] { display: flex; flex-direction: column; }
+#guide-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.guide-header { display: flex; align-items: center; gap: 20px; padding: 12px 16px 0 20px; border-bottom: 1px solid var(--border2); flex-shrink: 0; }
+.guide-header h2 { margin: 0 0 10px; font-size: 18px; font-weight: 600; }
+.guide-tabs { display: flex; gap: 4px; align-self: flex-end; }
+.guide-tabs button { padding: 6px 12px 9px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--fg2); }
+.guide-tabs button:hover { color: var(--fg); }
+.guide-tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.guide-header .icon-button { margin: 0 0 8px auto; font-size: 22px; }
+.guide-panel { flex: 1; min-height: 0; overflow: auto; }
+/* 图文页：左侧目录，右侧正文；正文行宽受限以便阅读。 */
+#guide-doc { display: flex; }
+#guide-doc nav { position: sticky; top: 0; flex: 0 0 168px; align-self: flex-start; padding: 20px 8px 20px 16px; }
+#guide-doc nav a { display: block; padding: 5px 10px; border-radius: 5px; color: var(--fg2); font-size: 13px; text-decoration: none; }
+#guide-doc nav a:hover { background: var(--hover); color: var(--fg); }
+#guide-doc nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.guide-body { flex: 1; min-width: 0; max-width: 720px; padding: 8px 32px 40px 16px; }
+.guide-body section { padding-top: 16px; }
+.guide-body h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.guide-body p, .guide-body li { font-size: 13px; line-height: 1.8; color: var(--fg2); }
+.guide-body p { margin: 0 0 10px; }
+.guide-body ol, .guide-body ul { margin: 0 0 10px; padding-left: 20px; }
+.guide-body b { color: var(--fg); font-weight: 600; }
+.guide-body code { padding: 1px 5px; border-radius: 4px; background: var(--bg2); color: var(--fg); font: 12px/1.6 "Cascadia Code", Consolas, monospace; }
+.guide-body pre { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px; background: var(--bg2); color: var(--fg); font: 12px/1.7 "Cascadia Code", Consolas, monospace; overflow: auto; }
+.guide-body figure { margin: 4px 0 16px; }
+.guide-body figure img { display: block; max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+.guide-body figcaption { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.guide-pair { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.guide-pair figure { flex: 0 1 auto; }
+.guide-states { width: 100%; margin: 0 0 14px; border-collapse: collapse; font-size: 13px; }
+.guide-states th, .guide-states td { padding: 7px 10px; border-bottom: 1px solid var(--border2); text-align: left; vertical-align: top; }
+.guide-states th { color: var(--muted); font-weight: 400; font-size: 12px; }
+.guide-states td:first-child { white-space: nowrap; }
+.guide-sw { display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 1px solid #8c959f; border-radius: 3px; vertical-align: -1px; box-sizing: border-box; }
+/* 视频页：画面居中按 16:9 适配，下方一行说明。 */
+#guide-video { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px 24px; background: var(--bg2); }
+#guide-video video { display: block; width: 100%; max-height: calc(100% - 40px); aspect-ratio: 16 / 9; border-radius: 6px; background: #0d1117; }
+#guide-video p { margin: 0; font-size: 12px; color: var(--fg2); }
+@media (max-width: 680px) {
+  #guide-doc nav { display: none; }
+  .guide-body { padding: 8px 18px 32px; }
+}

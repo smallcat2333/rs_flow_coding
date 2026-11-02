@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Flow Coding 视频介绍（动画源）</title>
+<!--
+  使用说明视频的动画源：所有画面由 render(t) 按时间直接计算，无 CSS 过渡，逐帧截图可复现。
+  直接打开会实时播放；render.mjs 以 ?capture 打开并逐帧导出为 ui/guide/guide.mp4。
+-->
+<style>
+  html, body { margin: 0; background: #0d1117; overflow: hidden; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #0d1117; color: #e6edf3; font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+  .abs { position: absolute; left: 0; top: 0; }
+  /* 画布：深色点阵，与 draw.io 深色网格呼应 */
+  #canvas { position: absolute; inset: 0; background-image: radial-gradient(#263040 1.6px, transparent 1.6px); background-size: 40px 40px; }
+  #world { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  .node { position: absolute; width: 220px; height: 96px; box-sizing: border-box; border: 3px solid; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 600; color: #1f2328; transform-origin: 50% 50%; }
+  .badge { position: absolute; width: 24px; height: 30px; }
+  .ring { position: absolute; border: 5px solid #4493f8; border-radius: 22px; box-sizing: border-box; }
+  #edges { position: absolute; left: 0; top: 0; overflow: visible; }
+  #edges path { fill: none; stroke: #9da7b3; stroke-width: 3; }
+  #edges polygon { fill: #9da7b3; }
+  .kt { position: absolute; white-space: nowrap; }
+  .kc { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: .12em; margin-bottom: -.12em; }
+  .kc > span { display: inline-block; will-change: transform; }
+  .caption { left: 120px; top: 880px; font-size: 76px; font-weight: 700; letter-spacing: 2px; }
+  #title { left: 0; width: 1920px; text-align: center; top: 190px; font-family: Bahnschrift, "Segoe UI", sans-serif; font-weight: 600; font-size: 170px; letter-spacing: 4px; }
+  #subtitle { left: 0; width: 1920px; text-align: center; top: 410px; font-size: 46px; color: #9da7b3; }
+  .actor { left: 1320px; top: 300px; font-size: 32px; font-weight: 600; padding: 6px 18px; border-radius: 999px; }
+  .actor.you { background: #1f3a5f; color: #9cc7ff; }
+  .actor.agent { background: #3d3418; color: #f2d77f; }
+  .sname { left: 1320px; top: 360px; font-size: 118px; font-weight: 800; }
+  .ssub { left: 1324px; top: 530px; font-size: 36px; color: #9da7b3; }
+  #chips { position: absolute; left: 212px; top: 914px; display: flex; gap: 16px; }
+  .chip { width: 200px; height: 72px; box-sizing: border-box; display: flex; align-items: center; gap: 14px; padding: 0 18px; border-radius: 10px; background: #161b22; border: 2px solid #30363d; font-size: 28px; color: #9da7b3; }
+  .chip.on { background: #1c2a3d; border-color: #4493f8; color: #e6edf3; }
+  .sw { width: 28px; height: 28px; flex: none; box-sizing: border-box; border: 2px solid #8c959f; border-radius: 5px; }
+  #cursor { position: absolute; left: 0; top: 0; width: 44px; height: 44px; }
+  .ripple { position: absolute; width: 90px; height: 90px; margin: -45px 0 0 -45px; border-radius: 50%; border: 4px solid #4493f8; box-sizing: border-box; }
+  .card { position: absolute; background: #161b22; border: 2px solid #30363d; border-radius: 16px; box-shadow: 0 30px 80px rgba(0, 0, 0, .55); }
+  #stats { left: 120px; top: 110px; width: 640px; padding: 28px 30px; box-sizing: border-box; }
+  .srow { position: relative; display: flex; align-items: center; height: 64px; padding: 0 14px; gap: 18px; border-radius: 10px; font-size: 30px; }
+  .srow .name { width: 190px; }
+  .srow .track { flex: 1; height: 14px; border-radius: 4px; background: #0d1117; overflow: hidden; }
+  .srow .fill { height: 100%; width: 0; border-radius: 4px; }
+  .srow .num { width: 80px; text-align: right; font-family: Bahnschrift, "Segoe UI", sans-serif; font-size: 32px; }
+  .srow.sel { background: #1c2a3d; box-shadow: inset 0 0 0 2px #1f6feb; }
+  #tip { left: 360px; top: 206px; padding: 10px 18px; font-size: 26px; background: #0d1117; border: 2px solid #e6edf3; white-space: nowrap; }
+  #filtered { left: 120px; top: 708px; width: 640px; padding: 18px 30px; box-sizing: border-box; font-size: 30px; }
+  #filtered div { display: flex; justify-content: space-between; padding: 8px 0; }
+  #feat { left: 1100px; top: 150px; width: 720px; height: 700px; padding: 40px 44px; box-sizing: border-box; }
+  #feat h3 { margin: 0 0 10px; font-size: 40px; }
+  .fid { font-family: Bahnschrift, "Segoe UI", sans-serif; color: #7d8590; font-size: 28px; }
+  .fstatus { display: inline-block; margin-left: 14px; padding: 2px 14px; border-radius: 6px; background: #0d1117; color: #9da7b3; font-size: 26px; }
+  .line { height: 18px; border-radius: 9px; background: #262d37; margin: 16px 0; }
+  .fsec { margin: 34px 0 14px; font-size: 32px; font-weight: 700; }
+  .task { display: flex; align-items: center; gap: 18px; font-size: 30px; height: 58px; }
+  .box { width: 32px; height: 32px; border: 3px solid #7d8590; border-radius: 7px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+  .box svg { width: 24px; height: 24px; stroke: #fff; stroke-width: 4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .box.done { background: #2f8a3f; border-color: #2f8a3f; }
+  #progress { position: absolute; right: 44px; top: 48px; font-family: Bahnschrift, "Segoe UI", sans-serif; font-size: 34px; color: #4493f8; }
+  #term { left: 1080px; top: 230px; width: 760px; height: 330px; padding: 0; overflow: hidden; background: #010409; }
+  .tbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 18px; background: #161b22; }
+  .tbar i { width: 14px; height: 14px; border-radius: 50%; background: #30363d; }
+  .tbody { padding: 22px 26px; font-family: "Cascadia Code", Consolas, monospace; font-size: 27px; line-height: 1.75; white-space: pre; }
+  .ok { color: #3fb950; }
+  .prompt { color: #4493f8; }
+  #mask { left: 0; top: 0; width: 1040px; height: 1080px; background: rgba(1, 4, 9, .62); display: flex; align-items: flex-start; justify-content: center; padding-top: 250px; box-sizing: border-box; font-size: 44px; font-weight: 700; color: #f2d77f; }
+  #toast { left: 400px; top: 160px; padding: 14px 28px; border-radius: 10px; background: #1b3a26; color: #7ee2a0; font-size: 32px; font-weight: 600; }
+  #hist { left: 360px; top: 150px; width: 1200px; padding: 40px 50px; box-sizing: border-box; }
+  #hist h3 { margin: 0 0 22px; font-size: 40px; }
+  .snap { display: flex; align-items: center; gap: 22px; font-size: 30px; height: 64px; color: #9da7b3; }
+  .snap b { color: #e6edf3; font-family: Bahnschrift, "Segoe UI", sans-serif; font-weight: 600; width: 120px; }
+  .diff { display: grid; grid-template-columns: 260px 220px 1fr; align-items: center; height: 74px; font-size: 32px; border-top: 2px solid #262d37; }
+  .diff .k { color: #9da7b3; }
+  .pill { display: inline-flex; align-items: center; gap: 12px; }
+  .pill .sw { width: 34px; height: 34px; }
+  #book { left: 860px; top: 280px; width: 200px; height: 200px; }
+  #book path { fill: none; stroke: #e6edf3; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+  #outro1 { left: 0; width: 1920px; text-align: center; top: 560px; font-size: 72px; font-weight: 700; }
+  #outro2 { left: 0; width: 1920px; text-align: center; top: 700px; font-family: Bahnschrift, "Segoe UI", sans-serif; font-size: 44px; letter-spacing: 6px; color: #7d8590; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="canvas">
+    <div id="world">
+      <svg id="edges" width="1920" height="1080"></svg>
+    </div>
+  </div>
+
+  <div id="mask" class="abs">Agent 正在编辑，暂时只读</div>
+
+  <div id="title" class="kt">Flow Coding</div>
+  <div id="subtitle" class="abs">把流程图变成你和 Agent 的协作看板</div>
+
+  <div id="c1" class="kt caption">一张图，就是一份需求</div>
+  <div id="c2" class="kt caption" style="top:96px">颜色，就是协作协议</div>
+  <div id="c3" class="kt caption">待办多少，一眼看清</div>
+  <div id="c4" class="kt caption">节点挂上 Feat 档案</div>
+  <div id="c5" class="kt caption">Agent 改图，先加锁</div>
+  <div id="c6" class="kt caption">每次保存，都留历史</div>
+
+  <div id="phases"></div>
+  <div id="chips"></div>
+
+  <div id="stats" class="card"></div>
+  <div id="tip" class="abs">起草待审：4 / 350 节点（1.1%）；点击过滤流程图</div>
+  <div id="filtered" class="card">
+    <div><span>chat</span><span style="color:#f2d77f">3</span></div>
+    <div><span>颜色协作样例</span><span style="color:#f2d77f">1</span></div>
+  </div>
+
+  <div id="feat" class="card">
+    <div id="progress">T 0/3</div>
+    <div class="fid">Feat_261101_1<span class="fstatus">开发中</span></div>
+    <h3>查询缓存</h3>
+    <div class="line" style="width:92%"></div>
+    <div class="line" style="width:78%"></div>
+    <div class="line" style="width:64%"></div>
+    <div class="fsec">3.1 任务</div>
+    <div class="task"><span class="box"></span>缓存键与过期策略</div>
+    <div class="task"><span class="box"></span>未命中时回源查询</div>
+    <div class="task"><span class="box"></span>写入命中率日志</div>
+    <div class="fsec">关联节点</div>
+    <div class="fid" style="color:#4493f8">接口流程.drawio#查询缓存</div>
+  </div>
+
+  <div id="toast" class="abs">已合并磁盘最新内容</div>
+  <div id="term" class="card">
+    <div class="tbar"><i></i><i></i><i></i></div>
+    <div class="tbody" id="tbody"></div>
+  </div>
+
+  <div id="hist" class="card">
+    <h3>历史对比</h3>
+    <div class="snap"><span class="box"></span><b>10:24</b>用户保存</div>
+    <div class="snap"><span class="box"></span><b>10:31</b>Agent 解锁后同步</div>
+    <div style="height:18px"></div>
+  </div>
+
+  <svg id="book" class="abs" viewBox="0 0 24 24"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg>
+  <div id="outro1" class="kt">看不懂时，点左上角的书本</div>
+  <div id="outro2" class="abs">FLOW CODING</div>
+
+  <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2.5v17.2l4.6-4.4 3 6.6 3-1.4-3-6.4h6.4z" fill="#fff" stroke="#0d1117" stroke-width="1.4" stroke-linejoin="round"/></svg>
+  <div id="ripple" class="ripple"></div>
+</div>
+
+<script>
+'use strict';
+const DURATION = 56;
+const $ = (id) => document.getElementById(id);
+
+/* ---------- 缓动与插值 ---------- */
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const ease = {
+  outCubic: (p) => 1 - Math.pow(1 - p, 3),
+  inCubic: (p) => p * p * p,
+  inOut: (p) => (p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2),
+  outExpo: (p) => (p >= 1 ? 1 : 1 - Math.pow(2, -10 * p)),
+  // 阻尼弹簧：带一次轻微回弹
+  spring: (p) => (p <= 0 ? 0 : p >= 1 ? 1 : 1 - Math.exp(-6.5 * p) * Math.cos(11 * p)),
+};
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, p) => { const x = hex(a), y = hex(b); return `rgb(${x.map((v, i) => Math.round(lerp(v, y[i], p))).join(',')})`; };
+/** 进场 a→a+d、退场 b-d→b 的可见度 0..1。 */
+const vis = (t, a, b, d = .4) => Math.min(ease.outCubic(seg(t, a, a + d)), 1 - ease.inCubic(seg(t, b - d, b)));
+
+/* ---------- 状态配色（与 draw.io 默认描边配对） ---------- */
+const S = {
+  none: { name: '已实现', f: '#FFFFFF', s: '#8C959F' },
+  review: { name: '起草待审', f: '#FFF2CC', s: '#D6B656' },
+  idea: { name: '你的想法', f: '#DAE8FC', s: '#6C8EBF' },
+  confirmed: { name: '已确认', f: '#D5E8D4', s: '#82B366' },
+  issue: { name: '有问题', f: '#F8CECC', s: '#B85450' },
+  plan_delete: { name: '计划删除', f: '#F5F5F5', s: '#666666', d: true },
+  confirm_delete: { name: '确认删除', f: '#D5E8D4', s: '#82B366', d: true },
+};
+const ORDER = ['none', 'review', 'idea', 'confirmed', 'issue', 'plan_delete', 'confirm_delete'];
+
+/* ---------- 逐字动画文字 ---------- */
+function split(el) {
+  const text = el.textContent;
+  el.textContent = '';
+  for (const ch of text) {
+    const w = document.createElement('span'); w.className = 'kc';
+    const i = document.createElement('span'); i.textContent = ch === ' ' ? ' ' : ch;
+    w.appendChild(i); el.appendChild(w);
+  }
+}
+function kinetic(el, t, a, b, stagger = .035, dur = .6) {
+  const kids = el.querySelectorAll('.kc > span');
+  el.style.visibility = t >= a - .01 && t <= b + kids.length * stagger * .5 + .05 ? 'visible' : 'hidden';
+  kids.forEach((k, i) => {
+    const pin = ease.outExpo(seg(t, a + i * stagger, a + i * stagger + dur));
+    const pout = ease.inCubic(seg(t, b - .45 + i * stagger * .5, b + i * stagger * .5));
+    k.style.transform = `translateY(${(1 - pin) * 110 - pout * 110}%)`;
+  });
+}
+
+/* ---------- 画布：节点与连线 ---------- */
+const NODES = {
+  n1: { x: 200, y: 440, label: '开始', show: 5.6, states: [[0, 'none']] },
+  n2: { x: 540, y: 440, label: '接收请求', show: 6.0, states: [[0, 'none']] },
+  n3: { x: 880, y: 440, label: '查询缓存', show: .25, states: [[0, 'idea'], [15.8, 'review'], [18.5, 'confirmed'], [20.8, 'none'], [44.4, 'review']] },
+  n4: { x: 1220, y: 440, label: '返回结果', show: 6.4, states: [[0, 'none'], [23.45, 'issue'], [24.8, 'review']] },
+  n5: { x: 880, y: 680, label: '落盘日志', show: 6.8, hide: 28.5, states: [[0, 'none'], [26.3, 'plan_delete'], [27.95, 'confirm_delete']] },
+};
+const EDGES = [
+  { d: [[420, 488], [540, 488]], a: 6.2 },
+  { d: [[760, 488], [880, 488]], a: 6.6 },
+  { d: [[1100, 488], [1220, 488]], a: 7.0 },
+  { d: [[990, 536], [990, 680]], a: 7.4, hide: 28.5 },
+];
+const world = $('world');
+const svg = $('edges');
+for (const [id, n] of Object.entries(NODES)) {
+  n.el = document.createElement('div');
+  n.el.className = 'node';
+  n.el.textContent = n.label;
+  n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px';
+  world.appendChild(n.el);
+}
+for (const e of EDGES) {
+  const [[x1, y1], [x2, y2]] = e.d;
+  e.len = Math.hypot(x2 - x1, y2 - y1);
+  e.path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  e.path.setAttribute('d', `M${x1} ${y1}L${x2} ${y2}`);
+  e.path.setAttribute('stroke-dasharray', e.len);
+  const ux = (x2 - x1) / e.len, uy = (y2 - y1) / e.len;
+  e.head = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  e.head.setAttribute('points', `${x2},${y2} ${x2 - ux * 18 - uy * 9},${y2 - uy * 18 + ux * 9} ${x2 - ux * 18 + uy * 9},${y2 - uy * 18 - ux * 9}`);
+  svg.append(e.path, e.head);
+}
+// 书签角标与高亮框（挂在 n3 上）
+const badge = document.createElement('div');
+badge.className = 'badge';
+badge.innerHTML = '<svg viewBox="0 0 16 20" width="24" height="30"><path d="M0 0h16v20l-8-5-8 5z" fill="#0969da" stroke="#fff" stroke-width="1"/><text x="8" y="11" font-size="10" font-family="Arial" font-weight="bold" fill="#fff" text-anchor="middle">1</text></svg>';
+badge.style.left = (880 + 220 - 34) + 'px'; badge.style.top = (440 + 8) + 'px';
+world.appendChild(badge);
+const ring = document.createElement('div');
+ring.className = 'ring';
+Object.assign(ring.style, { left: '868px', top: '428px', width: '244px', height: '120px' });
+world.appendChild(ring);
+
+function nodeColor(n, t) {
+  let prev = n.states[0][1], cur = prev, at = -1;
+  for (const [ts, s] of n.states) { if (t >= ts) { prev = cur; cur = s; at = ts; } }
+  const p = at < 0 ? 1 : ease.outCubic(seg(t, at, at + .3));
+  return { fill: mix(S[prev].f, S[cur].f, p), stroke: mix(S[prev].s, S[cur].s, p), dashed: !!S[cur].d, state: cur };
+}
+
+/* ---------- 镜头 ---------- */
+// [t, 世界点x, 世界点y, 缩放, 屏幕x, 屏幕y, 画布不透明度]
+const CAM = [
+  [0, 990, 488, 1.6, 960, 700, 1], [3.6, 990, 488, 1.6, 960, 700, 1],
+  [5.0, 820, 608, 1, 960, 470, 1], [13, 820, 608, 1, 960, 470, 1],
+  [14, 990, 488, 1.5, 540, 430, 1], [23, 990, 488, 1.5, 540, 430, 1],
+  [23.8, 1160, 600, 1.2, 640, 470, 1], [29, 1160, 600, 1.2, 640, 470, 1],
+  [29.6, 820, 608, .9, 1360, 520, .35], [35, 820, 608, .9, 1360, 520, .35],
+  [35.6, 990, 488, 1.5, 620, 520, 1], [47, 990, 488, 1.5, 620, 520, 1],
+  [47.6, 990, 488, 1.5, 620, 520, .12], [51.5, 990, 488, 1.5, 620, 520, .12],
+  [52, 990, 488, 1.5, 620, 520, 0],
+];
+function camera(t) {
+  let i = 0;
+  while (i < CAM.length - 1 && t > CAM[i + 1][0]) i++;
+  const a = CAM[i], b = CAM[Math.min(i + 1, CAM.length - 1)];
+  const p = b === a ? 0 : ease.inOut(seg(t, a[0], b[0]));
+  return a.map((v, k) => (k === 0 ? t : lerp(v, b[k], p)));
+}
+
+/* ---------- 状态说明阶段 ---------- */
+const PHASES = [
+  [13.2, 15.5, 'idea', 'you', '你来标记', '提出想法或改动'],
+  [15.5, 18, 'review', 'agent', 'Agent 标记', '方案写好了，等你审'],
+  [18, 20.5, 'confirmed', 'you', '你来标记', '同意，下一轮执行'],
+  [20.5, 23, 'none', 'agent', 'Agent 标记', '代码改完，回到无色'],
+  [23, 24.5, 'issue', 'you', '你来标记', '写在节点里，或用便签连过去'],
+  [24.5, 26, 'review', 'agent', 'Agent 标记', '修正后重新提交审核'],
+  [26, 27.5, 'plan_delete', 'agent', 'Agent 标记', '建议删掉这一步'],
+  [27.5, 29.2, 'confirm_delete', 'you', '你来标记', '同意，Agent 删节点和代码'],
+];
+const phaseBox = $('phases');
+for (const ph of PHASES) {
+  const actor = document.createElement('div'); actor.className = `kt actor ${ph[3]}`; actor.textContent = ph[4];
+  const name = document.createElement('div'); name.className = 'kt sname'; name.textContent = S[ph[2]].name;
+  name.style.color = S[ph[2]].f;
+  const sub = document.createElement('div'); sub.className = 'kt ssub'; sub.textContent = ph[5];
+  phaseBox.append(actor, name, sub);
+  split(name);
+  ph.els = { actor, name, sub };
+}
+const chipRow = $('chips');
+const chipEls = ORDER.map((k) => {
+  const c = document.createElement('div'); c.className = 'chip';
+  const sw = document.createElement('span'); sw.className = 'sw';
+  sw.style.background = S[k].f; sw.style.borderStyle = S[k].d ? 'dashed' : 'solid';
+  c.append(sw, S[k].name); chipRow.appendChild(c); return c;
+});
+const chipX = (i) => 212 + i * 216 + 100;
+
+/* ---------- 统计卡片 ---------- */
+const STATS = [['none', 335], ['review', 4], ['idea', 2], ['confirmed', 5], ['issue', 1], ['plan_delete', 0], ['confirm_delete', 0], ['unknown', 3]];
+const statEls = STATS.map(([k, v]) => {
+  const r = document.createElement('div'); r.className = 'srow';
+  const sw = document.createElement('span'); sw.className = 'sw';
+  if (k === 'unknown') sw.style.background = 'repeating-linear-gradient(45deg,#d0d7de 0 4px,#8c959f 4px 8px)';
+  else { sw.style.background = S[k].f; sw.style.borderStyle = S[k].d ? 'dashed' : 'solid'; }
+  const name = document.createElement('span'); name.className = 'name'; name.textContent = k === 'unknown' ? '未识别颜色' : S[k].name;
+  const track = document.createElement('span'); track.className = 'track';
+  const fill = document.createElement('span'); fill.className = 'fill';
+  fill.style.background = k === 'unknown' ? 'repeating-linear-gradient(45deg,#d0d7de 0 6px,#8c959f 6px 12px)' : S[k].f;
+  track.appendChild(fill);
+  const num = document.createElement('span'); num.className = 'num';
+  r.append(sw, name, k === 'none' ? document.createElement('span') : track, num);
+  if (k === 'none') r.children[2].style.flex = '1';
+  $('stats').appendChild(r);
+  return { r, fill, num, v };
+});
+
+/* ---------- 光标轨迹 ---------- */
+const CUR = [
+  { a: 17.6, b: 20, path: [[17.6, 1560, 800], [18.4, chipX(3), 950], [19.3, chipX(3) + 60, 1000]], clicks: [18.5] },
+  { a: 22.9, b: 24.2, path: [[22.9, 1500, 820], [23.35, chipX(4), 950], [24.1, chipX(4) + 60, 1000]], clicks: [23.45] },
+  { a: 27.3, b: 28.6, path: [[27.3, 1700, 820], [27.85, chipX(6), 950], [28.5, chipX(6) - 40, 1000]], clicks: [27.95] },
+  { a: 31.6, b: 34.6, path: [[31.6, 980, 760], [32.6, 300, 255], [34.5, 330, 290]], clicks: [32.8] },
+  { a: 36.3, b: 38.2, path: [[36.3, 1300, 820], [37.1, 760, 482], [38.1, 800, 560]], clicks: [37.3] },
+];
+function cursor(t) {
+  const c = $('cursor'), r = $('ripple');
+  c.style.opacity = 0; r.style.opacity = 0;
+  for (const s of CUR) {
+    if (t < s.a || t > s.b) continue;
+    let i = 0;
+    while (i < s.path.length - 2 && t > s.path[i + 1][0]) i++;
+    const [ta, xa, ya] = s.path[i], [tb, xb, yb] = s.path[i + 1];
+    const p = ease.inOut(seg(t, ta, tb));
+    const x = lerp(xa, xb, p), y = lerp(ya, yb, p);
+    let press = 1;
+    for (const k of s.clicks) {
+      press = Math.min(press, 1 - .18 * Math.sin(Math.PI * seg(t, k - .08, k + .12)));
+      const rp = seg(t, k, k + .5);
+      if (rp > 0 && rp < 1) {
+        r.style.opacity = 1 - rp;
+        r.style.transform = `translate(${x}px,${y}px) scale(${.3 + rp})`;
+      }
+    }
+    c.style.opacity = vis(t, s.a, s.b, .25);
+    c.style.transform = `translate(${x - 8}px,${y - 4}px) scale(${press})`;
+  }
+}
+
+/* ---------- 终端 ---------- */
+const TERM = [
+  { a: 42.6, b: 43.7, prompt: true, text: 'flowctl lock 接口流程.drawio --wait 30' },
+  { a: 43.8, b: 43.8, text: 'locked  owner=agent', cls: 'ok' },
+  { a: 44.9, b: 45.8, prompt: true, text: 'flowctl unlock 接口流程.drawio' },
+  { a: 45.9, b: 45.9, text: 'unlocked  XML 校验通过', cls: 'ok' },
+];
+function terminal(t) {
+  const html = [];
+  for (const l of TERM) {
+    if (t < l.a) break;
+    const n = l.b > l.a ? Math.floor([...l.text].length * seg(t, l.a, l.b)) : [...l.text].length;
+    const txt = [...l.text].slice(0, n).join('');
+    const caret = l.prompt && t < l.b + .3 && Math.floor(t * 3) % 2 === 0 ? '▍' : '';
+    html.push(l.prompt ? `<span class="prompt">❯ </span>${txt}${caret}` : `<span class="${l.cls}">${txt}</span>`);
+  }
+  $('tbody').innerHTML = html.join('\n');
+}
+
+/* ---------- 历史差异行 ---------- */
+const DIFFS = [
+  [48.6, '查询缓存', '状态变化', ['none', 'review']],
+  [48.9, '返回结果', '状态变化', ['issue', 'review']],
+  [49.2, '落盘日志', '删除节点', null],
+];
+const diffEls = DIFFS.map(([at, node, kind, pair]) => {
+  const d = document.createElement('div'); d.className = 'diff';
+  const right = pair
+    ? `<span class="pill"><span class="sw" style="background:${S[pair[0]].f}"></span>${S[pair[0]].name}<span style="color:#7d8590;margin:0 10px">→</span><span class="sw" style="background:${S[pair[1]].f}"></span>${S[pair[1]].name}</span>`
+    : '<span style="color:#ff7b72">已从图中移除</span>';
+  d.innerHTML = `<span>${node}</span><span class="k">${kind}</span>${right}`;
+  $('hist').appendChild(d);
+  return { d, at };
+});
+const CHECK = '<svg viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg>';
+
+/* ---------- 一帧 ---------- */
+function slide(el, t, a, b, dx, dy, d = .5) {
+  const v = vis(t, a, b, d);
+  el.style.display = v > 0 ? '' : 'none';
+  el.style.opacity = v;
+  el.style.transform = `translate(${(1 - v) * dx}px,${(1 - v) * dy}px)`;
+}
+
+function render(t) {
+  // 镜头与画布
+  const [, wx, wy, s, cx, cy, op] = camera(t);
+  world.style.transform = `translate(${cx}px,${cy}px) scale(${s}) translate(${-wx}px,${-wy}px)`;
+  $('canvas').style.opacity = op;
+
+  for (const n of Object.values(NODES)) {
+    const pin = ease.spring(seg(t, n.show, n.show + .7));
+    const pout = n.hide ? ease.inCubic(seg(t, n.hide, n.hide + .45)) : 0;
+    const sc = pin * (1 - pout);
+    const c = nodeColor(n, t);
+    n.el.style.transform = `scale(${sc})`;
+    n.el.style.opacity = clamp(pin * 2) * (1 - pout);
+    n.el.style.background = c.fill;
+    n.el.style.borderColor = c.stroke;
+    n.el.style.borderStyle = c.dashed ? 'dashed' : 'solid';
+    n.cur = c.state;
+  }
+  for (const e of EDGES) {
+    const p = ease.outCubic(seg(t, e.a, e.a + .6)) * (1 - (e.hide ? ease.inCubic(seg(t, e.hide, e.hide + .4)) : 0));
+    e.path.setAttribute('stroke-dashoffset', e.len * (1 - p));
+    e.head.style.opacity = p > .92 ? 1 : 0;
+  }
+  // 节点被 Agent 修改时的脉冲环
+  const pulse = [[15.8, 'n3'], [20.8, 'n3'], [24.8, 'n4'], [26.3, 'n5'], [44.4, 'n3']].find(([a]) => t >= a && t < a + .8);
+  for (const n of Object.values(NODES)) n.el.style.boxShadow = 'none';
+  if (pulse) {
+    const p = seg(t, pulse[0], pulse[0] + .8);
+    NODES[pulse[1]].el.style.boxShadow = `0 0 0 ${6 + p * 26}px rgba(242,215,127,${.55 * (1 - p)})`;
+  }
+
+  // 开场标题
+  kinetic($('title'), t, .6, 3.9, .05, .7);
+  const sv = vis(t, 1.4, 3.9, .5);
+  $('subtitle').style.opacity = sv;
+  $('subtitle').style.transform = `translateY(${(1 - sv) * 24}px)`;
+
+  // 字幕
+  kinetic($('c1'), t, 5.4, 12.6);
+  kinetic($('c2'), t, 13.4, 28.9);
+  kinetic($('c3'), t, 29.6, 34.8);
+  kinetic($('c4'), t, 35.6, 41.8);
+  kinetic($('c5'), t, 42.4, 46.8);
+  kinetic($('c6'), t, 47.4, 51.3);
+
+  // 状态阶段说明
+  for (const ph of PHASES) {
+    const [a, b] = ph;
+    const last = ph === PHASES[PHASES.length - 1];
+    kinetic(ph.els.name, t, a + .1, last ? b : b, .04, .5);
+    for (const el of [ph.els.actor, ph.els.sub]) {
+      const v = vis(t, a + .2, b, .35);
+      el.style.visibility = v > 0 ? 'visible' : 'hidden';
+      el.style.opacity = v;
+      el.style.transform = `translateY(${(1 - v) * 20}px)`;
+    }
+  }
+  const cv = vis(t, 13.4, 29.3, .5);
+  chipRow.style.opacity = cv;
+  chipRow.style.transform = `translateY(${(1 - cv) * 60}px)`;
+  chipRow.style.display = cv > 0 ? 'flex' : 'none';
+  const focus = t < 23 ? NODES.n3 : t < 26 ? NODES.n4 : NODES.n5;
+  chipEls.forEach((c, i) => c.classList.toggle('on', ORDER[i] === focus.cur));
+
+  // 统计
+  slide($('stats'), t, 29.4, 35.4, -700, 0, .5);
+  const max = 5;
+  statEls.forEach((r, i) => {
+    const p = ease.outCubic(seg(t, 29.8 + i * .08, 31.2 + i * .08));
+    r.fill.style.width = (r.v / max) * 100 * p + '%';
+    r.num.textContent = Math.round(r.v * p);
+    r.r.classList.toggle('sel', i === 1 && t >= 32.8);
+  });
+  slide($('tip'), t, 33.0, 34.4, 0, 10, .25);
+  slide($('filtered'), t, 33.2, 35.3, 0, 40, .4);
+
+  // Feat
+  badge.style.transform = `translateY(${(1 - ease.spring(seg(t, 35.9, 36.6))) * -60}px)`;
+  badge.style.opacity = clamp(seg(t, 35.9, 36.1)) * (t < 47.6 ? 1 : 1 - seg(t, 47.6, 48));
+  ring.style.opacity = vis(t, 37.4, 42.2, .3);
+  slide($('feat'), t, 37.4, 42.3, 820, 0, .55);
+  const boxes = $('feat').querySelectorAll('.box');
+  let done = 0;
+  [38.6, 39.2, 39.8].forEach((at, i) => {
+    const on = t >= at;
+    if (on) done++;
+    if (boxes[i].classList.contains('done') !== on) { boxes[i].classList.toggle('done', on); boxes[i].innerHTML = on ? CHECK : ''; }
+    boxes[i].style.transform = `scale(${1 + .25 * Math.sin(Math.PI * seg(t, at, at + .25))})`;
+  });
+  $('progress').textContent = `T ${done}/3`;
+
+  // 加锁
+  slide($('term'), t, 42.4, 47.2, 0, 40, .4);
+  terminal(t);
+  const mv = vis(t, 43.8, 46.3, .3);
+  $('mask').style.display = mv > 0 ? 'flex' : 'none';
+  $('mask').style.opacity = mv;
+  slide($('toast'), t, 46.2, 47.2, 0, -20, .25);
+
+  // 历史
+  slide($('hist'), t, 47.5, 51.6, 0, 50, .5);
+  const hb = $('hist').querySelectorAll('.box');
+  [47.9, 48.25].forEach((at, i) => {
+    const on = t >= at;
+    if (hb[i].classList.contains('done') !== on) { hb[i].classList.toggle('done', on); hb[i].innerHTML = on ? CHECK : ''; }
+  });
+  diffEls.forEach(({ d, at }) => {
+    const v = ease.outCubic(seg(t, at, at + .35));
+    d.style.opacity = v;
+    d.style.transform = `translateX(${(1 - v) * -30}px)`;
+  });
+
+  // 结尾
+  const bp = $('book').querySelector('path');
+  if (!bp.dataset.len) { bp.dataset.len = bp.getTotalLength(); bp.style.strokeDasharray = bp.dataset.len; }
+  const bv = ease.inOut(seg(t, 52, 53.3));
+  bp.style.strokeDashoffset = bp.dataset.len * (1 - bv);
+  const bs = ease.spring(seg(t, 51.9, 52.8));
+  $('book').style.opacity = clamp(seg(t, 51.9, 52.1));
+  $('book').style.transform = `scale(${.6 + .4 * bs})`;
+  kinetic($('outro1'), t, 53.0, 56.5, .045, .6);
+  const ov = Math.min(ease.outCubic(seg(t, 53.8, 54.4)), 1);
+  $('outro2').style.opacity = ov;
+  $('outro2').style.letterSpacing = `${6 + 10 * (1 - ov)}px`;
+
+  cursor(t);
+}
+
+['title', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'outro1'].forEach((id) => split($(id)));
+window.render = render;
+window.DURATION = DURATION;
+
+// 直接打开时实时播放，?capture 时由导出脚本逐帧驱动；?t=秒 定格某一帧便于检查。
+const q = new URLSearchParams(location.search);
+if (q.has('t')) render(parseFloat(q.get('t')));
+else if (!q.has('capture')) {
+  const start = performance.now();
+  const loop = () => { render(((performance.now() - start) / 1000) % DURATION); requestAnimationFrame(loop); };
+  loop();
+}
+</script>
+</body>
+</html>

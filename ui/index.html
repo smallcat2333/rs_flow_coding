@@ -15,11 +15,15 @@
   </script>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="guide.css">
 </head>
 <body>
   <aside id="side">
     <header id="side-tools">
-      <button id="btn-refresh" class="icon-button" title="刷新：重新读取已知目录" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 7a7 7 0 0 1 11.5-1L20 9M4 15l2.3 3A7 7 0 0 0 17.8 17"/></svg></button>
+      <div class="side-tools-left">
+        <button id="btn-refresh" class="icon-button" title="刷新：重新读取已知目录" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 7a7 7 0 0 1 11.5-1L20 9M4 15l2.3 3A7 7 0 0 0 17.8 17"/></svg></button>
+        <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
+      </div>
       <nav aria-label="工具入口">
         <button id="btn-toggle-all" class="icon-button" title="全部收纳" aria-label="全部收纳"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="toggle-all-icon" d="m7 9 5-5 5 5M7 15l5 5 5-5"/></svg></button>
         <button id="btn-search" class="icon-button" title="搜索名称或 Feat 编号" aria-label="搜索" aria-controls="tree-filter" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
@@ -169,10 +173,101 @@
     <footer id="settings-msg" role="status" aria-live="polite"></footer>
   </dialog>
 
+  <dialog id="guide-dialog" aria-labelledby="guide-title">
+    <header class="guide-header">
+      <h2 id="guide-title">使用说明</h2>
+      <div id="guide-tabs" class="guide-tabs" role="tablist" aria-label="说明类型">
+        <button role="tab" data-guide-tab="doc" aria-controls="guide-doc" aria-selected="true">图文说明</button>
+        <button role="tab" data-guide-tab="video" aria-controls="guide-video" aria-selected="false" tabindex="-1">视频介绍</button>
+      </div>
+      <button id="guide-close" class="icon-button" aria-label="关闭使用说明" title="关闭使用说明">×</button>
+    </header>
+    <div id="guide-doc" class="guide-panel" role="tabpanel" data-guide-panel="doc" aria-labelledby="guide-title">
+      <nav aria-label="说明目录">
+        <a href="#guide-start">开始使用</a>
+        <a href="#guide-colors">节点颜色</a>
+        <a href="#guide-loop">协作流程</a>
+        <a href="#guide-stats">状态统计</a>
+        <a href="#guide-feat">Feat 档案</a>
+        <a href="#guide-link">图间链接</a>
+        <a href="#guide-lock">Agent 加锁</a>
+        <a href="#guide-history">历史对比</a>
+      </nav>
+      <div class="guide-body">
+        <section id="guide-start">
+          <h3>开始使用</h3>
+          <p>Flow Coding 把每个 APP 的 draw.io 流程图和 Feat 需求档案放在一起。你在图上用颜色提要求，Agent 按颜色改代码、再把颜色改回来。</p>
+          <ol>
+            <li>点左上角齿轮 →「项目」→「项目目录」，每行填一个项目根目录，点「保存并扫描」。</li>
+            <li>左侧按 APP 列出 <code>docs/flow</code> 下的流程图（Chart）和 <code>docs/feat</code> 下的 Feat 档案。</li>
+            <li>点一张图在右侧打开。所有改动立即写盘，没有「保存」按钮。</li>
+          </ol>
+          <figure><img src="guide/shot_flow.png" alt="左侧为 APP 树和状态统计，右侧为内嵌的 draw.io 编辑器"><figcaption>左侧树与状态统计，右侧直接编辑流程图。</figcaption></figure>
+        </section>
+        <section id="guide-colors">
+          <h3>节点颜色</h3>
+          <p>节点的填充色就是它的状态。选中节点后，在 draw.io 右侧格式面板点状态按钮即可，删除类状态会同时设为虚线。</p>
+          <div class="guide-pair">
+            <figure><img src="guide/shot_format.png" alt="格式面板里的七个状态按钮" width="240"><figcaption>格式面板的状态按钮</figcaption></figure>
+          </div>
+          <table class="guide-states">
+            <thead><tr><th>状态</th><th>谁标记</th><th>含义与下一步</th></tr></thead>
+            <tbody>
+              <tr><td><span class="guide-sw" style="background:#FFFFFF"></span>已实现</td><td>—</td><td>代码已与图一致。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#DAE8FC"></span>你的想法</td><td>你</td><td>新想法或改动。Agent 评估可行改黄，不可行保持蓝并用便签写原因。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#FFF2CC"></span>起草待审</td><td>Agent</td><td>方案写好等你审：同意改绿，不同意改红。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#D5E8D4"></span>已确认</td><td>你</td><td>下一轮执行。Agent 改完代码改回无色。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#F8CECC"></span>有问题</td><td>你</td><td>问题写在节点里或用便签连过去。Agent 修正后改黄。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#F5F5F5;border-style:dashed"></span>计划删除</td><td>Agent</td><td>建议删掉这一步：同意改绿虚线，不同意改无色。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#D5E8D4;border-style:dashed"></span>确认删除</td><td>你</td><td>Agent 删除节点和对应代码。</td></tr>
+            </tbody>
+          </table>
+          <p>其他颜色计为「未识别颜色」，改成上表中的颜色即可。连线、便签、文本、泳道和分组不计入统计。</p>
+        </section>
+        <section id="guide-loop">
+          <h3>协作流程</h3>
+          <p>一次典型的来回：你把节点标<b>蓝</b> → Agent 出方案标<b>黄</b> → 你审核标<b>绿</b> → Agent 改完代码标回<b>无色</b>。发现问题随时标<b>红</b>，Agent 修完会再交回黄色给你审。</p>
+        </section>
+        <section id="guide-stats">
+          <h3>状态统计</h3>
+          <p>左上角汇总所有启用流程图的节点状态。点一行只显示含该状态节点的图，再点一次取消；可以和搜索叠加。</p>
+          <figure><img src="guide/shot_status.png" alt="左上角按状态逐行显示的数量条" width="330"><figcaption>例如点「起草待审」，快速找到等你审核的图。</figcaption></figure>
+        </section>
+        <section id="guide-feat">
+          <h3>Feat 档案</h3>
+          <p>选中节点，点底部状态栏「挂到 Feat_xxx」把节点关联到当前 Feat。挂了 Feat 的节点右上角显示蓝色书签，点书签打开档案，并与流程图左右分栏显示。</p>
+          <figure><img src="guide/shot_feat.png" alt="流程图与 Feat 档案左右分栏，档案顶部列出关联节点"><figcaption>档案顶部列出关联节点，点击即可在图中定位。</figcaption></figure>
+          <p>档案里用 <code>图名.drawio#节点id</code> 引用节点，预览中可点击跳转；「插入节点引用」把当前选中节点插入光标处。</p>
+        </section>
+        <section id="guide-link">
+          <h3>图间链接</h3>
+          <p>在 draw.io 中右键节点 →「编辑链接」，填 <code>子流程.drawio</code> 或 <code>子流程.drawio#节点id</code>。节点出现箭头角标，点击打开目标图；流程图顶栏左侧的返回箭头逐层回到来源图。</p>
+        </section>
+        <section id="guide-lock">
+          <h3>Agent 加锁</h3>
+          <p>Agent 改图或改档案前必须加锁，期间 App 显示只读遮罩；解锁后自动合并磁盘最新内容。</p>
+          <pre>flowctl lock &lt;文件&gt; --wait 30
+# 编辑文件
+flowctl unlock &lt;文件&gt;</pre>
+          <p>你在 App 里编辑时会自动持有用户锁，停止编辑 3 秒后释放。</p>
+        </section>
+        <section id="guide-history">
+          <h3>历史对比</h3>
+          <p>每次写盘内容有变化都会记一条快照。点流程图顶栏「历史对比」，勾选两个快照，按节点列出新增、删除、文字变化和状态变化；也可以只读查看旧版或回滚。</p>
+        </section>
+      </div>
+    </div>
+    <div id="guide-video" class="guide-panel" role="tabpanel" data-guide-panel="video" aria-label="视频介绍" hidden>
+      <video id="guide-player" src="guide/guide.mp4" controls preload="metadata" playsinline></video>
+      <p>56 秒看懂颜色协作、状态统计、Feat 档案、Agent 加锁和历史对比。</p>
+    </div>
+  </dialog>
+
   <script src="vendor/vendor.js"></script>
   <script src="sidebar.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="feat.js"></script>
+  <script src="guide.js"></script>
 </body>
 </html>
