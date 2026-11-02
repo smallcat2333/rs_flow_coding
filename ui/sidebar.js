@@ -21,6 +21,9 @@ window.Sidebar = (() => {
   let search = '', menu = null, saveQueue = Promise.resolve();
   const limits = new Map();
   let editing = false, drag = null;
+  /** APP 名称单击折叠的延迟（毫秒）：期间出现双击则改为原位改名。 */
+  const NAME_CLICK_MS = 250;
+  let nameClick = 0;
 
   /** 偏好写入顺序与点击顺序一致；失败保留错误提示，不吞掉保存失败。 */
   function persist() {
@@ -535,9 +538,15 @@ window.Sidebar = (() => {
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
       else if (head && !e.target.closest('.app-new, .feat-new')) {
         e.stopImmediatePropagation();
-        // 名称留给双击编辑，不在第一次点击时重绘 DOM；小三角和空白处仍可单击折叠。
-        if (head.classList.contains('app-head') && e.target.closest('.app-name')) return;
-        toggle(head.parentElement.dataset.key, false);
+        const key = head.parentElement.dataset.key;
+        // 名称单击也折叠/展开，但延迟到双击判定之后：双击改名时取消，避免重绘打断双击。
+        if (head.classList.contains('app-head') && e.target.closest('.app-name')) {
+          if (editing) return;
+          clearTimeout(nameClick);
+          nameClick = setTimeout(() => toggle(key, false), NAME_CLICK_MS);
+          return;
+        }
+        toggle(key, false);
       } else if (row && markSeen(row.dataset.path || row.dataset.feat)) {
         // 点开即视为已查看；打开文件仍交给 app.js 的冒泡处理，本次点击结束后再重绘 APP 行标记。
         row.classList.remove('unseen');
@@ -550,6 +559,7 @@ window.Sidebar = (() => {
       if (!appName && !groupName) return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      clearTimeout(nameClick);
       const fail = (error) => { $('side-msg').textContent = '修改显示名失败：' + error; };
       if (groupName) {
         const key = groupName.closest('.group-block').dataset.group;
