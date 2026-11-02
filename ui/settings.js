@@ -38,16 +38,56 @@ window.Settings = (() => {
     finally { busy = false; button.disabled = false; }
   }
 
-  /** 每个设置区域只显示自己的视图，保留尚未保存的项目目录输入。 */
+  /** 选中一个叶子分类：只显示对应内容，保留尚未保存的项目目录输入；数据维护页进入时读取最新用量。 */
   function tab(name) {
-    document.querySelectorAll('[data-settings-tab]').forEach((button) => {
-      const selected = button.dataset.settingsTab === name;
-      button.setAttribute('aria-selected', String(selected));
-      button.tabIndex = selected ? 0 : -1;
+    document.querySelectorAll('[data-settings-tab]').forEach((item) => {
+      item.setAttribute('aria-selected', String(item.dataset.settingsTab === name));
     });
+    focusNode(document.querySelector(`[data-settings-tab="${name}"]`), false);
     document.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
     $('settings-msg').textContent = '';
-    if (name === 'storage') act($('storage-refresh'), async () => { await usage(); return ''; });
+    if (name === 'database' || name === 'cache') {
+      act(document.querySelector(`[data-settings-panel="${name}"] [data-storage-refresh]`), async () => { await usage(); return ''; });
+    }
+  }
+
+  /** 分类树当前可见的节点（收起的父节点下的子节点除外），供方向键移动。 */
+  function visibleNodes() {
+    return [...$('settings-nav').querySelectorAll('[role="treeitem"]')].filter((item) => !item.parentElement.closest('[aria-expanded="false"]'));
+  }
+
+  /** 树的漫游焦点：只有一个节点可 Tab 进入；move=true 时同时移动键盘焦点。 */
+  function focusNode(item, move = true) {
+    $('settings-nav').querySelectorAll('[role="treeitem"]').forEach((node) => { node.tabIndex = node === item ? 0 : -1; });
+    if (move) item.focus();
+  }
+
+  /** 点击或回车：父节点展开/收起，叶子节点切换内容。 */
+  function activate(item) {
+    if (item.dataset.settingsTab) { if (!busy) tab(item.dataset.settingsTab); return; }
+    item.setAttribute('aria-expanded', String(item.getAttribute('aria-expanded') !== 'true'));
+    focusNode(item);
+  }
+
+  /** 树键盘操作：上下移动，左键收起或回到父节点，右键展开或进入首个子节点，Home/End 跳首尾。 */
+  function treeKey(event) {
+    const item = event.target.closest('[role="treeitem"]');
+    if (!item) return;
+    const nodes = visibleNodes(), index = nodes.indexOf(item);
+    const parent = item.parentElement.closest('[role="treeitem"]');
+    const expanded = item.getAttribute('aria-expanded');
+    const actions = {
+      ArrowDown: () => nodes[Math.min(index + 1, nodes.length - 1)],
+      ArrowUp: () => nodes[Math.max(index - 1, 0)],
+      Home: () => nodes[0],
+      End: () => nodes[nodes.length - 1],
+      ArrowRight: () => { if (expanded === 'false') { item.setAttribute('aria-expanded', 'true'); return item; } return expanded ? item.querySelector('[role="treeitem"]') : item; },
+      ArrowLeft: () => { if (expanded === 'true') { item.setAttribute('aria-expanded', 'false'); return item; } return parent || item; },
+    };
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(item); return; }
+    if (!actions[event.key]) return;
+    event.preventDefault();
+    focusNode(actions[event.key]());
   }
 
   /** 清理前列明不可逆结果，只有明确确认才调用维护命令；取消不写数据。 */
@@ -71,6 +111,7 @@ window.Settings = (() => {
   /** 显示设置并读取最新配置；多个窗口编辑后也以磁盘最新项目根为准。 */
   async function open() {
     $('settings-theme').value = themeSetting();
+    $('settings-auto-top').checked = Sidebar.autoTop();
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -80,27 +121,27 @@ window.Settings = (() => {
     });
   }
 
-  /** 初始化三个入口与设置行为；键盘和关闭均复用原生 dialog 焦点管理。 */
+  /** 初始化设置入口与设置行为；关闭复用原生 dialog 焦点管理。 */
   function init() {
     $('btn-settings').onclick = open;
     $('settings-close').onclick = () => $('settings-dialog').close();
     $('settings-dialog').addEventListener('cancel', (e) => { if (busy) e.preventDefault(); });
-    document.querySelectorAll('[data-settings-tab]').forEach((button) => {
-      button.onclick = () => { if (!busy) tab(button.dataset.settingsTab); };
-      button.onkeydown = (event) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault();
-        if (busy) return;
-        const buttons = [...document.querySelectorAll('[data-settings-tab]')];
-        const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-          : (buttons.indexOf(button) + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
-        buttons[index].click(); buttons[index].focus();
-      };
+    $('settings-nav').addEventListener('click', (e) => {
+      const node = e.target.closest('.settings-node');
+      if (node) activate(node.parentElement);
     });
+    $('settings-nav').addEventListener('keydown', treeKey);
     $('settings-theme').onchange = (e) => {
       localStorage.setItem('fc-theme', e.target.value);
       applyTheme();
       $('settings-msg').textContent = '外观已保存';
+    };
+    $('settings-auto-top').onchange = (e) => {
+      const box = e.currentTarget;
+      act(box, async () => {
+        await Sidebar.setAutoTop(box.checked);
+        return box.checked ? '已开启更新自动置顶' : '已关闭更新自动置顶，现有顺序保持不变';
+      });
     };
     $('settings-project-save').onclick = (e) => act(e.currentTarget, async () => {
       const roots = $('roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -113,7 +154,9 @@ window.Settings = (() => {
       if (!await refresh(true)) throw new Error($('side-msg').textContent);
       return '全量扫描完成';
     });
-    $('storage-refresh').onclick = (e) => act(e.currentTarget, async () => { await usage(); return '用量已更新'; });
+    document.querySelectorAll('[data-storage-refresh]').forEach((button) => {
+      button.onclick = (e) => act(e.currentTarget, async () => { await usage(); return '用量已更新'; });
+    });
     $('database-clean').onclick = (e) => act(e.currentTarget, async () => {
       const stats = await invoke('get_storage_stats');
       if (!await confirmCleanup('清理数据库旧历史？', `将清理 ${stats.old_snapshots.toLocaleString()} 条旧快照及其节点记录，每张流程图保留最新快照。旧版本对比和回滚记录删除后无法恢复。项目文件保持原样。`, '清理旧历史')) return '已取消';
@@ -126,16 +169,6 @@ window.Settings = (() => {
       await invoke('clear_scan_cache');
       await usage();
       return '目录扫描缓存已清空，下次刷新自动重新扫描';
-    });
-    $('btn-search').onclick = () => {
-      const visible = $('tree-filter').hidden;
-      $('tree-filter').hidden = !visible;
-      $('btn-search').setAttribute('aria-expanded', String(visible));
-      if (visible) $('tree-search').focus();
-      else { $('tree-search').value = ''; $('tree-search').dispatchEvent(new Event('input')); }
-    };
-    $('tree-search').addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); $('btn-search').click(); $('btn-search').focus(); }
     });
   }
 

@@ -13,7 +13,8 @@ const SKIP_DIRS: [&str; 16] = [
 ];
 
 /// 本机侧栏偏好：折叠区的键、显式展开的收纳区、是否搜索历史；搜索词不持久化。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// 排序与置顶只影响本机显示，不改项目文件；缺省字段按 `Default` 补齐（自动置顶默认开启）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SidebarPrefs {
     pub collapsed: Vec<String>,
@@ -21,6 +22,36 @@ pub struct SidebarPrefs {
     pub include_archived: bool,
     /// APP 显示别名，以 flow_dir 为键；不修改原目录名或项目文件。
     pub app_aliases: std::collections::BTreeMap<String, String>,
+    /// 分组显示别名，以分组目录路径为键（未分组为空串）。
+    pub group_aliases: std::collections::BTreeMap<String, String>,
+    /// 分组显示顺序（分组键）；未列出的分组按扫描顺序排在后面。
+    pub group_order: Vec<String>,
+    /// APP 显示顺序（flow_dir）；只在同一分组内比较，未列出的排在后面。
+    pub app_order: Vec<String>,
+    /// Agent 或外部改动流程图/Feat 时自动置顶并标记未查看。
+    pub auto_top: bool,
+    /// 条目最近一次被置顶的时间（毫秒），键为规范化路径；列表内按时间倒序排在前面。
+    pub bumped: std::collections::BTreeMap<String, i64>,
+    /// 更新后尚未点开的条目（规范化路径），侧栏以淡蓝底色提示。
+    pub unseen: Vec<String>,
+}
+
+impl Default for SidebarPrefs {
+    /// 新配置与旧配置缺字段时：全部展开、不搜历史、无别名与自定义顺序，自动置顶开启。
+    fn default() -> Self {
+        Self {
+            collapsed: Vec::new(),
+            expanded_archives: Vec::new(),
+            include_archived: false,
+            app_aliases: Default::default(),
+            group_aliases: Default::default(),
+            group_order: Vec::new(),
+            app_order: Vec::new(),
+            auto_top: true,
+            bumped: Default::default(),
+            unseen: Vec::new(),
+        }
+    }
 }
 
 /// 用户配置，存于 `<数据目录>/config.json`。
@@ -152,9 +183,16 @@ mod tests {
     fn sidebar_aliases_roundtrip() {
         let mut prefs: SidebarPrefs = serde_json::from_str(r#"{"collapsed":["app"],"expanded_archives":[],"include_archived":true}"#).unwrap();
         assert!(prefs.app_aliases.is_empty());
+        assert!(prefs.auto_top, "旧配置缺字段时自动置顶默认开启");
         prefs.app_aliases.insert("/project/app_sever/docs/flow".into(), "服务端".into());
+        prefs.group_aliases.insert("/project/group_sever".into(), "服务".into());
+        prefs.group_order = vec!["/project/group_sever".into(), String::new()];
+        prefs.auto_top = false;
         let restored: SidebarPrefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
         assert_eq!(restored.app_aliases["/project/app_sever/docs/flow"], "服务端");
+        assert_eq!(restored.group_aliases["/project/group_sever"], "服务");
+        assert_eq!(restored.group_order, ["/project/group_sever", ""]);
+        assert!(!restored.auto_top);
         assert_eq!(restored.collapsed, ["app"]);
         assert!(restored.include_archived);
     }

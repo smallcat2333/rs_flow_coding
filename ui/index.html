@@ -19,23 +19,20 @@
 <body>
   <aside id="side">
     <header id="side-tools">
-      <h1>Flow Coding</h1>
+      <button id="btn-refresh" class="icon-button" title="刷新：重新读取已知目录" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 7a7 7 0 0 1 11.5-1L20 9M4 15l2.3 3A7 7 0 0 0 17.8 17"/></svg></button>
       <nav aria-label="工具入口">
-        <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
-        <button id="btn-refresh" class="icon-button" title="刷新：重新读取已知目录" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 7a7 7 0 0 1 11.5-1L20 9M4 15l2.3 3A7 7 0 0 0 17.8 17"/></svg></button>
+        <button id="btn-toggle-all" class="icon-button" title="全部收纳" aria-label="全部收纳"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="toggle-all-icon" d="m7 9 5-5 5 5M7 15l5 5 5-5"/></svg></button>
         <button id="btn-search" class="icon-button" title="搜索名称或 Feat 编号" aria-label="搜索" aria-controls="tree-filter" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
+        <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
       </nav>
+      <div id="tree-filter" role="search" hidden>
+        <input id="tree-search" type="search" placeholder="搜索名称或 Feat 编号" aria-label="搜索名称或 Feat 编号">
+        <label><input id="search-archived" type="checkbox">搜索含历史</label>
+      </div>
     </header>
     <section id="totals" aria-label="启用流程图的节点状态统计">
-      <div class="stats-heading"><b>节点状态</b><span id="stats-total">0 节点</span></div>
       <div id="status-bars"></div>
-      <div class="stats-pending"><span>待你审 <b id="t-user">0</b></span><span>待 Agent <b id="t-agent">0</b></span></div>
     </section>
-    <div id="tree-actions" aria-label="目录显示"><button id="btn-expand-all" title="展开全部 APP、Chart、Feat 和历史分组">全部展开</button><button id="btn-collapse-all" title="折叠全部 APP 与文档分组">全部收纳</button></div>
-    <div id="tree-filter" hidden>
-      <input id="tree-search" type="search" placeholder="搜索名称或 Feat 编号" aria-label="搜索名称或 Feat 编号">
-      <label><input id="search-archived" type="checkbox">搜索含历史</label>
-    </div>
     <div id="tree"></div>
     <div id="side-msg"></div>
   </aside>
@@ -124,24 +121,50 @@
 
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <header class="settings-header"><h2 id="settings-title">设置</h2><button id="settings-close" class="icon-button" aria-label="关闭设置" title="关闭设置">×</button></header>
-    <div class="settings-tabs" role="tablist" aria-label="设置分类">
-      <button id="settings-tab-appearance" role="tab" data-settings-tab="appearance" aria-controls="settings-appearance" aria-selected="true">外观</button>
-      <button id="settings-tab-projects" role="tab" data-settings-tab="projects" aria-controls="settings-projects" aria-selected="false" tabindex="-1">项目目录</button>
-      <button id="settings-tab-storage" role="tab" data-settings-tab="storage" aria-controls="settings-storage" aria-selected="false" tabindex="-1">数据维护</button>
-    </div>
-    <div class="settings-content">
-      <section id="settings-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" data-settings-panel="appearance">
-        <div class="settings-row"><div><h3>外观设定</h3><p>侧栏、Markdown 和流程图编辑器使用同一主题。</p></div><div class="settings-well"><label for="settings-theme">界面主题</label><select id="settings-theme"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select><p>选择后立即保存，独立窗口同步生效。</p></div></div>
-      </section>
-      <section id="settings-projects" role="tabpanel" aria-labelledby="settings-tab-projects" data-settings-panel="projects" hidden>
-        <div class="settings-row"><div><h3>项目目录</h3><p>扫描各项目中的 docs/flow 和 docs/feat，按 APP 汇总。</p></div><div class="settings-well"><label for="roots-text">项目根目录，每行一个</label><textarea id="roots-text" rows="6" spellcheck="false"></textarea><div class="settings-actions"><button id="settings-project-save">保存并扫描</button></div></div></div>
-        <div class="settings-row"><div><h3>发现新 APP</h3><p>新增 APP 后重新遍历项目。日常刷新只读取已发现的目录。</p></div><div class="settings-well"><button id="btn-rescan">全量扫描</button></div></div>
-      </section>
-      <section id="settings-storage" role="tabpanel" aria-labelledby="settings-tab-storage" data-settings-panel="storage" hidden>
-        <div class="storage-heading"><h3>本机用量</h3><button id="storage-refresh">更新统计</button></div>
-        <div class="settings-row"><div><h3>数据库</h3><p id="storage-path"></p></div><div class="settings-well"><dl class="storage-values"><div><dt>文件占用（含 WAL）</dt><dd id="storage-size">—</dd></div><div><dt>流程图登记</dt><dd id="storage-diagrams">—</dd></div><div><dt>历史快照</dt><dd id="storage-snapshots">—</dd></div><div><dt>可清理旧快照</dt><dd id="storage-old">—</dd></div><div><dt>快照节点记录</dt><dd id="storage-nodes">—</dd></div></dl><p>清理后每张图保留最新快照，更早的对比与回滚记录永久删除。</p><button id="database-clean" class="danger">清理旧历史并回收空间</button></div></div>
-        <div class="settings-row"><div><h3>目录扫描缓存</h3><p>保存已发现的 APP 目录，供启动和常规刷新使用。</p></div><div class="settings-well"><dl class="storage-values"><div><dt>缓存目录</dt><dd id="cache-dirs">—</dd></div><div><dt>缓存内容大小</dt><dd id="cache-size">—</dd></div></dl><p>清空后下次刷新自动重新扫描。项目文件、目录设置和显示偏好保留。</p><button id="cache-clean">清理目录缓存</button></div></div>
-      </section>
+    <div class="settings-body">
+      <ul id="settings-nav" role="tree" aria-label="设置分类">
+        <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">常规</span>
+          <ul role="group">
+            <li role="treeitem" data-settings-tab="appearance" aria-selected="true" tabindex="0"><span class="settings-node">外观</span></li>
+            <li role="treeitem" data-settings-tab="sidebar" aria-selected="false" tabindex="-1"><span class="settings-node">侧栏</span></li>
+          </ul>
+        </li>
+        <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">项目</span>
+          <ul role="group">
+            <li role="treeitem" data-settings-tab="projects" aria-selected="false" tabindex="-1"><span class="settings-node">项目目录</span></li>
+          </ul>
+        </li>
+        <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">数据维护</span>
+          <ul role="group">
+            <li role="treeitem" data-settings-tab="database" aria-selected="false" tabindex="-1"><span class="settings-node">数据库</span></li>
+            <li role="treeitem" data-settings-tab="cache" aria-selected="false" tabindex="-1"><span class="settings-node">目录缓存</span></li>
+          </ul>
+        </li>
+      </ul>
+      <div class="settings-content">
+        <section data-settings-panel="appearance" aria-label="外观">
+          <h3>外观</h3><p>侧栏、Markdown 和流程图编辑器使用同一主题。</p>
+          <div class="settings-well"><label for="settings-theme">界面主题</label><select id="settings-theme"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select><p>选择后立即保存，独立窗口同步生效。</p></div>
+        </section>
+        <section data-settings-panel="sidebar" aria-label="侧栏" hidden>
+          <h3>侧栏</h3><p>分组和 APP 可在侧栏中上下拖动排序，双击名称修改显示名。</p>
+          <div class="settings-well"><label class="settings-check"><input id="settings-auto-top" type="checkbox">更新自动置顶</label><p>Agent 或外部改动流程图、Feat 时，条目移到所在列表最上，所属 APP 和分组也移到最上，并以淡蓝底色标记，点开后标记消失。在 App 内自己编辑不触发。</p></div>
+        </section>
+        <section data-settings-panel="projects" aria-label="项目目录" hidden>
+          <h3>项目目录</h3><p>扫描各项目中的 docs/flow 和 docs/feat，按 APP 汇总。</p>
+          <div class="settings-well"><label for="roots-text">项目根目录，每行一个</label><textarea id="roots-text" rows="6" spellcheck="false"></textarea><div class="settings-actions"><button id="settings-project-save">保存并扫描</button></div></div>
+          <h3>发现新 APP</h3><p>新增 APP 后重新遍历项目。日常刷新只读取已发现的目录。</p>
+          <div class="settings-well"><button id="btn-rescan">全量扫描</button></div>
+        </section>
+        <section data-settings-panel="database" aria-label="数据库" hidden>
+          <div class="storage-heading"><h3>数据库</h3><button data-storage-refresh>更新统计</button></div><p id="storage-path"></p>
+          <div class="settings-well"><dl class="storage-values"><div><dt>文件占用（含 WAL）</dt><dd id="storage-size">—</dd></div><div><dt>流程图登记</dt><dd id="storage-diagrams">—</dd></div><div><dt>历史快照</dt><dd id="storage-snapshots">—</dd></div><div><dt>可清理旧快照</dt><dd id="storage-old">—</dd></div><div><dt>快照节点记录</dt><dd id="storage-nodes">—</dd></div></dl><p>清理后每张图保留最新快照，更早的对比与回滚记录永久删除。</p><button id="database-clean" class="danger">清理旧历史并回收空间</button></div>
+        </section>
+        <section data-settings-panel="cache" aria-label="目录缓存" hidden>
+          <div class="storage-heading"><h3>目录扫描缓存</h3><button data-storage-refresh>更新统计</button></div><p>保存已发现的 APP 目录，供启动和常规刷新使用。</p>
+          <div class="settings-well"><dl class="storage-values"><div><dt>缓存目录</dt><dd id="cache-dirs">—</dd></div><div><dt>缓存内容大小</dt><dd id="cache-size">—</dd></div></dl><p>清空后下次刷新自动重新扫描。项目文件、目录设置和显示偏好保留。</p><button id="cache-clean">清理目录缓存</button></div>
+        </section>
+      </div>
     </div>
     <footer id="settings-msg" role="status" aria-live="polite"></footer>
   </dialog>

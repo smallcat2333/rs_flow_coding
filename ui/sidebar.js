@@ -1,16 +1,26 @@
-// 侧栏生命周期与收纳：Feat 状态来自 Markdown，Chart 启停来自项目元数据；这里只保存本机显示偏好。
+// 侧栏生命周期与收纳：Feat 状态来自 Markdown，Chart 启停来自项目元数据；这里只保存本机显示偏好
+// （折叠、别名、分组/APP 顺序、更新置顶与未查看标记）。
 'use strict';
 
 window.Sidebar = (() => {
   const { invoke } = window.__TAURI__.core;
+  const { listen } = window.__TAURI__.event;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  /** 置顶与未查看标记用的路径键：统一分隔符并忽略大小写（Windows 路径）。 */
+  const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+  /** 分组键：分组目录路径（APP 目录的父目录）；未分组的 APP 合并为空串一组。 */
+  const groupKey = (a) => a.group ? a.flow_dir.replace(/[\\/][^\\/]+[\\/]docs[\\/]flow$/i, '') : '';
   const PAGE_SIZE = 20;
-  let prefs = { collapsed: [], expanded_archives: [], include_archived: false, app_aliases: {} };
+  /** 一次写盘常触发多次文件通知，同一条目在该时间内只置顶一次（毫秒）。 */
+  const BUMP_DEBOUNCE_MS = 1500;
+  const ICON_EXPAND = 'm7 9 5-5 5 5M7 15l5 5 5-5';
+  const ICON_COLLAPSE = 'm7 4 5 5 5-5M7 20l5-5 5 5';
+  let prefs;
   let apps = [], currentFlow = '', currentFeat = '', refresh;
   let search = '', menu = null, saveQueue = Promise.resolve();
   const limits = new Map();
-  let editingApp = false;
+  let editing = false, drag = null;
 
   /** 偏好写入顺序与点击顺序一致；失败保留错误提示，不吞掉保存失败。 */
   function persist() {
@@ -32,14 +42,80 @@ window.Sidebar = (() => {
 
   /** 全部展开/收纳只更新折叠偏好；清除搜索的强制展开，分页仍按每批20项显示。 */
   function setAllExpanded(expanded) {
-    search = '';
-    $('tree-search').value = '';
-    limits.clear();
     const keys = apps.flatMap((a) => [a.flow_dir, a.flow_dir + '#flow', a.flow_dir + '#feat']);
     prefs.collapsed = expanded ? [] : keys;
     prefs.expanded_archives = expanded ? apps.flatMap((a) => [a.flow_dir + '#flow#archive', a.flow_dir + '#feat#archive']) : [];
     persist();
+    $('tree-search').value = '';
+    setSearch('');
+  }
+
+  /** 顶部单个展开/收纳按钮：有折叠项时执行「全部展开」，否则执行「全部收纳」，图标与提示随之切换。 */
+  function syncToggleAll() {
+    const expand = prefs.collapsed.length > 0;
+    const label = expand ? '全部展开' : '全部收纳';
+    $('btn-toggle-all').title = label;
+    $('btn-toggle-all').setAttribute('aria-label', label);
+    $('toggle-all-icon').setAttribute('d', expand ? ICON_EXPAND : ICON_COLLAPSE);
+  }
+
+  /** 按偏好顺序排列：分组按 group_order，组内 APP 按 app_order；未列出的保持扫描顺序排在后面（稳定排序）。 */
+  function ordered() {
+    const rank = (order, key) => { const i = order.indexOf(key); return i < 0 ? Infinity : i; };
+    const groups = new Map();
+    for (const a of apps) {
+      const key = groupKey(a);
+      if (!groups.has(key)) groups.set(key, { key, name: a.group, apps: [] });
+      groups.get(key).apps.push(a);
+    }
+    const list = [...groups.values()].sort((x, y) => rank(prefs.group_order, x.key) - rank(prefs.group_order, y.key));
+    for (const g of list) g.apps.sort((x, y) => rank(prefs.app_order, x.flow_dir) - rank(prefs.app_order, y.flow_dir));
+    return list;
+  }
+
+  /** 列表内最近置顶的条目在前（时间倒序），从未置顶的保持原顺序。 */
+  function byBump(list) {
+    const at = (f) => prefs.bumped[norm(f.path)] || 0;
+    return [...list].sort((x, y) => at(y) - at(x));
+  }
+
+  /** Agent/外部改动时置顶：条目记置顶时间与未查看标记，所属 APP 与分组移到最前。
+   *  仅主窗口处理（独立窗口不显示侧栏，避免多窗口重复写偏好）；关闭自动置顶或当前正打开的条目不标未查看。 */
+  function bump(path) {
+    if (SOLO || !prefs.auto_top) return;
+    const key = norm(path), now = Date.now();
+    if (now - (prefs.bumped[key] || 0) < BUMP_DEBOUNCE_MS) return;
+    prefs.bumped[key] = now;
+    if (key !== norm(currentFlow) && key !== norm(currentFeat) && !prefs.unseen.includes(key)) prefs.unseen.push(key);
+    const dir = key.replace(/\/[^/]+$/, '');
+    const app = apps.find((a) => norm(a.flow_dir) === dir || norm(a.feat_dir) === dir);
+    if (app) {
+      const groups = ordered(), group = groupKey(app);
+      prefs.app_order = [app.flow_dir, ...groups.flatMap((g) => g.apps.map((a) => a.flow_dir)).filter((k) => k !== app.flow_dir)];
+      prefs.group_order = [group, ...groups.map((g) => g.key).filter((k) => k !== group)];
+    }
+    persist();
     render(apps, currentFlow, currentFeat);
+  }
+
+  /** 去掉一条未查看标记；返回是否有变化。 */
+  function markSeen(path) {
+    const key = norm(path);
+    if (!path || !prefs.unseen.includes(key)) return false;
+    prefs.unseen = prefs.unseen.filter((k) => k !== key);
+    return true;
+  }
+
+  /** 刷新后清理已不存在文件的置顶时间与未查看标记（文件删除、重命名后不再累积）。 */
+  function prune(list) {
+    if (SOLO) return;
+    const live = new Set(list.flatMap((a) => [...a.files, ...a.feats].map((f) => norm(f.path))));
+    const stale = Object.keys(prefs.bumped).filter((k) => !live.has(k));
+    stale.forEach((k) => delete prefs.bumped[k]);
+    const unseen = prefs.unseen.filter((k) => live.has(k));
+    if (!stale.length && unseen.length === prefs.unseen.length) return;
+    prefs.unseen = unseen;
+    persist();
   }
 
   /** 一行锁标签；生命周期标识与节点颜色徽标分开显示。 */
@@ -47,16 +123,21 @@ window.Sidebar = (() => {
     return lock ? `<span class="lock-dot">${lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
   }
 
+  /** 条目行公共类名：当前打开、收纳灰显、更新未查看淡蓝底。 */
+  function rowClass(f, current, archived) {
+    return `${f.path === current ? 'active' : ''} ${archived ? 'archived-entry' : ''} ${prefs.unseen.includes(norm(f.path)) ? 'unseen' : ''}`;
+  }
+
   /** 流程图行：启用与停用均可查看，停用项不显示日常待办徽标。 */
   function flowRow(f) {
-    return `<div class="file ${f.path === currentFlow ? 'active' : ''} ${f.enabled ? '' : 'archived-entry'}" data-path="${esc(f.path)}" tabindex="0" title="${esc(f.path)}">
+    return `<div class="file ${rowClass(f, currentFlow, !f.enabled)}" data-path="${esc(f.path)}" tabindex="0" title="${esc(f.path)}">
       <span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>${lockTag(f.lock)}
       ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : f.enabled ? badges(f.counts) : ''}</div>`;
   }
 
   /** Feat 行：阶段仍保留，关闭与废弃单独标识，不以开发完成推断关闭。 */
   function featRow(f) {
-    return `<div class="feat ${f.path === currentFeat ? 'active' : ''} ${f.archived ? 'archived-entry' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" tabindex="0" title="${esc(f.path)}">
+    return `<div class="feat ${rowClass(f, currentFeat, f.archived)}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" tabindex="0" title="${esc(f.path)}">
       <div class="feat-line"><span class="file-name">${esc(f.title || f.id)}</span>${lockTag(f.lock)}
         ${!f.archived ? f.closable ? '<span class="closable" title="关联节点全部已实现">可关闭</span>' : badges(f.counts) : ''}</div>
       <div class="feat-meta"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></div></div>`;
@@ -86,12 +167,12 @@ window.Sidebar = (() => {
     return `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(key)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} ${label}</span><span>${list.length}</span></button>${expanded ? `<div class="archive-body">${content}</div>` : ''}</div>`;
   }
 
-  /** 一类文档的活跃项与历史区，普通组的折叠偏好在搜索时暂时展开。 */
+  /** 一类文档的活跃项与历史区，普通组的折叠偏好在搜索时暂时展开；活跃项按最近置顶排序。 */
   function section(a, kind) {
     const flow = kind === 'flow';
     const all = flow ? a.files : a.feats;
     const matches = (f) => !search || `${f.name || ''} ${f.title || ''} ${f.id || ''} ${f.status || ''}`.toLowerCase().includes(search);
-    const active = all.filter((f) => (flow ? f.enabled : !f.archived) && matches(f));
+    const active = byBump(all.filter((f) => (flow ? f.enabled : !f.archived) && matches(f)));
     const archived = all.filter((f) => (flow ? !f.enabled : f.archived) && matches(f) && (!search || prefs.include_archived));
     if (search && !active.length && !archived.length) return '';
     const key = a.flow_dir + '#' + kind;
@@ -110,16 +191,19 @@ window.Sidebar = (() => {
       ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', flow ? 'disabled_at' : 'closed_at')}</div></div>`;
   }
 
-  /** APP 原位编辑：Enter/失焦保存、Esc 取消；空值恢复原名，写入失败恢复旧别名。 */
-  async function renameApp(app, element) {
-    if (editingApp) return;
-    editingApp = true;
-    const previous = prefs.app_aliases[app.flow_dir];
+  /** 原位编辑 APP 或分组显示名：Enter/失焦保存、Esc 取消；空值或填回原名恢复默认，写入失败恢复旧别名。
+   *  field 为 prefs 中的别名表（app_aliases / group_aliases），key 为对应键，original 为目录原名。 */
+  async function rename(field, key, original, element, label) {
+    if (editing) return;
+    editing = true;
+    const aliases = prefs[field];
+    const previous = aliases[key];
     const input = document.createElement('input');
     input.className = 'app-rename';
     input.type = 'text';
-    input.value = previous || app.app;
-    input.setAttribute('aria-label', 'APP 显示名');
+    input.value = previous || original;
+    input.setAttribute('aria-label', label);
+    element.closest('[draggable]').draggable = false;
     element.replaceChildren(input);
     input.focus();
     input.select();
@@ -145,16 +229,16 @@ window.Sidebar = (() => {
         input.addEventListener('blur', () => finish(true));
       });
       if (name === null) return;
-      if (!name || name === app.app) delete prefs.app_aliases[app.flow_dir];
-      else prefs.app_aliases[app.flow_dir] = name;
+      if (!name || name === original) delete aliases[key];
+      else aliases[key] = name;
       try { await persist(); }
       catch (error) {
-        if (previous) prefs.app_aliases[app.flow_dir] = previous;
-        else delete prefs.app_aliases[app.flow_dir];
+        if (previous) aliases[key] = previous;
+        else delete aliases[key];
         throw error;
       }
     } finally {
-      editingApp = false;
+      editing = false;
       render(apps, currentFlow, currentFeat);
     }
   }
@@ -199,31 +283,41 @@ window.Sidebar = (() => {
   }
   const appResize = new ResizeObserver(() => fitAppBadges());
 
-  /** 重绘侧栏，合计继续使用后端只包含启用 Chart 的统计。 */
+  /** 重绘侧栏：按偏好顺序输出分组与 APP，合计继续使用后端只包含启用 Chart 的统计。
+   *  当前打开的条目视为已查看，主窗口顺带清除其未查看标记。 */
   function render(nextApps, flowPath, featPath) {
     apps = nextApps; currentFlow = flowPath; currentFeat = featPath;
     // 后台刷新只更新数据，编辑结束再绘制，避免原位输入被替换。
-    if (editingApp) return;
+    if (editing) return;
+    if (!SOLO && (markSeen(flowPath) | markSeen(featPath))) persist();
     closeMenu();
     appResize.disconnect();
     const total = {};
-    let html = '', group = null;
-    for (const a of apps) {
-      for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
-      const sections = section(a, 'flow') + section(a, 'feat');
-      if (!sections) continue;
-      if (a.group !== group) { group = a.group; html += `<div class="group">${esc(group || '未分组')}</div>`; }
-      const collapsed = !search && prefs.collapsed.includes(a.flow_dir);
-      const alias = prefs.app_aliases[a.flow_dir];
-      html += `<div class="app ${collapsed ? 'collapsed' : ''}" data-key="${esc(a.flow_dir)}"><div class="app-head" role="button" tabindex="0" aria-expanded="${!collapsed}">
-        <span class="app-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
-        <span class="app-name"><span class="app-display">${esc(alias || a.app)}</span>${alias ? `<small class="app-original">${esc(a.app)}</small>` : ''}</span>
-        ${appBadges(a.counts)}</div>${sections}</div>`;
+    for (const a of apps) for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
+    let html = '';
+    for (const g of ordered()) {
+      let body = '';
+      for (const a of g.apps) {
+        const sections = section(a, 'flow') + section(a, 'feat');
+        if (!sections) continue;
+        const collapsed = !search && prefs.collapsed.includes(a.flow_dir);
+        const alias = prefs.app_aliases[a.flow_dir];
+        const unseen = [...a.files, ...a.feats].some((f) => prefs.unseen.includes(norm(f.path)));
+        body += `<div class="app ${collapsed ? 'collapsed' : ''}" data-key="${esc(a.flow_dir)}" data-group="${esc(g.key)}"><div class="app-head ${unseen ? 'unseen' : ''}" role="button" tabindex="0" aria-expanded="${!collapsed}" draggable="true" title="拖动调整 APP 顺序">
+          <span class="app-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
+          <span class="app-name"><span class="app-display">${esc(alias || a.app)}</span>${alias ? `<small class="app-original">${esc(a.app)}</small>` : ''}</span>
+          ${appBadges(a.counts)}</div>${sections}</div>`;
+      }
+      if (!body) continue;
+      const alias = prefs.group_aliases[g.key];
+      html += `<div class="group-block" data-group="${esc(g.key)}"><div class="group" draggable="true" title="拖动调整分组顺序，双击名称修改显示名">
+        <span class="group-name"><span class="group-display">${esc(alias || g.name || '未分组')}</span>${alias ? `<small class="group-original">${esc(g.name || '未分组')}</small>` : ''}</span></div>${body}</div>`;
     }
     $('tree').innerHTML = html || '<div class="empty mini">没有匹配项</div>';
     fitAppBadges();
     $('tree').querySelectorAll('.app-head').forEach((head) => appResize.observe(head));
     renderStatusStats(total);
+    syncToggleAll();
   }
 
   /** 关闭右键菜单并把焦点还给对应条目，避免滚动列表。 */
@@ -313,16 +407,118 @@ window.Sidebar = (() => {
     await refresh();
   }
 
+  /** 悬浮搜索框：放大镜切换显示；关闭时保留搜索词，放大镜高亮提示仍在筛选。 */
+  function showSearch(open) {
+    $('tree-filter').hidden = !open;
+    $('btn-search').setAttribute('aria-expanded', String(open));
+    if (open) { $('tree-search').focus(); $('tree-search').select(); }
+  }
+
+  /** 搜索词变化：重置分页并重绘；放大镜在有搜索词时高亮，提示当前筛选内容。 */
+  function setSearch(value) {
+    search = value.trim().toLowerCase();
+    limits.clear();
+    closeMenu();
+    $('btn-search').classList.toggle('filtering', !!search);
+    $('btn-search').title = search ? `正在搜索「${value.trim()}」，点击修改` : '搜索名称或 Feat 编号';
+    render(apps, currentFlow, currentFeat);
+  }
+
+  /** 拖动落点：分组只能落在分组区块上，APP 只能落在同一分组内的其他 APP 上；返回目标元素与键。 */
+  function dropTarget(e) {
+    if (!drag) return null;
+    const block = e.target.closest('.group-block');
+    if (drag.type === 'group') return block && block.dataset.group !== drag.key ? { el: block, key: block.dataset.group } : null;
+    const app = e.target.closest('.app');
+    return app && app.dataset.group === drag.group && app.dataset.key !== drag.key ? { el: app, key: app.dataset.key } : null;
+  }
+
+  /** 清除拖动落点提示线。 */
+  function clearDrop() {
+    $('tree').querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+  }
+
+  /** 把 key 移到 target 前/后，返回新顺序。 */
+  function moveKey(list, key, target, before) {
+    const out = list.filter((k) => k !== key);
+    out.splice(out.indexOf(target) + (before ? 0 : 1), 0, key);
+    return out;
+  }
+
+  /** 分组与 APP 上下拖动排序：顺序写入本机偏好；APP 不跨分组（分组由目录决定）。 */
+  function bindDrag() {
+    const tree = $('tree');
+    tree.addEventListener('dragstart', (e) => {
+      const head = e.target.closest('.app-head'), group = e.target.closest('.group');
+      if (editing || (!head && !group)) return;
+      closeMenu();
+      drag = head ? { type: 'app', key: head.parentElement.dataset.key, group: head.parentElement.dataset.group }
+        : { type: 'group', key: group.parentElement.dataset.group };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', drag.key);
+      (head || group).classList.add('dragging');
+    });
+    tree.addEventListener('dragover', (e) => {
+      const target = dropTarget(e);
+      clearDrop();
+      if (!target) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const box = target.el.getBoundingClientRect();
+      target.el.classList.add(e.clientY < box.top + box.height / 2 ? 'drop-before' : 'drop-after');
+    });
+    tree.addEventListener('drop', (e) => {
+      const target = dropTarget(e);
+      if (!target) return;
+      e.preventDefault();
+      const before = target.el.classList.contains('drop-before');
+      const groups = ordered();
+      if (drag.type === 'group') prefs.group_order = moveKey(groups.map((g) => g.key), drag.key, target.key, before);
+      else prefs.app_order = moveKey(groups.flatMap((g) => g.apps.map((a) => a.flow_dir)), drag.key, target.key, before);
+      drag = null;
+      persist();
+      render(apps, currentFlow, currentFeat);
+    });
+    tree.addEventListener('dragend', () => {
+      drag = null;
+      clearDrop();
+      tree.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+    });
+  }
+
+  /** 开关更新自动置顶；关闭后已有顺序保持不变，只是不再新增置顶和未查看标记。 */
+  function setAutoTop(enabled) {
+    prefs.auto_top = enabled;
+    return persist();
+  }
+
   /** 初始化本机偏好及事件；树中原有的打开文件/新建交互由 app.js 继续处理。 */
   async function init(onRefresh) {
     refresh = onRefresh;
     const config = await invoke('get_config');
     prefs = config.sidebar;
     $('search-archived').checked = prefs.include_archived;
-    $('btn-expand-all').onclick = () => setAllExpanded(true);
-    $('btn-collapse-all').onclick = () => setAllExpanded(false);
-    $('tree-search').oninput = (e) => { search = e.target.value.trim().toLowerCase(); limits.clear(); closeMenu(); render(apps, currentFlow, currentFeat); };
+    $('btn-toggle-all').onclick = () => setAllExpanded(prefs.collapsed.length > 0);
+    $('btn-search').onclick = () => showSearch($('tree-filter').hidden);
+    $('tree-search').oninput = (e) => setSearch(e.target.value);
+    $('tree-search').addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      $('tree-search').value = '';
+      setSearch('');
+      showSearch(false);
+      $('btn-search').focus();
+    });
     $('search-archived').onchange = (e) => { prefs.include_archived = e.target.checked; persist(); render(apps, currentFlow, currentFeat); };
+    // 点搜索框外（含树中的搜索结果）收起悬浮框，搜索词保留。
+    document.addEventListener('pointerdown', (e) => {
+      if (!$('tree-filter').hidden && !e.target.closest('#tree-filter, #btn-search')) showSearch(false);
+    });
+    if (!SOLO) {
+      listen('flow-changed', (ev) => { if (ev.payload.hash && ev.payload.source !== 'user') bump(ev.payload.path); });
+      listen('md-changed', (ev) => { if (ev.payload.hash && ev.payload.source !== 'user') bump(ev.payload.path); });
+    }
+    bindDrag();
     $('tree').addEventListener('contextmenu', (e) => {
       const row = e.target.closest('.file, .feat');
       if (!row) return;
@@ -334,6 +530,7 @@ window.Sidebar = (() => {
       const more = e.target.closest('[data-more]');
       const archived = e.target.closest('[data-archive]');
       const head = e.target.closest('.app-head, .sec-head');
+      const row = e.target.closest('.file, .feat');
       if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
       else if (head && !e.target.closest('.app-new, .feat-new')) {
@@ -341,15 +538,27 @@ window.Sidebar = (() => {
         // 名称留给双击编辑，不在第一次点击时重绘 DOM；小三角和空白处仍可单击折叠。
         if (head.classList.contains('app-head') && e.target.closest('.app-name')) return;
         toggle(head.parentElement.dataset.key, false);
+      } else if (row && markSeen(row.dataset.path || row.dataset.feat)) {
+        // 点开即视为已查看；打开文件仍交给 app.js 的冒泡处理，本次点击结束后再重绘 APP 行标记。
+        row.classList.remove('unseen');
+        persist();
+        setTimeout(() => render(apps, currentFlow, currentFeat));
       }
     }, true);
     $('tree').addEventListener('dblclick', (e) => {
-      const head = e.target.closest('.app-head');
-      if (!head || !e.target.closest('.app-name')) return;
+      const appName = e.target.closest('.app-name'), groupName = e.target.closest('.group-name');
+      if (!appName && !groupName) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      const app = apps.find((a) => a.flow_dir === head.parentElement.dataset.key);
-      renameApp(app, e.target.closest('.app-name')).catch((error) => { $('side-msg').textContent = '修改 APP 显示名失败：' + error; });
+      const fail = (error) => { $('side-msg').textContent = '修改显示名失败：' + error; };
+      if (groupName) {
+        const key = groupName.closest('.group-block').dataset.group;
+        const g = ordered().find((x) => x.key === key);
+        rename('group_aliases', key, g.name || '未分组', groupName, '分组显示名').catch(fail);
+      } else {
+        const app = apps.find((a) => a.flow_dir === appName.closest('.app').dataset.key);
+        rename('app_aliases', app.flow_dir, app.app, appName, 'APP 显示名').catch(fail);
+      }
     }, true);
     $('tree').addEventListener('keydown', (e) => {
       if (e.target.matches('.app-head, .sec-head') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }
@@ -365,5 +574,5 @@ window.Sidebar = (() => {
     window.addEventListener('resize', closeMenu);
   }
 
-  return { init, render };
+  return { init, render, prune, setAutoTop, autoTop: () => prefs.auto_top };
 })();

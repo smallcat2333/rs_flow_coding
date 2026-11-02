@@ -21,16 +21,16 @@ let lastSel = { file: null, cells: [] };
 const ownsFlow = () => SOLO === 'flow' || (!SOLO && !popped.flow);
 const ownsFeat = () => SOLO === 'feat' || (!SOLO && !popped.feat);
 
-/** 状态元数据：顺序即展示顺序。who 表示「轮到谁处理」：user=待你审，agent=待 Agent。 */
+/** 状态元数据：顺序即统计条与徽标的展示顺序（按协作流转：实现 → 待审 → 想法 → 确认 → 问题 → 删除 → 未识别）。 */
 const STATUS = [
-  { key: 'none', name: '已实现', who: '' },
-  { key: 'review', name: '起草待审', who: 'user' },
-  { key: 'plan_delete', name: '计划删除', who: 'user' },
-  { key: 'issue', name: '有问题', who: 'agent' },
-  { key: 'idea', name: '你的想法', who: 'agent' },
-  { key: 'confirmed', name: '已确认', who: 'agent' },
-  { key: 'confirm_delete', name: '确认删除', who: 'agent' },
-  { key: 'unknown', name: '未识别颜色', who: '' },
+  { key: 'none', name: '已实现' },
+  { key: 'review', name: '起草待审' },
+  { key: 'idea', name: '你的想法' },
+  { key: 'confirmed', name: '已确认' },
+  { key: 'issue', name: '有问题' },
+  { key: 'plan_delete', name: '计划删除' },
+  { key: 'confirm_delete', name: '确认删除' },
+  { key: 'unknown', name: '未识别颜色' },
 ];
 /** 编辑器调色板只给协作色（draw.io 颜色值不带 #）。 */
 const PALETTE = ['FFF2CC', 'F5F5F5', 'F8CECC', 'DAE8FC', 'D5E8D4', 'FFFFFF'];
@@ -75,28 +75,18 @@ function badges(counts) {
     .map((s) => `<span class="badge s-${s.key}" title="${s.name}">${counts[s.key]}</span>`).join('') + '</span>';
 }
 
-/** 待你审 / 待 Agent 数量。 */
-function whoCounts(counts) {
-  let user = 0, agent = 0;
-  for (const s of STATUS) {
-    if (s.who === 'user') user += counts[s.key] || 0;
-    if (s.who === 'agent') agent += counts[s.key] || 0;
-  }
-  return { user, agent };
-}
-
-/** 按共同总数绘制八种状态的数量条；零值不画填充，文字与数量提供非颜色识别。 */
+/** 绘制八种状态的统计行：「已实现」只显示数量；其余状态以其中最大值为满格画数量条，零值不填充。
+ *  悬停显示数量与占全部节点的百分比；文字与数量提供非颜色识别。 */
 function renderStatusStats(counts) {
   const total = STATUS.reduce((sum, s) => sum + (counts[s.key] || 0), 0);
-  $('stats-total').textContent = total.toLocaleString() + ' 节点';
+  const max = Math.max(0, ...STATUS.filter((s) => s.key !== 'none').map((s) => counts[s.key] || 0));
   $('status-bars').innerHTML = STATUS.map((s) => {
     const value = counts[s.key] || 0;
     const pct = total ? value / total * 100 : 0;
-    return `<div class="status-row" data-status="${s.key}" title="${s.name}：${value.toLocaleString()} / ${total.toLocaleString()} 节点（${pct.toFixed(1)}%）"><span class="sw s-${s.key}" aria-hidden="true"></span><span class="status-name">${s.name}</span><span class="status-track" aria-hidden="true"><span class="status-fill s-${s.key}" style="width:${pct}%"></span></span><b class="status-value">${value.toLocaleString()}</b></div>`;
+    const bar = s.key === 'none' ? '<span class="status-track none" aria-hidden="true"></span>'
+      : `<span class="status-track" aria-hidden="true"><span class="status-fill s-${s.key}" style="width:${max ? value / max * 100 : 0}%"></span></span>`;
+    return `<div class="status-row" data-status="${s.key}" title="${s.name}：${value.toLocaleString()} / ${total.toLocaleString()} 节点（${pct.toFixed(1)}%）"><span class="sw s-${s.key}" aria-hidden="true"></span><span class="status-name">${s.name}</span>${bar}<b class="status-value">${value.toLocaleString()}</b></div>`;
   }).join('');
-  const count = whoCounts(counts);
-  $('t-user').textContent = count.user.toLocaleString();
-  $('t-agent').textContent = count.agent.toLocaleString();
 }
 
 /** 侧栏底部错误提示；空串清除。 */
@@ -132,6 +122,7 @@ async function refresh(full = false) {
   sideMsg(full ? '扫描中…' : '');
   try {
     st.apps = await invoke('summary', { full });
+    Sidebar.prune(st.apps);
     sideMsg(st.apps.length ? '' : '未发现流程图或 Feat。请在设置 → 项目目录中配置并扫描。');
   } catch (e) {
     sideMsg(String(e));

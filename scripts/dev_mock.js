@@ -12,7 +12,7 @@
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
   const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
-  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
+  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
@@ -109,7 +109,9 @@
       const total = {};
       list.filter((f) => f.enabled).forEach((f) => Object.entries(f.counts).forEach(([k, v]) => total[k] = (total[k] || 0) + v));
       const feats = Object.keys(mds).sort().reverse().map(featEntry);
-      return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }];
+      // 另附两个空 APP（同一分组），用于预览分组/APP 拖动排序与分组别名。
+      const empty = (app) => ({ group: 'group_tools', app, root: '', flow_dir: `/mock/group_tools/${app}/docs/flow`, feat_dir: `/mock/group_tools/${app}/docs/feat`, files: [], feats: [], counts: counts('') });
+      return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }, empty('app_demo_a'), empty('app_demo_b')];
     },
     async read_diagram({ path }) { return { path, xml: files[path], hash: hash(files[path]) }; },
     async save_diagram({ path, xml }) {

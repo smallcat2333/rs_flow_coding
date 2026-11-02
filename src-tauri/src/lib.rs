@@ -193,14 +193,21 @@ fn rewatch(app: &tauri::AppHandle, dirs: &[scan::FlowDir]) -> Result<(), String>
     Ok(())
 }
 
+/// 文件事件来源：按当前锁持有者判定。App 自身写盘时持用户锁 → user；Agent 锁 → agent；无锁 → external。
+/// 前端据此只对 Agent / 外部改动做侧栏自动置顶。
+fn event_source(path: &Path) -> &'static str {
+    match lock::read(path).ok().flatten() {
+        Some(l) if l.owner == "agent" => "agent",
+        Some(l) if l.owner == "user" => "user",
+        _ => "external",
+    }
+}
+
 /// 处理单个流程图文件事件：入库快照并通知前端。
-/// 来源判定：文件当前被 agent 加锁 → agent，否则 external（App 自身写入在保存时已入库，此处哈希去重）。
+/// 来源见 `event_source`（App 自身写入在保存时已入库，此处哈希去重）。
 /// 文件被删除或正在写入导致解析失败时，仍通知前端刷新列表。
 fn on_file_event(app: &tauri::AppHandle, path: &Path) {
-    let source = match lock::read(path).ok().flatten() {
-        Some(l) if l.owner == "agent" => "agent",
-        _ => "external",
-    };
+    let source = event_source(path);
     let mut hash = String::new();
     if let Ok(xml) = std::fs::read_to_string(path) {
         hash = db::hash(&xml);
@@ -213,10 +220,7 @@ fn on_file_event(app: &tauri::AppHandle, path: &Path) {
 
 /// 处理 Feat 档案变化：只通知前端（Markdown 不入历史库）。来源判定同流程图。
 fn on_md_event(app: &tauri::AppHandle, path: &Path) {
-    let source = match lock::read(path).ok().flatten() {
-        Some(l) if l.owner == "agent" => "agent",
-        _ => "external",
-    };
+    let source = event_source(path);
     let hash = std::fs::read_to_string(path).map(|t| db::hash(&t)).unwrap_or_default();
     let _ = app.emit("md-changed", ChangeEvent { path: path.to_string_lossy().into_owned(), hash, source: source.into() });
 }
