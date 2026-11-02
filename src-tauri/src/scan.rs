@@ -19,6 +19,8 @@ pub struct SidebarPrefs {
     pub collapsed: Vec<String>,
     pub expanded_archives: Vec<String>,
     pub include_archived: bool,
+    /// APP 显示别名，以 flow_dir 为键；不修改原目录名或项目文件。
+    pub app_aliases: std::collections::BTreeMap<String, String>,
 }
 
 /// 用户配置，存于 `<数据目录>/config.json`。
@@ -144,6 +146,18 @@ pub fn scan_root(root: &Path) -> Vec<FlowDir> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 旧配置缺省为空别名；往返持久化保留别名和其他侧栏偏好。
+    #[test]
+    fn sidebar_aliases_roundtrip() {
+        let mut prefs: SidebarPrefs = serde_json::from_str(r#"{"collapsed":["app"],"expanded_archives":[],"include_archived":true}"#).unwrap();
+        assert!(prefs.app_aliases.is_empty());
+        prefs.app_aliases.insert("/project/app_sever/docs/flow".into(), "服务端".into());
+        let restored: SidebarPrefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(restored.app_aliases["/project/app_sever/docs/flow"], "服务端");
+        assert_eq!(restored.collapsed, ["app"]);
+        assert!(restored.include_archived);
+    }
 
     #[test]
     fn scan_finds_app_flow() {

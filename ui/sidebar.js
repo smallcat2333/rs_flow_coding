@@ -6,16 +6,18 @@ window.Sidebar = (() => {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const PAGE_SIZE = 20;
-  let prefs = { collapsed: [], expanded_archives: [], include_archived: false };
+  let prefs = { collapsed: [], expanded_archives: [], include_archived: false, app_aliases: {} };
   let apps = [], currentFlow = '', currentFeat = '', refresh;
   let search = '', menu = null, saveQueue = Promise.resolve();
   const limits = new Map();
+  let editingApp = false;
 
   /** 偏好写入顺序与点击顺序一致；失败保留错误提示，不吞掉保存失败。 */
   function persist() {
     const sidebar = JSON.parse(JSON.stringify(prefs));
     saveQueue = saveQueue.catch(() => {}).then(() => invoke('save_sidebar', { sidebar }));
     saveQueue.catch((e) => { $('side-msg').textContent = '侧栏设置保存失败：' + e; });
+    return saveQueue;
   }
 
   /** 切换一个折叠键；收纳区默认折叠，普通分组默认展开。 */
@@ -96,6 +98,26 @@ window.Sidebar = (() => {
       ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', flow ? 'disabled_at' : 'closed_at')}</div></div>`;
   }
 
+  /** APP 只修改本机显示名，空值或原名恢复默认；写入失败恢复先前显示。 */
+  async function renameApp(app) {
+    if (editingApp) return;
+    editingApp = true;
+    const previous = prefs.app_aliases[app.flow_dir];
+    try {
+      const name = await ask('修改 APP 显示名（清空恢复原名）', previous || app.app);
+      if (name === null) return;
+      if (!name || name === app.app) delete prefs.app_aliases[app.flow_dir];
+      else prefs.app_aliases[app.flow_dir] = name;
+      try { await persist(); }
+      catch (error) {
+        if (previous) prefs.app_aliases[app.flow_dir] = previous;
+        else delete prefs.app_aliases[app.flow_dir];
+        throw error;
+      }
+      render(apps, currentFlow, currentFeat);
+    } finally { editingApp = false; }
+  }
+
   /** 重绘侧栏，合计继续使用后端只包含启用 Chart 的统计。 */
   function render(nextApps, flowPath, featPath) {
     closeMenu();
@@ -108,7 +130,11 @@ window.Sidebar = (() => {
       if (!sections) continue;
       if (a.group !== group) { group = a.group; html += `<div class="group">${esc(group || '未分组')}</div>`; }
       const collapsed = !search && prefs.collapsed.includes(a.flow_dir);
-      html += `<div class="app ${collapsed ? 'collapsed' : ''}" data-key="${esc(a.flow_dir)}"><div class="app-head" role="button" tabindex="0" aria-expanded="${!collapsed}"><span class="app-name">${esc(a.app)}</span>${badges(a.counts)}</div>${sections}</div>`;
+      const alias = prefs.app_aliases[a.flow_dir];
+      html += `<div class="app ${collapsed ? 'collapsed' : ''}" data-key="${esc(a.flow_dir)}"><div class="app-head" role="button" tabindex="0" aria-expanded="${!collapsed}">
+        <span class="app-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
+        <span class="app-name" title="双击修改显示名；原目录：${esc(a.app)}"><span class="app-display">${esc(alias || a.app)}</span>${alias ? `<small class="app-original" title="${esc(a.app)}">${esc(a.app)}</small>` : ''}</span>
+        ${badges(a.counts)}</div>${sections}</div>`;
     }
     $('tree').innerHTML = html || '<div class="empty mini">没有匹配项</div>';
     const count = whoCounts(total);
@@ -203,7 +229,20 @@ window.Sidebar = (() => {
       const head = e.target.closest('.app-head, .sec-head');
       if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
-      else if (head && !e.target.closest('.app-new, .feat-new')) { e.stopImmediatePropagation(); toggle(head.parentElement.dataset.key, false); }
+      else if (head && !e.target.closest('.app-new, .feat-new')) {
+        e.stopImmediatePropagation();
+        // 名称留给双击编辑，不在第一次点击时重绘 DOM；小三角和空白处仍可单击折叠。
+        if (head.classList.contains('app-head') && e.target.closest('.app-name')) return;
+        toggle(head.parentElement.dataset.key, false);
+      }
+    }, true);
+    $('tree').addEventListener('dblclick', (e) => {
+      const head = e.target.closest('.app-head');
+      if (!head || !e.target.closest('.app-name')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const app = apps.find((a) => a.flow_dir === head.parentElement.dataset.key);
+      renameApp(app).catch((error) => { $('side-msg').textContent = '修改 APP 显示名失败：' + error; });
     }, true);
     $('tree').addEventListener('keydown', (e) => {
       if (e.target.matches('.app-head, .sec-head') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }

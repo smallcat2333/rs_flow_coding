@@ -11,7 +11,7 @@
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
   const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
-  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') };
+  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
