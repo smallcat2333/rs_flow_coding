@@ -81,9 +81,10 @@ pub fn set_chart_enabled(app: tauri::AppHandle, path: String, enabled: bool) -> 
     app.emit("catalog-changed", ()).map_err(|e| e.to_string())
 }
 
-/// 更新 Feat 状态与关闭日期；校验确认时的哈希，文件被编辑或加锁时拒绝覆盖。
+/// 更新 Feat 状态与关闭日期；只接受开启阶段（关闭/废弃走 skill），校验确认时的哈希，文件被编辑或加锁时拒绝覆盖。
 #[tauri::command]
 pub fn set_feat_status(app: tauri::AppHandle, path: String, status: String, expected_hash: String) -> Result<(), String> {
+    feat::ensure_ui_status(&status)?;
     let _guard = STATUS_WRITE.lock().unwrap();
     let path = Path::new(&path);
     if !path.is_file() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("md")) {

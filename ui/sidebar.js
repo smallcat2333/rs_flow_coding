@@ -158,7 +158,7 @@ window.Sidebar = (() => {
     const app = apps.find((a) => (kind === 'flow' ? a.files : a.feats).some((f) => f.path === path));
     const f = (kind === 'flow' ? app.files : app.feats).find((f) => f.path === path);
     const actions = kind === 'flow' ? [[f.enabled ? 'disable' : 'enable', f.enabled ? '停用并收纳' : '重新启用']]
-      : f.archived ? [['reopen', '重新开启']] : [['close', '关闭并收纳'], ['drop', '废弃并收纳']];
+      : f.archived ? [['reopen', '重新开启']] : [['close', '关闭（走 skill）'], ['drop', '废弃（走 skill）']];
     menu = document.createElement('div');
     menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
     menu.innerHTML = actions.map(([action, name]) => `<button role="menuitem" data-action="${action}">${name}</button>`).join('');
@@ -189,21 +189,42 @@ window.Sidebar = (() => {
     });
   }
 
+  /** 关闭/废弃需同步发布说明、CHANGELOG、README 并提交，只给出 skill 命令供复制，不写文件。 */
+  function showSkillCommand(f, action) {
+    const close = action === 'close';
+    const command = close ? `/smallcat-feat-5-close ${f.id}` : `/smallcat-feat-drop ${f.id} <废弃原因>`;
+    const pending = f.node_total - (f.counts.none || 0), tasks = f.tasks_total - f.tasks_done;
+    const details = close
+      ? `当前还有 ${tasks} 个开发任务、${pending} 个非无色节点。关闭需生成发布说明、写 CHANGELOG、更新 README 并提交，请在 Agent 会话中运行：`
+      : '废弃需记录原因、清理本 Feat 草图节点、更新 README 并提交，请在 Agent 会话中运行：';
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'lifecycle-dialog';
+      dialog.innerHTML = `<form method="dialog"><h3>${close ? '关闭' : '废弃'}「${esc(f.title || f.id)}」</h3><p>${esc(details)}</p><p><code>${esc(command)}</code></p><div class="dlg-btns"><button value="cancel">取消</button><button value="copy">复制命令</button></div></form>`;
+      document.body.appendChild(dialog);
+      dialog.addEventListener('close', () => {
+        const copy = dialog.returnValue === 'copy';
+        dialog.remove();
+        if (!copy) return resolve();
+        navigator.clipboard.writeText(command).then(() => { $('side-msg').textContent = '已复制：' + command; resolve(); });
+      }, { once: true });
+      dialog.showModal();
+    });
+  }
+
   /** 用户确认后调用后端原子修改；读取哈希后如被其他编辑者改动则后端拒绝。 */
   async function changeStatus(kind, f, action) {
+    if (kind === 'feat' && action !== 'reopen') return showSkillCommand(f, action);
     const name = f.title || f.name || f.id;
     const doc = kind === 'feat' ? await invoke('read_md', { path: f.path }) : null;
     let details = '原文件和历史保留，可从收纳区恢复。';
     if (kind === 'flow') details = action === 'disable' ? '停用后移入收纳区，不再计入顶部待办。原图和关联 Feat 保留。' : '恢复到启用列表，重新计入顶部待办。';
-    else if (action === 'close') {
-      const pending = f.node_total - (f.counts.none || 0), tasks = f.tasks_total - f.tasks_done;
-      details = `还有 ${tasks} 个开发任务、${pending} 个非无色节点。确认关闭后收纳档案，关联流程图保持当前状态。`;
-    } else if (action === 'reopen') details = '恢复到开启列表并清空关闭日期，关联流程图保持当前状态。';
-    const verb = { enable: '重新启用', disable: '停用', close: '关闭', drop: '废弃', reopen: '重新开启' }[action];
+    else if (action === 'reopen') details = '恢复到开启列表并清空关闭日期，关联流程图保持当前状态。';
+    const verb = { enable: '重新启用', disable: '停用', reopen: '重新开启' }[action];
     const result = await confirmStatus(`${verb}「${name}」？`, details, action === 'reopen');
     if (!result) return;
     if (kind === 'flow') await invoke('set_chart_enabled', { path: f.path, enabled: action === 'enable' });
-    else await invoke('set_feat_status', { path: f.path, status: action === 'reopen' ? result : action === 'close' ? '已关闭' : '已废弃', expectedHash: doc.hash });
+    else await invoke('set_feat_status', { path: f.path, status: result, expectedHash: doc.hash });
     $('side-msg').textContent = '';
     await refresh();
   }

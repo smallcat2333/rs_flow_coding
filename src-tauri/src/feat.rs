@@ -105,6 +105,15 @@ pub fn is_archived(status: &str) -> bool {
     status.starts_with("已关闭") || status.starts_with("已废弃")
 }
 
+/// Flow Coding 只允许写开启阶段；关闭、废弃需同步 §5、CHANGELOG、README 并提交，必须走 skill。
+/// 输入：目标状态；归档状态返回带命令提示的错误，其余返回 Ok。
+pub fn ensure_ui_status(status: &str) -> Result<(), String> {
+    if is_archived(status) {
+        return Err("关闭/废弃请在 Agent 会话中运行 /smallcat-feat-5-close 或 /smallcat-feat-drop".into());
+    }
+    Ok(())
+}
+
 /// 从正文前的档案头读取关闭日期；支持与创建日期同一行，缺省返回空串。
 pub fn closed_at(text: &str) -> String {
     text.lines().take_while(|l| !l.starts_with("## ")).find_map(|line| {
@@ -269,6 +278,8 @@ mod tests {
         assert_eq!(closed_at(&closed), "2026-11-02");
         assert_eq!(with_status(&closed, "开发中", "unused").unwrap(), source);
         assert!(is_archived("已关闭（已发布）"));
+        assert!(ensure_ui_status("已关闭").is_err() && ensure_ui_status("已废弃").is_err());
+        assert!(ensure_ui_status("开发中").is_ok());
         assert!(is_archived("已废弃"));
         assert!(!is_archived("开发完成，待测试"));
         let minimal = with_status("# Feat\n\n## 1. 需求\nbody\n", "已废弃", "2026-11-02").unwrap();
