@@ -357,7 +357,10 @@ window.addEventListener('message', (ev) => {
       if (st.cur) pushFromDisk(true);
       break;
     case 'fc-select':
-      onNodeSelect(m.cells || [], !!m.auto);
+      onNodeSelect(m.cells || []);
+      break;
+    case 'fc-open-feat':
+      if (m.cell) openNodeFeat(m.cell);
       break;
     case 'load':
       // 图载入完成：按当前 Feat 重新高亮，执行等待中的节点定位
@@ -380,22 +383,21 @@ window.addEventListener('message', (ev) => {
 /** 当前选中的节点（来自桥接脚本），用于「挂到当前 Feat」。 */
 let selCells = [];
 
-/**
- * 节点选中：更新底部状态栏并把选中广播给其他窗口；用户点选（auto=false）时，
- * 节点只挂 1 个本 APP 的 Feat 直接打开，挂多个弹列表选择，0 个不切换。
- * auto=true 为程序定位（如从 Feat 关联节点列表跳来），只更新状态，不再反向打开 Feat。
- */
-function onNodeSelect(cells, auto) {
+/** 节点选中只更新底部状态栏与跨窗口选中状态，不打开档案。 */
+function onNodeSelect(cells) {
   selCells = cells;
   lastSel = { file: st.cur, cells };
   emit('ui-flow-sel', lastSel);
   renderNodeBar();
-  if (auto || cells.length !== 1) return;
+}
+
+/** 点击书签时打开关联档案；挂了多个 Feat 时弹列表选择。 */
+function openNodeFeat(cell) {
   const app = appOf(st.cur);
   if (!app) return;
-  const feats = app.feats.filter((f) => cells[0].tags.includes(f.id));
-  if (feats.length === 1) routeFeat(feats[0].path, cells[0].id);
-  else if (feats.length > 1) pickFeat(feats, cells[0]);
+  const feats = app.feats.filter((f) => cell.tags.includes(f.id));
+  if (feats.length === 1) routeFeat(feats[0].path, cell.id);
+  else if (feats.length > 1) pickFeat(feats, cell);
 }
 
 /** 多 Feat 时弹出选择列表；Esc、点空白处或「取消」关闭。 */

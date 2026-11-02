@@ -1,13 +1,14 @@
 // Flow Coding 与 draw.io 的桥接：在 draw.io 页面内运行，由 fetch_drawio.py 注入 PreConfig.js 之后加载。
 // 包装 App.main 拿到编辑器实例，通过 postMessage 与外层 App 交换「选中节点」「高亮/挂标签」消息。
 //
-// 发给外层：{event:'fc-select', cells:[{id, label, tags:[...]}], auto}（选中变化，仅顶点；auto=true 表示由 fc-select-cell 程序定位）
+// 发给外层：{event:'fc-select', cells:[{id, label, tags:[...]}], auto}（选中变化，仅更新选中状态）
+//           {event:'fc-open-feat', cell:{id, label, tags:[...]}}（点击书签，打开关联 Feat）
 // 接收外层：
 //   {action:'fc-highlight', tag}           高亮带该标签的全部节点（tag 为空则清除）
 //   {action:'fc-select-cell', id}          选中并滚动到节点
 //   {action:'fc-tag', tag, add:true|false} 给当前选中节点加/去标签（经 draw.io 撤销栈，触发 autosave）
 //   {action:'fc-theme', dark}              切换 draw.io 深色 / 浅色
-// 另：挂了 Feat 标签的节点右上角显示书签角标（数字 = 挂了几个 Feat），点击角标等同点选该节点。
+// 另：挂了 Feat 标签的节点右上角显示书签角标（数字 = 挂了几个 Feat），仅点击角标打开关联档案。
 // 角标是 mxCellOverlay，只存在于视图，不写入文件。
 (function () {
   'use strict';
@@ -44,7 +45,10 @@
       var ov = new mxCellOverlay(markImage(feats.length), '挂了 ' + feats.length + ' 个 Feat：\n' + feats.join('\n'),
         mxConstants.ALIGN_RIGHT, mxConstants.ALIGN_TOP, new mxPoint(-14, 10), 'pointer');
       ov.addListener(mxEvent.CLICK, (function (cell) {
-        return function () { graph.setSelectionCell(cell); };
+        return function () {
+          graph.setSelectionCell(cell);
+          send({ event: 'fc-open-feat', cell: { id: cell.id, label: plain(graph, cell), tags: tagsOf(graph, cell) } });
+        };
       })(c));
       graph.addCellOverlay(c, ov);
       marks[c.id] = { cell: c, overlay: ov, key: key };
