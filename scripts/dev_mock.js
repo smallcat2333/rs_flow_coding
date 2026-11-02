@@ -7,6 +7,7 @@
   const files = {};       // 流程图 path -> xml
   const mds = {};         // Feat 档案 path -> text
   const snaps = [];       // {id, path, ts, source, xml}
+  let nextSnapshotId = 1; // 清理旧历史后不复用 id，保持历史面板引用稳定。
   let agentLock = false;
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
@@ -40,7 +41,7 @@
     const xml = files[path];
     const last = snaps.filter((s) => s.path === path).pop();
     if (last && last.xml === xml) return;
-    snaps.push({ id: snaps.length + 1, path, ts: new Date().toLocaleString(), source, xml });
+    snaps.push({ id: nextSnapshotId++, path, ts: new Date().toLocaleString(), source, xml });
   };
   const emit = (name, payload) => (listeners[name] || []).forEach((f) => f({ payload }));
   const lockOf = (p) => agentLock ? { owner: 'agent', pid: 1, since: Date.now() / 1000 } : userLocks.has(p) ? { owner: 'user', pid: 2, since: 0 } : null;
@@ -86,7 +87,24 @@
       localStorage.setItem('fc-mock-mds', JSON.stringify(mdOverrides));
       emit('md-changed', { path, hash: hash(text), source: 'user' });
     },
+    /** 设置页模拟本机用量；测试只改变内存快照和目录缓存。 */
+    async get_storage_stats() {
+      const paths = new Set(snaps.map((s) => s.path));
+      return { database_path: '(浏览器模拟) /mock/flow.db', database_bytes: snaps.reduce((n, s) => n + new TextEncoder().encode(s.xml).length, 0), diagrams: paths.size,
+        snapshots: snaps.length, old_snapshots: snaps.length - paths.size, node_states: snaps.reduce((n, s) => n + nodes(s.xml).length, 0),
+        cached_dirs: config.flow_dirs.length, cache_bytes: config.flow_dirs.length ? new TextEncoder().encode(JSON.stringify(config.flow_dirs)).length : 0 };
+    },
+    async clean_database() {
+      const latest = new Map();
+      for (const s of snaps) latest.set(s.path, s.id);
+      const removed = snaps.length - latest.size;
+      for (let i = snaps.length - 1; i >= 0; i--) if (latest.get(snaps[i].path) !== snaps[i].id) snaps.splice(i, 1);
+      emit('history-pruned', {});
+      return removed;
+    },
+    async clear_scan_cache() { config.flow_dirs = []; },
     async summary() {
+      config.flow_dirs = ['/mock/flow'];
       const list = Object.keys(files).map((p) => ({ path: p, name: p.split('/').pop(), enabled: !chartStates[p], disabled_at: chartStates[p]?.disabled_at || '', counts: counts(files[p]), lock: lockOf(p), error: null }));
       const total = {};
       list.filter((f) => f.enabled).forEach((f) => Object.entries(f.counts).forEach(([k, v]) => total[k] = (total[k] || 0) + v));
@@ -107,11 +125,11 @@
       return snaps.filter((s) => s.path === path).reverse().map((s) => ({ id: s.id, ts: s.ts, source: s.source, hash: '', counts: counts(s.xml) }));
     },
     async diff({ old, new: nw }) {
-      const a = counts(snaps[old - 1].xml), b = counts(snaps[nw - 1].xml);
+      const a = counts(snaps.find((s) => s.id === old).xml), b = counts(snaps.find((s) => s.id === nw).xml);
       return Object.keys(a).filter((k) => a[k] !== b[k]).map((k) => ({ kind: 'changed', page_name: '', node_id: `(${k} 计数)`, old_label: String(a[k]), new_label: String(b[k]), old_status: k, new_status: k }));
     },
-    async snapshot_xml({ id }) { return snaps[id - 1].xml; },
-    async restore({ path, id }) { files[path] = snaps[id - 1].xml; snap(path, 'restore'); return hash(files[path]); },
+    async snapshot_xml({ id }) { return snaps.find((s) => s.id === id).xml; },
+    async restore({ path, id }) { files[path] = snaps.find((s) => s.id === id).xml; snap(path, 'restore'); return hash(files[path]); },
     async create_diagram({ name }) {
       const p = `/mock/flow/${name}.drawio`;
       files[p] = '<mxfile><diagram id="p" name="' + name + '"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';

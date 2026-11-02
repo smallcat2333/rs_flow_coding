@@ -30,6 +30,18 @@ window.Sidebar = (() => {
     render(apps, currentFlow, currentFeat);
   }
 
+  /** 全部展开/收纳只更新折叠偏好；清除搜索的强制展开，分页仍按每批20项显示。 */
+  function setAllExpanded(expanded) {
+    search = '';
+    $('tree-search').value = '';
+    limits.clear();
+    const keys = apps.flatMap((a) => [a.flow_dir, a.flow_dir + '#flow', a.flow_dir + '#feat']);
+    prefs.collapsed = expanded ? [] : keys;
+    prefs.expanded_archives = expanded ? apps.flatMap((a) => [a.flow_dir + '#flow#archive', a.flow_dir + '#feat#archive']) : [];
+    persist();
+    render(apps, currentFlow, currentFeat);
+  }
+
   /** 一行锁标签；生命周期标识与节点颜色徽标分开显示。 */
   function lockTag(lock) {
     return lock ? `<span class="lock-dot">${lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
@@ -137,9 +149,7 @@ window.Sidebar = (() => {
         ${badges(a.counts)}</div>${sections}</div>`;
     }
     $('tree').innerHTML = html || '<div class="empty mini">没有匹配项</div>';
-    const count = whoCounts(total);
-    $('t-user').textContent = count.user;
-    $('t-agent').textContent = count.agent;
+    renderStatusStats(total);
   }
 
   /** 关闭右键菜单并把焦点还给对应条目，避免滚动列表。 */
@@ -235,6 +245,8 @@ window.Sidebar = (() => {
     const config = await invoke('get_config');
     prefs = config.sidebar;
     $('search-archived').checked = prefs.include_archived;
+    $('btn-expand-all').onclick = () => setAllExpanded(true);
+    $('btn-collapse-all').onclick = () => setAllExpanded(false);
     $('tree-search').oninput = (e) => { search = e.target.value.trim().toLowerCase(); limits.clear(); closeMenu(); render(apps, currentFlow, currentFeat); };
     $('search-archived').onchange = (e) => { prefs.include_archived = e.target.checked; persist(); render(apps, currentFlow, currentFeat); };
     $('tree').addEventListener('contextmenu', (e) => {

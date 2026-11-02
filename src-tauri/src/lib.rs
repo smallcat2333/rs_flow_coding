@@ -6,6 +6,7 @@ pub mod feat;
 pub mod flow;
 pub mod lock;
 pub mod lifecycle;
+pub mod maintenance;
 pub mod paths;
 pub mod scan;
 
@@ -474,7 +475,8 @@ pub fn run() {
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
             read_md, save_md, tagged_nodes, create_feat, open_popout,
-            lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar
+            lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar,
+            maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

@@ -85,6 +85,20 @@ function whoCounts(counts) {
   return { user, agent };
 }
 
+/** 按共同总数绘制八种状态的数量条；零值不画填充，文字与数量提供非颜色识别。 */
+function renderStatusStats(counts) {
+  const total = STATUS.reduce((sum, s) => sum + (counts[s.key] || 0), 0);
+  $('stats-total').textContent = total.toLocaleString() + ' 节点';
+  $('status-bars').innerHTML = STATUS.map((s) => {
+    const value = counts[s.key] || 0;
+    const pct = total ? value / total * 100 : 0;
+    return `<div class="status-row" data-status="${s.key}" title="${s.name}：${value.toLocaleString()} / ${total.toLocaleString()} 节点（${pct.toFixed(1)}%）"><span class="sw s-${s.key}" aria-hidden="true"></span><span class="status-name">${s.name}</span><span class="status-track" aria-hidden="true"><span class="status-fill s-${s.key}" style="width:${pct}%"></span></span><b class="status-value">${value.toLocaleString()}</b></div>`;
+  }).join('');
+  const count = whoCounts(counts);
+  $('t-user').textContent = count.user.toLocaleString();
+  $('t-agent').textContent = count.agent.toLocaleString();
+}
+
 /** 侧栏底部错误提示；空串清除。 */
 function sideMsg(msg) { $('side-msg').textContent = msg || ''; }
 
@@ -118,12 +132,14 @@ async function refresh(full = false) {
   sideMsg(full ? '扫描中…' : '');
   try {
     st.apps = await invoke('summary', { full });
-    sideMsg(st.apps.length ? '' : '未发现 docs/flow 目录。点「项目根」配置后「全量扫描」。');
+    sideMsg(st.apps.length ? '' : '未发现流程图或 Feat。请在设置 → 项目目录中配置并扫描。');
   } catch (e) {
     sideMsg(String(e));
+    return false;
   }
   renderTree();
   renderCurrentBar();
+  return true;
 }
 
 /** 重绘侧栏与顶部合计；生命周期、收纳和本机偏好由 Sidebar 统一维护。 */
@@ -669,24 +685,19 @@ $('btn-hist-restore').onclick = async () => {
   } catch (e) { saveState('回滚失败：' + e, true); }
 };
 
-// ---------------- 项目根 ----------------
+// ---------------- 刷新与历史维护 ----------------
 
-$('btn-refresh').onclick = () => refresh(false);
-$('btn-rescan').onclick = () => refresh(true);
-$('btn-roots').onclick = async () => {
-  const cfg = await invoke('get_config');
-  $('roots-text').value = cfg.roots.join('\n');
-  $('roots-dlg').hidden = false;
+$('btn-refresh').onclick = async () => {
+  const button = $('btn-refresh');
+  button.disabled = true;
+  try { await refresh(false); } finally { button.disabled = false; }
 };
-$('roots-cancel').onclick = () => { $('roots-dlg').hidden = true; };
-$('roots-ok').onclick = async () => {
-  const roots = $('roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  try {
-    await invoke('set_roots', { roots });
-    $('roots-dlg').hidden = true;
-    await refresh(true);
-  } catch (e) { sideMsg(String(e)); }
-};
+listen('history-pruned', () => {
+  st.histSel = [];
+  $('viewer').hidden = true;
+  $('viewer-frame').removeAttribute('src');
+  if (!$('history').hidden) loadHistory();
+});
 
 // ---------------- 分栏 ----------------
 
@@ -773,7 +784,6 @@ $('btn-flow-close').onclick = () => closeFlow();
 // ---------------- 主题 ----------------
 
 /** 主题设置：auto 跟随系统 / light / dark，存 localStorage（各窗口共享，storage 事件同步）。 */
-const THEME_NAMES = { auto: '◐ 自动', light: '☀ 浅色', dark: '☾ 深色' };
 const themeSetting = () => localStorage.getItem('fc-theme') || 'auto';
 const darkQuery = matchMedia('(prefers-color-scheme: dark)');
 /** 当前是否深色。 */
@@ -785,21 +795,16 @@ function isDark() {
 function applyTheme() {
   const dark = isDark();
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  $('btn-theme').textContent = THEME_NAMES[themeSetting()];
+  $('settings-theme').value = themeSetting();
   if (st.ready) post({ action: 'fc-theme', dark });
   window.dispatchEvent(new CustomEvent('fc-theme', { detail: { dark } }));
 }
-$('btn-theme').onclick = () => {
-  const order = ['auto', 'light', 'dark'];
-  localStorage.setItem('fc-theme', order[(order.indexOf(themeSetting()) + 1) % order.length]);
-  applyTheme();
-};
 darkQuery.addEventListener('change', applyTheme);
 window.addEventListener('storage', (e) => { if (e.key === 'fc-theme') applyTheme(); });
 
 // ---------------- 启动 ----------------
 
-$('legend').innerHTML = STATUS.map((s) => `<span><span class="sw s-${s.key}"></span>${s.name}</span>`).join('');
+renderStatusStats({});
 window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.cur }); });
 applyTheme();
 
@@ -828,6 +833,7 @@ currentWindow.onCloseRequested(async (event) => {
 
 // 所有外部脚本加载完再初始化，先恢复侧栏偏好，再读取项目列表。
 window.addEventListener('DOMContentLoaded', async () => {
+  Settings.init();
   try { await Sidebar.init(() => refresh(false)); }
   catch (error) { sideMsg('读取侧栏设置失败：' + error); return; }
   if (SOLO) {
