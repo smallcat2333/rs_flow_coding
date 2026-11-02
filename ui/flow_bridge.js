@@ -99,9 +99,76 @@
     }
   }
 
+  /** 用协作状态替换原生配色快捷按钮，颜色与虚线在同一次撤销事务中应用。 */
+  function installStatusStyles() {
+    var states = [
+      { name: '已实现', fill: '#FFFFFF', dashed: false },
+      { name: '起草待审', fill: '#FFF2CC', dashed: false },
+      { name: '你的想法', fill: '#DAE8FC', dashed: false },
+      { name: '已确认', fill: '#D5E8D4', dashed: false },
+      { name: '有问题', fill: '#F8CECC', dashed: false },
+      { name: '计划删除', fill: '#F5F5F5', dashed: true },
+      { name: '确认删除', fill: '#D5E8D4', dashed: true },
+    ];
+    var css = document.createElement('style');
+    css.textContent = '.fc-status-styles{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:12px 16px}' +
+      '.fc-status-style{display:flex;align-items:center;gap:6px;min-width:0;padding:7px 6px;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left}' +
+      '.fc-status-style:hover{background:light-dark(#eef2f6,#333a44)}' +
+      '.fc-status-style:focus-visible{outline:2px solid #0969da;outline-offset:1px}' +
+      '.fc-status-style:disabled{opacity:.45;cursor:default}' +
+      '.fc-status-swatch{box-sizing:border-box;width:16px;height:16px;flex:none;border:1px solid #808080;border-radius:3px}';
+    document.head.appendChild(css);
+    var originalAddStyles = StyleFormatPanel.prototype.addStyles;
+    StyleFormatPanel.prototype.addStyles = function (container) {
+      var graph = this.editorUi.editor.graph;
+      if (!graph.getSelectionCells().some(function (cell) { return graph.model.isVertex(cell); })) {
+        return originalAddStyles.apply(this, arguments);
+      }
+      var panel = document.createElement('div');
+      panel.className = 'fc-status-styles';
+      panel.setAttribute('role', 'group');
+      panel.setAttribute('aria-label', '节点状态');
+      states.forEach(function (state) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'fc-status-style';
+        button.title = '设为' + state.name;
+        var cells = graph.getSelectionCells().filter(function (cell) {
+          return graph.model.isVertex(cell) && graph.isCellEditable(cell);
+        });
+        button.disabled = !graph.isEnabled() || !cells.length;
+        var swatch = document.createElement('span');
+        swatch.className = 'fc-status-swatch';
+        swatch.style.backgroundColor = state.fill;
+        swatch.style.borderStyle = state.dashed ? 'dashed' : 'solid';
+        swatch.setAttribute('aria-hidden', 'true');
+        button.appendChild(swatch);
+        button.appendChild(document.createTextNode(state.name));
+        button.addEventListener('click', function () {
+          if (!graph.isEnabled()) return;
+          var selected = graph.getSelectionCells().filter(function (cell) {
+            return graph.model.isVertex(cell) && graph.isCellEditable(cell);
+          });
+          if (!selected.length) return;
+          graph.model.beginUpdate();
+          try {
+            graph.setCellStyles(mxConstants.STYLE_FILLCOLOR, state.fill, selected);
+            graph.setCellStyles(mxConstants.STYLE_DASHED, state.dashed ? '1' : '0', selected);
+            graph.setCellStyles(mxConstants.STYLE_DASH_PATTERN, null, selected);
+            graph.setCellStyles(mxConstants.STYLE_GRADIENTCOLOR, null, selected);
+          } finally { graph.model.endUpdate(); }
+        });
+        panel.appendChild(button);
+      });
+      container.appendChild(panel);
+      return container;
+    };
+  }
+
   /** 绑定选中事件与外层消息，ui 为 draw.io EditorUi 实例。 */
   function attach(app) {
     ui = app;
+    installStatusStyles();
     var graph = ui.editor.graph;
     // 调试入口：浏览器预览 / 开发者工具中可直接检查编辑器与角标
     window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks };
