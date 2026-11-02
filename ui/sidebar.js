@@ -110,13 +110,40 @@ window.Sidebar = (() => {
       ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', flow ? 'disabled_at' : 'closed_at')}</div></div>`;
   }
 
-  /** APP 只修改本机显示名，空值或原名恢复默认；写入失败恢复先前显示。 */
-  async function renameApp(app) {
+  /** APP 原位编辑：Enter/失焦保存、Esc 取消；空值恢复原名，写入失败恢复旧别名。 */
+  async function renameApp(app, element) {
     if (editingApp) return;
     editingApp = true;
     const previous = prefs.app_aliases[app.flow_dir];
+    const input = document.createElement('input');
+    input.className = 'app-rename';
+    input.type = 'text';
+    input.value = previous || app.app;
+    input.setAttribute('aria-label', 'APP 显示名');
+    element.replaceChildren(input);
+    input.focus();
+    input.select();
     try {
-      const name = await ask('修改 APP 显示名（清空恢复原名）', previous || app.app);
+      const name = await new Promise((resolve) => {
+        let finished = false;
+        /** 每次编辑只提交一次，禁用输入产生的 blur 不重复写入。 */
+        function finish(save) {
+          if (finished) return;
+          finished = true;
+          const value = save ? input.value.trim() : null;
+          input.disabled = true;
+          resolve(value);
+        }
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.isComposing) return;
+          if (e.key === 'Enter' || e.key === 'Escape') {
+            e.preventDefault();
+            finish(e.key === 'Enter');
+          }
+        });
+        input.addEventListener('blur', () => finish(true));
+      });
       if (name === null) return;
       if (!name || name === app.app) delete prefs.app_aliases[app.flow_dir];
       else prefs.app_aliases[app.flow_dir] = name;
@@ -126,14 +153,59 @@ window.Sidebar = (() => {
         else delete prefs.app_aliases[app.flow_dir];
         throw error;
       }
+    } finally {
+      editingApp = false;
       render(apps, currentFlow, currentFeat);
-    } finally { editingApp = false; }
+    }
   }
+
+  /** APP 行固定显示三个优先统计（含零值），绿色确认和确认删除合计为待 Agent 实现。 */
+  function appBadges(counts) {
+    const primary = [
+      { key: 'review', name: '起草待审', value: counts.review },
+      { key: 'confirmed', name: '待 Agent 实现', value: counts.confirmed + counts.confirm_delete },
+      { key: 'issue', name: '有问题', value: counts.issue },
+    ];
+    const fixed = primary.map((s) => `<span class="badge s-${s.key}" data-status="${s.key}" title="${s.name}" aria-label="${s.name} ${s.value}">${s.value}</span>`).join('');
+    const other = STATUS.filter((s) => !['none', 'review', 'confirmed', 'confirm_delete', 'issue'].includes(s.key) && counts[s.key] > 0)
+      .map((s) => `<span class="badge app-badge-other s-${s.key}" data-status="${s.key}" title="${s.name}" hidden>${counts[s.key]}</span>`).join('');
+    return `<span class="badges app-badges">${fixed}${other}</span>`;
+  }
+
+  /** 按实际宽度放入其他徽标，预留名称空间；三个优先统计始终完整且不换行。 */
+  function fitAppBadges() {
+    for (const head of $('tree').querySelectorAll('.app-head')) {
+      const name = head.querySelector('.app-name');
+      const display = name.querySelector('.app-display, .app-rename');
+      const original = name.querySelector('.app-original');
+      const group = head.querySelector('.app-badges');
+      const other = [...group.querySelectorAll('.app-badge-other')];
+      other.forEach((badge) => { badge.hidden = true; });
+      const style = getComputedStyle(head);
+      const width = head.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const toggle = head.querySelector('.app-toggle').offsetWidth;
+      const gap = parseFloat(style.columnGap);
+      const wanted = display.scrollWidth + (original ? Math.min(original.scrollWidth, 48) + 6 : 0);
+      const reserved = Math.min(wanted, (width - toggle - gap * 2) / 2);
+      let free = width - toggle - gap * 2 - reserved - group.getBoundingClientRect().width;
+      const badgeGap = parseFloat(getComputedStyle(group).columnGap);
+      for (const badge of other) {
+        badge.hidden = false;
+        const needed = badge.getBoundingClientRect().width + badgeGap;
+        if (needed <= free) free -= needed;
+        else badge.hidden = true;
+      }
+    }
+  }
+  const appResize = new ResizeObserver(() => fitAppBadges());
 
   /** 重绘侧栏，合计继续使用后端只包含启用 Chart 的统计。 */
   function render(nextApps, flowPath, featPath) {
-    closeMenu();
     apps = nextApps; currentFlow = flowPath; currentFeat = featPath;
+    // 后台刷新只更新数据，编辑结束再绘制，避免原位输入被替换。
+    if (editingApp) return;
+    closeMenu();
+    appResize.disconnect();
     const total = {};
     let html = '', group = null;
     for (const a of apps) {
@@ -145,10 +217,12 @@ window.Sidebar = (() => {
       const alias = prefs.app_aliases[a.flow_dir];
       html += `<div class="app ${collapsed ? 'collapsed' : ''}" data-key="${esc(a.flow_dir)}"><div class="app-head" role="button" tabindex="0" aria-expanded="${!collapsed}">
         <span class="app-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
-        <span class="app-name" title="双击修改显示名；原目录：${esc(a.app)}"><span class="app-display">${esc(alias || a.app)}</span>${alias ? `<small class="app-original" title="${esc(a.app)}">${esc(a.app)}</small>` : ''}</span>
-        ${badges(a.counts)}</div>${sections}</div>`;
+        <span class="app-name"><span class="app-display">${esc(alias || a.app)}</span>${alias ? `<small class="app-original">${esc(a.app)}</small>` : ''}</span>
+        ${appBadges(a.counts)}</div>${sections}</div>`;
     }
     $('tree').innerHTML = html || '<div class="empty mini">没有匹配项</div>';
+    fitAppBadges();
+    $('tree').querySelectorAll('.app-head').forEach((head) => appResize.observe(head));
     renderStatusStats(total);
   }
 
@@ -275,7 +349,7 @@ window.Sidebar = (() => {
       e.preventDefault();
       e.stopImmediatePropagation();
       const app = apps.find((a) => a.flow_dir === head.parentElement.dataset.key);
-      renameApp(app).catch((error) => { $('side-msg').textContent = '修改 APP 显示名失败：' + error; });
+      renameApp(app, e.target.closest('.app-name')).catch((error) => { $('side-msg').textContent = '修改 APP 显示名失败：' + error; });
     }, true);
     $('tree').addEventListener('keydown', (e) => {
       if (e.target.matches('.app-head, .sec-head') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }

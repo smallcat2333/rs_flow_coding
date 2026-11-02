@@ -64,12 +64,15 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 #side-msg:empty { display: none; }
 .group { padding: 8px 10px 2px; color: var(--muted); font-size: 12px; }
 .app { margin: 2px 6px; border-radius: 6px; }
-.app > .app-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
+.app > .app-head { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; height: 30px; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
 .app > .app-head:hover { background: var(--hover); }
-.app-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-weight: 600; flex: 1 1 120px; white-space: nowrap; }
-.app-head > .badges { margin-left: auto; }
-.app-display { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.app-original { min-width: 0; max-width: 50%; flex: 0 1 auto; color: var(--muted); font-size: 11px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.app-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; }
+.app-head > .app-badges { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+.app-badges .badge { flex-shrink: 0; }
+.app-display { min-width: 0; max-width: 100%; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; }
+.app-name:has(.app-original) .app-display { max-width: calc(100% - 26px); }
+.app-original { min-width: 20px; flex: 0 1 auto; color: var(--muted); font-size: 11px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.app-rename { width: 100%; min-width: 0; height: 20px; padding: 0 4px; border-color: var(--accent); border-radius: 3px; font: inherit; }
 .app-toggle { width: 12px; flex-shrink: 0; color: var(--muted); font-size: 11px; }
 .app-new, .feat-new { padding: 0 6px; font-size: 12px; }
 .app.collapsed > .sec { display: none; }
