@@ -126,52 +126,9 @@ async function refresh(full = false) {
   renderCurrentBar();
 }
 
-/** 重绘侧栏 APP 树与顶部合计。每个 APP 下分「流程图」「Feat」两组。 */
+/** 重绘侧栏与顶部合计；生命周期、收纳和本机偏好由 Sidebar 统一维护。 */
 function renderTree() {
-  const total = {};
-  const collapsed = new Set([...document.querySelectorAll('.collapsed[data-key]')].map((e) => e.dataset.key));
-  let html = '', lastGroup = null;
-  for (const a of st.apps) {
-    for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
-    if (a.group !== lastGroup) {
-      html += `<div class="group">${esc(a.group || '未分组')}</div>`;
-      lastGroup = a.group;
-    }
-    const lockTag = (l) => l ? `<span class="lock-dot">${l.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
-    const files = a.files.map((f) => `
-      <div class="file ${f.path === st.cur ? 'active' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)}">
-        <span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>
-        ${lockTag(f.lock)}
-        ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : badges(f.counts)}
-      </div>`).join('');
-    const feats = a.feats.map((f) => `
-      <div class="feat ${f.path === curFeat.path ? 'active' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" title="${esc(f.path)}">
-        <div class="feat-line">
-          <span class="file-name">${esc(f.title || f.id)}</span>
-          ${lockTag(f.lock)}
-          ${f.closable ? '<span class="closable" title="挂的节点全部已实现">可关闭</span>' : badges(f.counts)}
-        </div>
-        <div class="feat-meta"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>
-          ${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}
-          <span>${f.node_total} 节点</span></div>
-      </div>`).join('');
-    const key = a.flow_dir;
-    html += `<div class="app ${collapsed.has(key) ? 'collapsed' : ''}" data-key="${esc(key)}">
-      <div class="app-head"><span class="app-name">${esc(a.app)}</span>${badges(a.counts)}</div>
-      <div class="sec ${collapsed.has(key + '#flow') ? 'collapsed' : ''}" data-key="${esc(key)}#flow">
-        <div class="sec-head"><span>流程图 ${a.files.length}</span>
-          <button class="app-new" data-dir="${esc(a.flow_dir)}" title="新建流程图">＋</button></div>
-        <div class="sec-body">${files || '<div class="empty mini">暂无流程图</div>'}</div></div>
-      <div class="sec ${collapsed.has(key + '#feat') ? 'collapsed' : ''}" data-key="${esc(key)}#feat">
-        <div class="sec-head"><span>Feat ${a.feats.length}</span>
-          <button class="feat-new" data-dir="${esc(a.feat_dir)}" title="新建 Feat 档案">＋</button></div>
-        <div class="sec-body">${feats || '<div class="empty mini">暂无 Feat</div>'}</div></div>
-    </div>`;
-  }
-  $('tree').innerHTML = html;
-  const w = whoCounts(total);
-  $('t-user').textContent = w.user;
-  $('t-agent').textContent = w.agent;
+  Sidebar.render(st.apps, st.cur, curFeat.path);
 }
 
 /** 当前图在汇总中的条目。 */
@@ -201,6 +158,8 @@ function renderCurrentBar() {
   $('cur-counts').innerHTML = e ? badges(e.file.counts) : '';
   $('btn-history').disabled = !st.cur;
   $('btn-flow-pop').disabled = !st.cur;
+  const feat = appOf(curFeat.path)?.feats.find((f) => f.path === curFeat.path);
+  $('feat-status').textContent = feat ? feat.status : '';
   const badge = $('lock-badge');
   if (st.readOnly) { badge.className = 'agent'; badge.textContent = 'Agent 持锁'; }
   else if (st.holding) { badge.className = 'user'; badge.textContent = '你持锁'; }
@@ -596,6 +555,9 @@ $('btn-feat-pop').onclick = () => popOut('feat');
 
 // ---------------- 文件变化 ----------------
 
+/** 项目元数据启停变化：所有窗口刷新统计与收纳列表，不重载正在编辑的原图。 */
+listen('catalog-changed', () => refresh(false));
+
 let refreshTimer = 0;
 listen('flow-changed', async (ev) => {
   const { path, hash } = ev.payload;
@@ -864,8 +826,10 @@ currentWindow.onCloseRequested(async (event) => {
   await currentWindow.destroy();
 });
 
-// 所有外部脚本加载完再初始化，确保独立 Feat 窗口可直接调用 FeatPane。
-window.addEventListener('DOMContentLoaded', () => {
+// 所有外部脚本加载完再初始化，先恢复侧栏偏好，再读取项目列表。
+window.addEventListener('DOMContentLoaded', async () => {
+  try { await Sidebar.init(() => refresh(false)); }
+  catch (error) { sideMsg('读取侧栏设置失败：' + error); return; }
   if (SOLO) {
     // 独立窗口：只显示一栏，打开 URL 参数指定的文件
     document.body.classList.add('solo');

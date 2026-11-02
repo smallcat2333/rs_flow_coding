@@ -35,7 +35,7 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             html = (UI / "index.html").read_text(encoding="utf-8")
-            html = html.replace('<script src="app.js">', '<script src="/__mock.js"></script><script src="app.js">')
+            html = html.replace('<script src="vendor/vendor.js">', '<script src="/__mock.js"></script><script src="vendor/vendor.js">')
             return self._send(html.encode("utf-8"), "text/html; charset=utf-8")
         if path == "/__mock.js":
             return self._send(MOCK.read_bytes(), "application/javascript; charset=utf-8")

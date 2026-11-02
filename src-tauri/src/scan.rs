@@ -12,6 +12,15 @@ const SKIP_DIRS: [&str; 16] = [
     "_app_log", ".idea", ".codegraph", ".cache", ".pytest_cache", "site-packages", "out", ".claude",
 ];
 
+/// 本机侧栏偏好：折叠区的键、显式展开的收纳区、是否搜索历史；搜索词不持久化。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarPrefs {
+    pub collapsed: Vec<String>,
+    pub expanded_archives: Vec<String>,
+    pub include_archived: bool,
+}
+
 /// 用户配置，存于 `<数据目录>/config.json`。
 /// - `roots`：项目根目录列表；
 /// - `flow_dirs`：上次全量扫描发现的 flow 目录缓存，启动与常规刷新直接用它，避免遍历大仓库。
@@ -20,6 +29,8 @@ pub struct Config {
     pub roots: Vec<String>,
     #[serde(default)]
     pub flow_dirs: Vec<String>,
+    #[serde(default)]
+    pub sidebar: SidebarPrefs,
 }
 
 /// 读取配置；文件不存在返回空配置，内容损坏报错。
@@ -31,10 +42,17 @@ pub fn load_config() -> Result<Config, String> {
     }
 }
 
-/// 保存配置。
-pub fn save_config(c: &Config) -> Result<(), String> {
+/// 串行更新配置的互斥锁，防止全量扫描完成时覆盖刚保存的侧栏偏好。
+static CONFIG_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 基于最新配置更新指定字段并原子写盘；其他字段保留，避免扫描与界面设置相互覆盖。
+pub fn update_config(change: impl FnOnce(&mut Config)) -> Result<Config, String> {
+    let _guard = CONFIG_WRITE.lock().unwrap();
+    let mut config = load_config()?;
+    change(&mut config);
     let f = crate::paths::home()?.join("config.json");
-    std::fs::write(&f, serde_json::to_string_pretty(c).unwrap()).map_err(|e| format!("保存配置失败: {e}"))
+    crate::write_atomic(&f, &serde_json::to_string_pretty(&config).unwrap())?;
+    Ok(config)
 }
 
 /// 一个 APP 的流程图目录。`group` 为上级 `group_*` 目录名（没有则为空），`app` 为 APP 目录名。

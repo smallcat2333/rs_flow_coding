@@ -9,6 +9,9 @@
   const snaps = [];       // {id, path, ts, source, xml}
   let agentLock = false;
   const userLocks = new Set();
+  const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
+  const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
+  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
@@ -55,19 +58,38 @@
     const c = { none: 0, review: 0, plan_delete: 0, issue: 0, idea: 0, confirmed: 0, confirm_delete: 0, unknown: 0 };
     mine.forEach((n) => c[n.status]++);
     return {
-      path: p, id, title, status, counts: c, node_total: mine.length, lock: lockOf(p),
+      path: p, id, title, status, archived: /^(已关闭|已废弃)/.test(status), closed_at: ((text.match(/关闭[：:]\s*(\S+)/) || [])[1] || ''), counts: c, node_total: mine.length, lock: lockOf(p),
       tasks_total: rows.length, tasks_done: rows.filter((r) => /完成|取消/.test(r.split('|').slice(-2)[0])).length,
       closable: mine.length > 0 && c.none === mine.length,
     };
   }
 
   const api = {
-    async get_config() { return { roots: ['(mock)'], flow_dirs: [] }; },
-    async set_roots() { return { roots: [], flow_dirs: [] }; },
+    async get_config() { return config; },
+    async set_roots({ roots }) { config.roots = roots; return config; },
+    async save_sidebar({ sidebar }) { config.sidebar = sidebar; localStorage.setItem('fc-mock-sidebar', JSON.stringify(sidebar)); },
+    async set_chart_enabled({ path, enabled }) {
+      if (agentLock) throw 'LOCKED:agent 正在编辑';
+      if (enabled) delete chartStates[path]; else chartStates[path] = { status: 'disabled', disabled_at: new Date().toISOString() };
+      localStorage.setItem('fc-mock-charts', JSON.stringify(chartStates));
+      emit('catalog-changed', {});
+    },
+    async set_feat_status({ path, status, expectedHash }) {
+      if (agentLock || userLocks.has(path)) throw 'LOCKED:文件正在编辑，请停止编辑后重试';
+      if (hash(mds[path]) !== expectedHash) throw '档案已变化，请刷新后重试';
+      const closed = /^(已关闭|已废弃)/.test(status);
+      let text = mds[path].replace(/^([> -]*状态)[：:].*$/m, '$1：' + status);
+      const date = closed ? new Date().toISOString().slice(0, 10) : '-';
+      if (/关闭[：:]/.test(text)) text = text.replace(/关闭[：:][^\S\n]*\S+/, '关闭：' + date);
+      else text = text.replace(/^(#[^\n]*\n)/, '$1\n> 关闭：' + date + '\n');
+      mds[path] = text; mdOverrides[path] = text;
+      localStorage.setItem('fc-mock-mds', JSON.stringify(mdOverrides));
+      emit('md-changed', { path, hash: hash(text), source: 'user' });
+    },
     async summary() {
-      const list = Object.keys(files).map((p) => ({ path: p, name: p.split('/').pop(), counts: counts(files[p]), lock: lockOf(p), error: null }));
+      const list = Object.keys(files).map((p) => ({ path: p, name: p.split('/').pop(), enabled: !chartStates[p], disabled_at: chartStates[p]?.disabled_at || '', counts: counts(files[p]), lock: lockOf(p), error: null }));
       const total = {};
-      list.forEach((f) => Object.entries(f.counts).forEach(([k, v]) => total[k] = (total[k] || 0) + v));
+      list.filter((f) => f.enabled).forEach((f) => Object.entries(f.counts).forEach(([k, v]) => total[k] = (total[k] || 0) + v));
       const feats = Object.keys(mds).sort().reverse().map(featEntry);
       return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }];
     },
@@ -154,7 +176,7 @@
   xhr.open('GET', '/__samples', false);
   xhr.send();
   for (const [name, text] of Object.entries(JSON.parse(xhr.responseText))) {
-    if (name.endsWith('.md')) mds[`/mock/feat/${name}`] = text;
+    if (name.endsWith('.md')) mds[`/mock/feat/${name}`] = mdOverrides[`/mock/feat/${name}`] || text;
     else { files[`/mock/flow/${name}`] = text; snap(`/mock/flow/${name}`, 'scan'); }
   }
 })();

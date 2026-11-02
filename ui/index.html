@@ -29,6 +29,10 @@
       <button id="btn-theme" title="切换浅色 / 深色 / 跟随系统">主题</button>
     </div>
     <div id="legend"></div>
+    <div id="tree-filter">
+      <input id="tree-search" type="search" placeholder="搜索名称或 Feat 编号" aria-label="搜索名称或 Feat 编号">
+      <label><input id="search-archived" type="checkbox">搜索含历史</label>
+    </div>
     <div id="tree"></div>
     <div id="side-msg"></div>
   </aside>
@@ -124,6 +128,7 @@
   </div>
 
   <script src="vendor/vendor.js"></script>
+  <script src="sidebar.js"></script>
   <script src="app.js"></script>
   <script src="feat.js"></script>
 </body>

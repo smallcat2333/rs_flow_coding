@@ -22,6 +22,9 @@ pub struct FeatEntry {
     pub id: String,
     pub title: String,
     pub status: String,
+    /// 已关闭/已废弃归入收纳区；完成开发、测试完成仍属于开启。
+    pub archived: bool,
+    pub closed_at: String,
     pub tasks_done: usize,
     pub tasks_total: usize,
     pub counts: Counts,
@@ -96,6 +99,63 @@ pub fn parse_md(text: &str, id: &str) -> (String, String, usize, usize) {
     (title, status, done, total)
 }
 
+/// 状态行以「已关闭」或「已废弃」开头时收纳，允许其后附加原因或日期。
+pub fn is_archived(status: &str) -> bool {
+    let status = status.trim().trim_start_matches('*');
+    status.starts_with("已关闭") || status.starts_with("已废弃")
+}
+
+/// 从正文前的档案头读取关闭日期；支持与创建日期同一行，缺省返回空串。
+pub fn closed_at(text: &str) -> String {
+    text.lines().take_while(|l| !l.starts_with("## ")).find_map(|line| {
+        let (_, date) = line.split_once("关闭：").or_else(|| line.split_once("关闭:"))?;
+        Some(date.trim().split_whitespace().next().unwrap_or("").trim_matches('*').to_string())
+    }).unwrap_or_default()
+}
+
+/// 只更新档案头的状态和关闭日期，正文、换行风格与创建日期保持原样。
+/// 开启可指定需求/开发/测试阶段；字段缺失时在正文前补齐，不改正文中的同名文字。
+pub fn with_status(text: &str, status: &str, date: &str) -> Result<String, String> {
+    if !["需求整理中", "开发中", "测试中", "已关闭", "已废弃"].contains(&status) {
+        return Err(format!("不支持的 Feat 状态: {status}"));
+    }
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let date = if is_archived(status) { date } else { "-" };
+    let (mut status_seen, mut date_seen, mut in_header) = (false, false, true);
+    let mut result = String::new();
+    for raw in text.split_inclusive('\n') {
+        if in_header && raw.starts_with("## ") {
+            if !status_seen { result.push_str(&format!("> 状态：{status}{newline}")); status_seen = true; }
+            if !date_seen { result.push_str(&format!("> 关闭：{date}{newline}{newline}")); date_seen = true; }
+            in_header = false;
+        }
+        let body = raw.trim_start_matches(['>', '-', ' ']);
+        if in_header && !status_seen && (body.starts_with("状态：") || body.starts_with("状态:")) {
+            let colon = raw.find(['：', ':']).unwrap();
+            result.push_str(&raw[..colon]);
+            result.push_str(&format!("：{status}"));
+            if raw.ends_with('\n') { result.push_str(newline); }
+            status_seen = true;
+        } else if in_header && !date_seen && (raw.contains("关闭：") || raw.contains("关闭:")) {
+            let start = raw.find("关闭：").or_else(|| raw.find("关闭:")).unwrap();
+            let after = start + if raw[start..].starts_with("关闭：") { "关闭：".len() } else { "关闭:".len() };
+            let value = &raw[after..];
+            let spaces = value.len() - value.trim_start_matches([' ', '\t']).len();
+            let end = value[spaces..].find(char::is_whitespace).map(|i| after + spaces + i).unwrap_or(raw.len());
+            result.push_str(&raw[..after]);
+            result.push_str(date);
+            result.push_str(&raw[end..]);
+            date_seen = true;
+        } else { result.push_str(raw); }
+    }
+    if !status_seen || !date_seen {
+        if !result.ends_with('\n') { result.push_str(newline); }
+        if !status_seen { result.push_str(&format!("> 状态：{status}{newline}")); }
+        if !date_seen { result.push_str(&format!("> 关闭：{date}{newline}")); }
+    }
+    Ok(result)
+}
+
 /// 统计 §3.1 路线图：小节标题以 `### 3.1` 开头，到下一个 `##`/`###` 为止；
 /// 跳过表头与分隔行，状态列为末列，「完成」「取消」计为已完成。
 fn roadmap_progress(text: &str) -> (usize, usize) {
@@ -147,6 +207,8 @@ pub fn summarize(feat_dir: &Path, nodes: &[(String, flow::Node)]) -> Vec<FeatEnt
                 lock: crate::lock::read(&p).ok().flatten(),
                 path: p.to_string_lossy().into_owned(),
                 closable: node_total > 0 && counts["none"] == node_total,
+                archived: is_archived(&status),
+                closed_at: closed_at(&text),
                 id,
                 title,
                 status,
@@ -194,6 +256,24 @@ mod tests {
         assert_eq!((d, n), (2, 3));
         let (_, s2, _, n2) = parse_md("# X\n- 状态：已完成\n", "X");
         assert_eq!((s2.as_str(), n2), ("已完成", 0));
+    }
+
+    /// 关闭/重开只更改档案头，保留创建时间、正文与 CRLF；缺失字段可补齐。
+    #[test]
+    fn lifecycle_header_roundtrip() {
+        let source = "# Feat_261102_1 测试\r\n\r\n> 状态：开发中\r\n> 创建：2026-10-30　　关闭：-\r\n\r\n## 1. 需求\r\n状态：正文不能改\r\n关闭：正文不能改\r\n";
+        let closed = with_status(source, "已关闭", "2026-11-02").unwrap();
+        assert!(closed.contains("> 状态：已关闭\r\n"));
+        assert!(closed.contains("创建：2026-10-30　　关闭：2026-11-02\r\n"));
+        assert!(closed.ends_with("状态：正文不能改\r\n关闭：正文不能改\r\n"));
+        assert_eq!(closed_at(&closed), "2026-11-02");
+        assert_eq!(with_status(&closed, "开发中", "unused").unwrap(), source);
+        assert!(is_archived("已关闭（已发布）"));
+        assert!(is_archived("已废弃"));
+        assert!(!is_archived("开发完成，待测试"));
+        let minimal = with_status("# Feat\n\n## 1. 需求\nbody\n", "已废弃", "2026-11-02").unwrap();
+        assert!(minimal.contains("> 状态：已废弃\n> 关闭：2026-11-02\n\n## 1. 需求"));
+        assert!(with_status(source, "typo", "2026-11-02").is_err());
     }
 
     #[test]

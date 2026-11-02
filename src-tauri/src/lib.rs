@@ -5,6 +5,7 @@ pub mod db;
 pub mod feat;
 pub mod flow;
 pub mod lock;
+pub mod lifecycle;
 pub mod paths;
 pub mod scan;
 
@@ -24,6 +25,9 @@ pub struct FileEntry {
     pub counts: flow::Counts,
     pub lock: Option<lock::LockInfo>,
     pub error: Option<String>,
+    /// 启停来自项目元数据；历史与原图始终保留。
+    pub enabled: bool,
+    pub disabled_at: String,
 }
 
 /// 一个 APP 的汇总：分组、APP 名、流程图目录、Feat 目录、各图信息、Feat 列表、APP 合计计数。
@@ -80,9 +84,9 @@ pub fn file_entry(conn: &mut rusqlite::Connection, path: &Path, source: &str) ->
     match parsed {
         Ok((xml, nodes)) => {
             let error = db::record(conn, path, &scan::app_label(path), &xml, source).err();
-            FileEntry { path: path.to_string_lossy().into_owned(), name, counts: flow::count(&nodes), lock, error }
+            FileEntry { enabled: true, disabled_at: String::new(), path: path.to_string_lossy().into_owned(), name, counts: flow::count(&nodes), lock, error }
         }
-        Err(e) => FileEntry { path: path.to_string_lossy().into_owned(), name, counts: flow::empty_counts(), lock, error: Some(e) },
+        Err(e) => FileEntry { enabled: true, disabled_at: String::new(), path: path.to_string_lossy().into_owned(), name, counts: flow::empty_counts(), lock, error: Some(e) },
     }
 }
 
@@ -92,9 +96,17 @@ fn build_apps(dirs: &[scan::FlowDir]) -> Result<Vec<AppEntry>, String> {
     let mut apps = Vec::with_capacity(dirs.len());
     for d in dirs {
         let paths_ = scan::list_drawio(Path::new(&d.flow_dir));
-        let files: Vec<FileEntry> = paths_.iter().map(|p| file_entry(&mut conn, p, "scan")).collect();
+        let states = lifecycle::chart_states(Path::new(&d.flow_dir))?;
+        let files: Vec<FileEntry> = paths_.iter().map(|p| {
+            let mut file = file_entry(&mut conn, p, "scan");
+            if let Some(state) = states.charts.get(&file.name) {
+                file.enabled = false;
+                file.disabled_at = state.disabled_at.clone();
+            }
+            file
+        }).collect();
         let mut counts = flow::empty_counts();
-        for f in &files {
+        for f in files.iter().filter(|f| f.enabled) {
             for (k, v) in &f.counts {
                 *counts.get_mut(k).unwrap() += v;
             }
@@ -162,7 +174,9 @@ fn rewatch(app: &tauri::AppHandle, dirs: &[scan::FlowDir]) -> Result<(), String>
         }
         for p in ev.paths {
             let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
-            if ext == "drawio" {
+            if p.file_name().is_some_and(|n| n == ".flow-coding.json") {
+                let _ = handle.emit("catalog-changed", ());
+            } else if ext == "drawio" {
                 on_file_event(&handle, &p);
             } else if ext == "md" {
                 on_md_event(&handle, &p);
@@ -227,15 +241,15 @@ fn get_config() -> Result<scan::Config, String> {
 /// 设置项目根目录列表（规范化后保存）；不存在的目录报错。
 #[tauri::command]
 fn set_roots(roots: Vec<String>) -> Result<scan::Config, String> {
-    let mut cfg = scan::load_config()?;
-    cfg.roots = roots
+    let roots = roots
         .iter()
         .filter(|r| !r.trim().is_empty())
         .map(|r| paths::norm(Path::new(r.trim())).map(|p| p.to_string_lossy().into_owned()))
         .collect::<Result<_, _>>()?;
-    cfg.flow_dirs.retain(|f| cfg.roots.iter().any(|r| paths::key(Path::new(f)).starts_with(&paths::key(Path::new(r)))));
-    scan::save_config(&cfg)?;
-    Ok(cfg)
+    scan::update_config(|cfg| {
+        cfg.roots = roots;
+        cfg.flow_dirs.retain(|f| cfg.roots.iter().any(|r| paths::key(Path::new(f)).starts_with(&paths::key(Path::new(r)))));
+    })
 }
 
 /// 汇总全部 APP。`full=true` 时遍历项目根重新发现 flow 目录并更新缓存；否则用缓存目录（启动快）。
@@ -243,11 +257,10 @@ fn set_roots(roots: Vec<String>) -> Result<scan::Config, String> {
 #[tauri::command]
 async fn summary(app: tauri::AppHandle, full: bool) -> Result<Vec<AppEntry>, String> {
     let dirs = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<scan::FlowDir>, String> {
-        let mut cfg = scan::load_config()?;
+        let cfg = scan::load_config()?;
         if full || cfg.flow_dirs.is_empty() {
             let dirs: Vec<scan::FlowDir> = cfg.roots.iter().flat_map(|r| scan::scan_root(Path::new(r))).collect();
-            cfg.flow_dirs = dirs.iter().map(|d| d.flow_dir.clone()).collect();
-            scan::save_config(&cfg)?;
+            scan::update_config(|latest| latest.flow_dirs = dirs.iter().map(|d| d.flow_dir.clone()).collect())?;
             Ok(dirs)
         } else {
             Ok(cached_dirs(&cfg))
@@ -347,12 +360,13 @@ fn create_diagram(dir: String, name: String) -> Result<String, String> {
     write_atomic(&f, &xml)?;
     let mut conn = db::open()?;
     db::record(&mut conn, &f, &scan::app_label(&f), &xml, "user")?;
-    let mut cfg = scan::load_config()?;
-    let dk = paths::key(&paths::norm(&d)?);
-    if !cfg.flow_dirs.iter().any(|x| paths::key(Path::new(x)) == dk) {
-        cfg.flow_dirs.push(paths::norm(&d)?.to_string_lossy().into_owned());
-        scan::save_config(&cfg)?;
-    }
+    let dir = paths::norm(&d)?;
+    let dk = paths::key(&dir);
+    scan::update_config(|cfg| {
+        if !cfg.flow_dirs.iter().any(|x| paths::key(Path::new(x)) == dk) {
+            cfg.flow_dirs.push(dir.to_string_lossy().into_owned());
+        }
+    })?;
     Ok(f.to_string_lossy().into_owned())
 }
 
@@ -459,7 +473,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
-            read_md, save_md, tagged_nodes, create_feat, open_popout
+            read_md, save_md, tagged_nodes, create_feat, open_popout,
+            lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
