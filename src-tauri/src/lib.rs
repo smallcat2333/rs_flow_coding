@@ -411,8 +411,19 @@ fn create_feat(dir: String, title: String) -> Result<String, String> {
 }
 
 /// 启动 Tauri App。
+///
+/// - 单实例：重复启动时由插件通知已有实例，已有窗口还原并置前，新进程直接退出（不会再去抢 WebView2 数据目录）；
+/// - 启动失败：发布版没有控制台，panic 信息改用系统消息框显示，不再静默退出。
 pub fn run() {
+    std::panic::set_hook(Box::new(|info| alert(&format!("Flow Coding 出错退出：\n\n{info}"))));
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
@@ -428,6 +439,24 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("启动 rs_flow_coding 失败");
+}
+
+/// 弹出系统错误消息框（Windows 直接调 user32 的 MessageBoxW，不引入额外依赖）；其他平台打印到 stderr。
+/// 输入：消息文本；阻塞到用户点「确定」。
+fn alert(msg: &str) {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, utype: u32) -> i32;
+        }
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (text, caption) = (wide(msg), wide("Flow Coding"));
+        // MB_OK | MB_ICONERROR = 0x10
+        unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x10) };
+    }
+    #[cfg(not(windows))]
+    eprintln!("{msg}");
 }
 
 /// 释放锁目录中 owner=user 且 pid 为本进程的锁。

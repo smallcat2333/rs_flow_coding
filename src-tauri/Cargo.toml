@@ -1,6 +1,6 @@
 [package]
 name = "rs_flow_coding"
-version = "0.2.0"
+version = "0.2.1"
 description = "按 APP 汇总 draw.io 流程图，颜色状态统计、实时编辑、加锁协作与历史对比"
 authors = ["smallcat_SY"]
 edition = "2021"
@@ -36,6 +36,7 @@ flate2 = "1"
 base64 = "0.22"
 percent-encoding = "2.3"
 dunce = "1"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 opt-level = "s"

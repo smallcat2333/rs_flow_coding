@@ -7,7 +7,7 @@
 window.FeatPane = (() => {
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
-  const { EditorView, EditorState, basicSetup, keymap, indentWithTab, markdown, marked } = window.Vendor;
+  const { EditorView, EditorState, Transaction, basicSetup, keymap, indentWithTab, undo, redo, markdown, marked } = window.Vendor;
   const $ = (id) => document.getElementById(id);
 
   /** 停止输入多久后保存（毫秒）；停止编辑多久后释放锁。 */
@@ -31,28 +31,31 @@ window.FeatPane = (() => {
   /** HTML 转义。 */
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-  /** CodeMirror 实例：内容变化时触发防抖保存与预览刷新。 */
-  const view = new EditorView({
-    parent: $('md-editor'),
-    state: EditorState.create({
-      doc: '',
-      extensions: [
-        basicSetup,
-        keymap.of([indentWithTab]),
-        markdown(),
-        EditorView.lineWrapping,
-        EditorState.readOnly.of(false),
-        EditorView.updateListener.of((u) => {
-          if (!u.docChanged || st.applying) return;
-          renderPreview();
-          if (st.readOnly) return;
-          clearTimeout(st.saveTimer);
-          st.saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
-          setState('编辑中…');
-        }),
-      ],
+  /** 编辑器扩展：basicSetup 自带撤销历史（Ctrl+Z 撤销、Ctrl+Y 重做）；内容变化时触发防抖保存与预览刷新。 */
+  const extensions = [
+    basicSetup,
+    keymap.of([indentWithTab]),
+    markdown(),
+    EditorView.lineWrapping,
+    EditorState.readOnly.of(false),
+    EditorView.updateListener.of((u) => {
+      if (!u.docChanged || st.applying) return;
+      renderPreview();
+      if (st.readOnly) return;
+      clearTimeout(st.saveTimer);
+      st.saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
+      setState('编辑中…');
     }),
-  });
+  ];
+
+  /** CodeMirror 实例。 */
+  const view = new EditorView({ parent: $('md-editor'), state: EditorState.create({ doc: '', extensions }) });
+
+  /** 换档案时重建编辑器状态：撤销历史清空，不能撤销到上一个档案或空白内容。 */
+  function resetDoc(text) {
+    view.setState(EditorState.create({ doc: text, extensions }));
+    renderPreview();
+  }
 
   /** 顶栏保存状态。 */
   function setState(text, isError) {
@@ -61,11 +64,16 @@ window.FeatPane = (() => {
     el.classList.toggle('error', !!isError);
   }
 
-  /** 用磁盘内容替换编辑器（保留光标大致位置）。 */
+  /** 用磁盘内容替换编辑器（保留光标大致位置）；外部同步不进撤销历史，Ctrl+Z 不会撤掉 Agent 的改动。 */
   function applyText(text) {
+    if (text === view.state.doc.toString()) return;
     st.applying = true;
     const pos = Math.min(view.state.selection.main.head, text.length);
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: pos } });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
+      selection: { anchor: pos },
+      annotations: Transaction.addToHistory.of(false),
+    });
     st.applying = false;
     renderPreview();
   }
@@ -130,11 +138,12 @@ window.FeatPane = (() => {
     renderBar();
   }
 
-  /** 从磁盘重新载入当前档案。 */
-  async function reload() {
+  /** 从磁盘重新载入当前档案；fresh=true 时（打开新档案）同时清空撤销历史。 */
+  async function reload(fresh) {
     const d = await invoke('read_md', { path: st.path });
     st.hash = d.hash;
-    applyText(d.text);
+    if (fresh) resetDoc(d.text);
+    else applyText(d.text);
   }
 
   /** 顶栏：编号、标题、锁、关联节点列表。 */
@@ -196,7 +205,7 @@ window.FeatPane = (() => {
       $('md-mask').hidden = true;
       view.contentDOM.setAttribute('contenteditable', 'true');
       setState('');
-      await reload();
+      await reload(true);
       Split.show('feat');
       // 首次打开时栏宽不足 760px 分屏太挤，默认只看预览；之后保持用户选择
       if (!st.modeChosen) setMode($('feat-pane').getBoundingClientRect().width < 760 ? 'preview' : 'split');
@@ -279,7 +288,23 @@ window.FeatPane = (() => {
     view.dispatch(view.state.replaceSelection(ref));
     view.focus();
   };
-  window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.path }); });
+  /**
+   * 编辑器外的撤销 / 重做：最后点击的是 Feat 栏（预览模式、关联节点列表等焦点不在编辑器）时，
+   * Ctrl+Z 撤销、Ctrl+Y 重做仍作用于档案；焦点在编辑器内由 CodeMirror 自己处理。
+   * Agent 持锁只读时不响应；点过流程图或侧栏后不拦截，避免误改档案。
+   */
+  let paneActive = false;
+  document.addEventListener('pointerdown', (e) => { paneActive = !!e.target.closest('#feat-pane'); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (!paneActive || !st.path || st.readOnly || !e.ctrlKey || e.altKey) return;
+    if (view.hasFocus || e.target.closest('input, textarea, [contenteditable="true"]')) return;
+    const k = e.key.toLowerCase();
+    const cmd = e.shiftKey ? null : k === 'z' ? undo : k === 'y' ? redo : null;
+    if (!cmd) return;
+    e.preventDefault();
+    if (!cmd(view)) setState(cmd === undo ? '没有可撤销的改动' : '没有可重做的改动');
+  });
+  window.addEventListener('beforeunload',() => { if (st.holding) invoke('release_lock', { path: st.path }); });
   setMode('split');
 
   return {
