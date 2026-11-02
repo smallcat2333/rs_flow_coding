@@ -1,5 +1,6 @@
-// Flow Coding 前端：APP 树 + 状态统计 + draw.io 嵌入编辑（实时保存、加锁）+ 历史对比。
-// 与 Rust 通信：window.__TAURI__.core.invoke；文件变化：flow-changed 事件。
+// Flow Coding 前端：APP 树（流程图 + Feat）+ 状态统计 + draw.io 嵌入编辑（实时保存、加锁）+ 历史对比
+// + 节点与 Feat 联动（Feat 档案编辑见 feat.js，通过 window.FeatPane / window.FlowLink 互调）。
+// 与 Rust 通信：window.__TAURI__.core.invoke；文件变化：flow-changed / md-changed 事件。
 'use strict';
 
 const { invoke } = window.__TAURI__.core;
@@ -108,10 +109,11 @@ async function refresh(full = false) {
   renderCurrentBar();
 }
 
-/** 重绘侧栏 APP 树与顶部合计。 */
+/** 重绘侧栏 APP 树与顶部合计。每个 APP 下分「流程图」「Feat」两组。 */
 function renderTree() {
   const total = {};
-  const collapsed = new Set([...document.querySelectorAll('.app.collapsed')].map((e) => e.dataset.dir));
+  const collapsed = new Set([...document.querySelectorAll('.collapsed[data-key]')].map((e) => e.dataset.key));
+  const curFeat = window.FeatPane ? FeatPane.curPath() : null;
   let html = '', lastGroup = null;
   for (const a of st.apps) {
     for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
@@ -119,16 +121,36 @@ function renderTree() {
       html += `<div class="group">${esc(a.group || '未分组')}</div>`;
       lastGroup = a.group;
     }
+    const lockTag = (l) => l ? `<span class="lock-dot">${l.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
     const files = a.files.map((f) => `
       <div class="file ${f.path === st.cur ? 'active' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)}">
         <span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>
-        ${f.lock ? `<span class="lock-dot">${f.lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : ''}
+        ${lockTag(f.lock)}
         ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : badges(f.counts)}
       </div>`).join('');
-    html += `<div class="app ${collapsed.has(a.flow_dir) ? 'collapsed' : ''}" data-dir="${esc(a.flow_dir)}">
-      <div class="app-head"><span class="app-name">${esc(a.app)}</span>${badges(a.counts)}
-        <button class="app-new" data-dir="${esc(a.flow_dir)}" title="新建流程图">＋</button></div>
-      <div class="files">${files || '<div class="empty" style="padding:6px">暂无流程图</div>'}</div></div>`;
+    const feats = a.feats.map((f) => `
+      <div class="feat ${f.path === curFeat ? 'active' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" title="${esc(f.path)}">
+        <div class="feat-line">
+          <span class="file-name">${esc(f.title || f.id)}</span>
+          ${lockTag(f.lock)}
+          ${f.closable ? '<span class="closable" title="挂的节点全部已实现">可关闭</span>' : badges(f.counts)}
+        </div>
+        <div class="feat-meta"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>
+          ${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}
+          <span>${f.node_total} 节点</span></div>
+      </div>`).join('');
+    const key = a.flow_dir;
+    html += `<div class="app ${collapsed.has(key) ? 'collapsed' : ''}" data-key="${esc(key)}">
+      <div class="app-head"><span class="app-name">${esc(a.app)}</span>${badges(a.counts)}</div>
+      <div class="sec ${collapsed.has(key + '#flow') ? 'collapsed' : ''}" data-key="${esc(key)}#flow">
+        <div class="sec-head"><span>流程图 ${a.files.length}</span>
+          <button class="app-new" data-dir="${esc(a.flow_dir)}" title="新建流程图">＋</button></div>
+        <div class="sec-body">${files || '<div class="empty mini">暂无流程图</div>'}</div></div>
+      <div class="sec ${collapsed.has(key + '#feat') ? 'collapsed' : ''}" data-key="${esc(key)}#feat">
+        <div class="sec-head"><span>Feat ${a.feats.length}</span>
+          <button class="feat-new" data-dir="${esc(a.feat_dir)}" title="新建 Feat 档案">＋</button></div>
+        <div class="sec-body">${feats || '<div class="empty mini">暂无 Feat</div>'}</div></div>
+    </div>`;
   }
   $('tree').innerHTML = html;
   const w = whoCounts(total);
@@ -140,6 +162,11 @@ function renderTree() {
 function curEntry() {
   for (const a of st.apps) for (const f of a.files) if (f.path === st.cur) return { app: a, file: f };
   return null;
+}
+
+/** 按路径找 APP：流程图或 Feat 档案所属的 APP 条目。 */
+function appOf(path) {
+  return st.apps.find((a) => a.files.some((f) => f.path === path) || a.feats.some((f) => f.path === path)) || null;
 }
 
 /** 锁状态变化后同步左侧树中该图的锁标签（锁释放不触发文件变化通知，需主动刷新）。 */
@@ -176,9 +203,23 @@ $('tree').addEventListener('click', async (ev) => {
     } catch (e) { sideMsg(String(e)); }
     return;
   }
+  const fb = ev.target.closest('.feat-new');
+  if (fb) {
+    ev.stopPropagation();
+    const title = await ask('新 Feat 标题（中文短语，编号自动生成）');
+    if (!title) return;
+    try {
+      const p = await invoke('create_feat', { dir: fb.dataset.dir, title });
+      await refresh();
+      FeatPane.open(p);
+    } catch (e) { sideMsg(String(e)); }
+    return;
+  }
   const file = ev.target.closest('.file');
   if (file) return openDiagram(file.dataset.path);
-  const head = ev.target.closest('.app-head');
+  const feat = ev.target.closest('.feat');
+  if (feat) return FeatPane.open(feat.dataset.feat);
+  const head = ev.target.closest('.app-head, .sec-head');
   if (head) head.parentElement.classList.toggle('collapsed');
 });
 
@@ -214,7 +255,10 @@ async function openDiagram(path) {
   await releaseNow();
   st.cur = path;
   st.pendingXml = null;
+  selCells = [];
+  renderNodeBar();
   $('empty').hidden = true;
+  Split.show('flow');
   saveState('');
   document.querySelectorAll('.file').forEach((f) => f.classList.toggle('active', f.dataset.path === path));
   renderCurrentBar();
@@ -326,6 +370,13 @@ window.addEventListener('message', (ev) => {
       st.ready = true;
       if (st.cur) pushFromDisk(true);
       break;
+    case 'fc-select':
+      onNodeSelect(m.cells || []);
+      break;
+    case 'load':
+      // 图载入完成后按当前 Feat 重新高亮
+      FlowLink.highlight(FeatPane.curId());
+      break;
     case 'autosave':
     case 'save':
       if (m.xml != null) onAutosave(m.xml);
@@ -335,6 +386,77 @@ window.addEventListener('message', (ev) => {
       break;
   }
 });
+
+// ---------------- 节点 ↔ Feat 联动 ----------------
+
+/** 当前选中的节点（来自桥接脚本），用于「挂到当前 Feat」。 */
+let selCells = [];
+
+/** 节点选中：显示节点信息条；只挂 1 个 Feat 直接打开，多个弹列表选择，0 个不切换。 */
+function onNodeSelect(cells) {
+  selCells = cells;
+  renderNodeBar();
+  if (cells.length !== 1) return;
+  const app = appOf(st.cur);
+  if (!app) return;
+  const feats = app.feats.filter((f) => cells[0].tags.includes(f.id));
+  if (feats.length === 1) FeatPane.open(feats[0].path, { node: cells[0].id });
+  else if (feats.length > 1) pickFeat(feats, cells[0]);
+}
+
+/** 多 Feat 时弹出选择列表。 */
+function pickFeat(feats, cell) {
+  const wrap = document.createElement('div');
+  wrap.id = 'roots-dlg';
+  wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」关联了 ${feats.length} 个 Feat</b>
+    <div class="pick">${feats.map((f) => `<button data-p="${esc(f.path)}"><b>${esc(f.id)}</b> ${esc(f.title)}<small>${esc(f.status)}</small></button>`).join('')}</div>
+    <div class="dlg-btns"><button data-x="1">取消</button></div></div>`;
+  document.body.appendChild(wrap);
+  wrap.onclick = (ev) => {
+    const b = ev.target.closest('button');
+    if (!b && ev.target !== wrap) return;
+    wrap.remove();
+    if (b && b.dataset.p) FeatPane.open(b.dataset.p, { node: cell.id });
+  };
+}
+
+/** 顶栏节点信息：选中节点的标签，以及对当前 Feat 的挂/摘按钮。 */
+function renderNodeBar() {
+  const bar = $('node-bar');
+  const fid = FeatPane.curId();
+  if (!selCells.length || !st.cur) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const tags = [...new Set(selCells.flatMap((c) => c.tags))];
+  const allHave = fid && selCells.every((c) => c.tags.includes(fid));
+  $('node-info').innerHTML = `选中 ${selCells.length} 个节点` +
+    (tags.length ? '：' + tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('') : '：未挂标签');
+  const btn = $('btn-tag');
+  btn.hidden = !fid || st.readOnly;
+  btn.textContent = allHave ? `从 ${fid} 摘除` : `挂到 ${fid}`;
+  btn.onclick = () => {
+    post({ action: 'fc-tag', tag: fid, add: !allHave });
+    setTimeout(() => refresh(false), 1500);
+  };
+}
+
+/** 供 FeatPane 调用的流程图侧接口。 */
+window.FlowLink = {
+  /** 高亮挂了 tag 的节点；tag 为空清除。 */
+  highlight(tag) { if (st.ready && st.cur) post({ action: 'fc-highlight', tag: tag || '' }); renderNodeBar(); },
+  /** 打开图并选中节点。 */
+  async reveal(file, nodeId) {
+    if (file !== st.cur) {
+      await openDiagram(file);
+      // 等编辑器载入新图
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    post({ action: 'fc-select-cell', id: nodeId });
+  },
+  curFile: () => st.cur,
+  appOf,
+  refresh: () => refresh(false),
+};
+window.FlowSel = () => selCells;
 
 // ---------------- 文件变化 ----------------
 
@@ -469,6 +591,51 @@ $('roots-ok').onclick = async () => {
 };
 
 // ---------------- 启动 ----------------
+
+/** 主区分栏：流程图 / Feat 两栏，可拖动分隔；只打开一个时占满。 */
+window.Split = {
+  /** 显示某一栏（flow / feat）。 */
+  show(which) {
+    $(which === 'flow' ? 'flow-pane' : 'feat-pane').hidden = false;
+    this.layout();
+  },
+  /** 关闭某一栏。 */
+  hide(which) {
+    $(which === 'flow' ? 'flow-pane' : 'feat-pane').hidden = true;
+    this.layout();
+  },
+  /** 两栏都开时显示分隔条。 */
+  layout() {
+    $('splitter').hidden = $('flow-pane').hidden || $('feat-pane').hidden;
+  },
+};
+(() => {
+  const sp = $('splitter');
+  sp.addEventListener('pointerdown', (e) => {
+    sp.setPointerCapture(e.pointerId);
+    document.body.classList.add('dragging');
+    const box = $('panes').getBoundingClientRect();
+    const move = (ev) => {
+      const pct = Math.min(80, Math.max(20, ((ev.clientX - box.left) / box.width) * 100));
+      $('flow-pane').style.flex = `0 0 ${pct}%`;
+    };
+    const up = () => {
+      sp.removeEventListener('pointermove', move);
+      sp.removeEventListener('pointerup', up);
+      document.body.classList.remove('dragging');
+    };
+    sp.addEventListener('pointermove', move);
+    sp.addEventListener('pointerup', up);
+  });
+})();
+$('btn-flow-close').onclick = async () => {
+  await releaseNow();
+  st.cur = null;
+  $('empty').hidden = false;
+  Split.hide('flow');
+  renderTree();
+  renderCurrentBar();
+};
 
 $('legend').innerHTML = STATUS.map((s) => `<span><span class="sw s-${s.key}"></span>${s.name}</span>`).join('');
 window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.cur }); });

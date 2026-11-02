@@ -125,6 +125,7 @@ fn nodes_of(conn: &Connection, sid: i64) -> Result<Vec<Node>, String> {
                 label: r.get(3)?,
                 status: r.get(4)?,
                 fill: r.get(5)?,
+                tags: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -223,7 +224,7 @@ mod tests {
     use super::*;
 
     fn n(id: &str, label: &str, status: &str) -> Node {
-        Node { page_id: "p".into(), page_name: "页".into(), id: id.into(), label: label.into(), status: status.into(), fill: String::new() }
+        Node { page_id: "p".into(), page_name: "页".into(), id: id.into(), label: label.into(), status: status.into(), fill: String::new(), tags: Vec::new() }
     }
 
     #[test]

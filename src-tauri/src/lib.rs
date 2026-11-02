@@ -2,6 +2,7 @@
 //! 以及 App 的 Tauri 命令与文件监听。
 
 pub mod db;
+pub mod feat;
 pub mod flow;
 pub mod lock;
 pub mod paths;
@@ -25,15 +26,25 @@ pub struct FileEntry {
     pub error: Option<String>,
 }
 
-/// 一个 APP 的汇总：分组、APP 名、流程图目录、各图信息、APP 合计计数。
+/// 一个 APP 的汇总：分组、APP 名、流程图目录、Feat 目录、各图信息、Feat 列表、APP 合计计数。
 #[derive(Debug, Clone, Serialize)]
 pub struct AppEntry {
     pub group: String,
     pub app: String,
     pub root: String,
     pub flow_dir: String,
+    pub feat_dir: String,
     pub files: Vec<FileEntry>,
+    pub feats: Vec<feat::FeatEntry>,
     pub counts: flow::Counts,
+}
+
+/// 读 Markdown 返回：内容与哈希。
+#[derive(Debug, Clone, Serialize)]
+pub struct MdDoc {
+    pub path: String,
+    pub text: String,
+    pub hash: String,
 }
 
 /// 读图返回：XML 内容与哈希（前端用哈希识别自己写入引起的变更通知）。
@@ -75,32 +86,41 @@ pub fn file_entry(conn: &mut rusqlite::Connection, path: &Path, source: &str) ->
     }
 }
 
-/// 把若干 flow 目录汇总成 APP 列表（按分组、APP 排序）。
+/// 把若干 APP 目录汇总成 APP 列表（按分组、APP 排序）：流程图计数 + Feat 摘要（按标签统计节点）。
 fn build_apps(dirs: &[scan::FlowDir]) -> Result<Vec<AppEntry>, String> {
     let mut conn = db::open()?;
     let mut apps = Vec::with_capacity(dirs.len());
     for d in dirs {
-        let files: Vec<FileEntry> = scan::list_drawio(Path::new(&d.flow_dir))
-            .iter()
-            .map(|p| file_entry(&mut conn, p, "scan"))
-            .collect();
+        let paths_ = scan::list_drawio(Path::new(&d.flow_dir));
+        let files: Vec<FileEntry> = paths_.iter().map(|p| file_entry(&mut conn, p, "scan")).collect();
         let mut counts = flow::empty_counts();
         for f in &files {
             for (k, v) in &f.counts {
                 *counts.get_mut(k).unwrap() += v;
             }
         }
-        apps.push(AppEntry { group: d.group.clone(), app: d.app.clone(), root: d.root.clone(), flow_dir: d.flow_dir.clone(), files, counts });
+        let feat_dir = feat::feat_dir_of(Path::new(&d.flow_dir));
+        let feats = feat::summarize(&feat_dir, &feat::collect_nodes(&paths_));
+        apps.push(AppEntry {
+            group: d.group.clone(),
+            app: d.app.clone(),
+            root: d.root.clone(),
+            flow_dir: d.flow_dir.clone(),
+            feat_dir: feat_dir.to_string_lossy().into_owned(),
+            files,
+            feats,
+            counts,
+        });
     }
     Ok(apps)
 }
 
-/// 由缓存的 flow 目录列表还原 FlowDir（不遍历项目，启动快）。
+/// 由缓存的 flow 目录列表还原 FlowDir（不遍历项目，启动快）。flow 目录可不存在，只要 `docs` 存在即保留。
 fn cached_dirs(cfg: &scan::Config) -> Vec<scan::FlowDir> {
     cfg.flow_dirs
         .iter()
         .map(PathBuf::from)
-        .filter(|p| p.is_dir())
+        .filter(|p| p.parent().is_some_and(Path::is_dir))
         .filter_map(|flow| {
             let app_dir = flow.parent()?.parent()?.to_path_buf();
             let (group, app) = scan::app_of(&app_dir);
@@ -122,10 +142,14 @@ fn cached_dirs(cfg: &scan::Config) -> Vec<scan::FlowDir> {
         .collect()
 }
 
-/// 按 flow 目录集合重建文件监听；目录集合未变化时不重建。
+/// 按 APP 的 flow / feat 目录集合重建文件监听；集合未变化时不重建，不存在的目录跳过。
 fn rewatch(app: &tauri::AppHandle, dirs: &[scan::FlowDir]) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut want: Vec<PathBuf> = dirs.iter().map(|d| PathBuf::from(&d.flow_dir)).collect();
+    let mut want: Vec<PathBuf> = dirs
+        .iter()
+        .flat_map(|d| [PathBuf::from(&d.flow_dir), feat::feat_dir_of(Path::new(&d.flow_dir))])
+        .filter(|p| p.is_dir())
+        .collect();
     want.sort();
     if *state.watched.lock().unwrap() == want && state.watcher.lock().unwrap().is_some() {
         return Ok(());
@@ -137,8 +161,11 @@ fn rewatch(app: &tauri::AppHandle, dirs: &[scan::FlowDir]) -> Result<(), String>
             return;
         }
         for p in ev.paths {
-            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("drawio")) {
+            let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            if ext == "drawio" {
                 on_file_event(&handle, &p);
+            } else if ext == "md" {
+                on_md_event(&handle, &p);
             }
         }
     })
@@ -169,9 +196,22 @@ fn on_file_event(app: &tauri::AppHandle, path: &Path) {
     let _ = app.emit("flow-changed", ChangeEvent { path: path.to_string_lossy().into_owned(), hash, source: source.into() });
 }
 
+/// 处理 Feat 档案变化：只通知前端（Markdown 不入历史库）。来源判定同流程图。
+fn on_md_event(app: &tauri::AppHandle, path: &Path) {
+    let source = match lock::read(path).ok().flatten() {
+        Some(l) if l.owner == "agent" => "agent",
+        _ => "external",
+    };
+    let hash = std::fs::read_to_string(path).map(|t| db::hash(&t)).unwrap_or_default();
+    let _ = app.emit("md-changed", ChangeEvent { path: path.to_string_lossy().into_owned(), hash, source: source.into() });
+}
+
 /// 原子写文件：先写同目录临时文件再替换，避免监听方读到半截内容。
+/// 临时文件扩展名为 `.fctmp`，不会被 .drawio / .md 监听误判。
 pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
-    let tmp = path.with_extension("drawio.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".fctmp");
+    let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, text).map_err(|e| format!("写临时文件失败: {e}"))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("替换文件失败: {e}"))
 }
@@ -316,13 +356,68 @@ fn create_diagram(dir: String, name: String) -> Result<String, String> {
     Ok(f.to_string_lossy().into_owned())
 }
 
+/// 读取 Feat 档案 Markdown 与哈希。
+#[tauri::command]
+fn read_md(path: String) -> Result<MdDoc, String> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("读取 {path} 失败: {e}"))?;
+    Ok(MdDoc { hash: db::hash(&text), path, text })
+}
+
+/// 保存 Feat 档案：与流程图同口径加用户锁后原子写盘；Agent 持锁时返回 LOCKED 错误。返回新哈希。
+#[tauri::command]
+fn save_md(path: String, text: String) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    if let Err(holder) = lock::acquire(&p, "user", lock::USER_TTL)? {
+        return Err(format!("LOCKED:{} 正在编辑（pid {}）", holder.owner, holder.pid));
+    }
+    write_atomic(&p, &text)?;
+    Ok(db::hash(&text))
+}
+
+/// 列出挂了某标签的节点（跨该 APP 全部流程图）。
+#[tauri::command]
+fn tagged_nodes(flow_dir: String, tag: String) -> Result<Vec<feat::TaggedNode>, String> {
+    let files = scan::list_drawio(Path::new(&flow_dir));
+    Ok(feat::tagged(&feat::collect_nodes(&files), &tag))
+}
+
+/// 新建 Feat 档案：编号按今天日期 + 当天最大序号 +1，内容为最小骨架（完整模板由 /smallcat-feat-1-new 生成）。
+/// 返回新文件路径。标题不能含文件名非法字符。
+#[tauri::command]
+fn create_feat(dir: String, title: String) -> Result<String, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() || title.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(format!("标题不合法: {title}"));
+    }
+    let d = PathBuf::from(&dir);
+    std::fs::create_dir_all(&d).map_err(|e| format!("创建目录失败: {e}"))?;
+    let day = chrono::Local::now().format("%y%m%d").to_string();
+    let prefix = format!("Feat_{day}_");
+    let n = feat::list_feats(&d)
+        .iter()
+        .filter_map(|p| feat::id_from_name(p).strip_prefix(&prefix).and_then(|s| s.parse::<u32>().ok()))
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let id = format!("{prefix}{n}");
+    let f = d.join(format!("{id}_{title}.md"));
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    let app = d.parent().and_then(Path::parent).and_then(|a| a.file_name()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let text = format!(
+        "# {id} {title}\n\n> 状态：需求整理中\n> 应用：{app}\n> 创建：{today}　　关闭：-\n\n## 1. 需求\n\n### 1.1 背景\n\n### 1.2 目标\n\n### 1.3 验收标准\n- [ ] \n\n### 1.4 初步路线\n\n**影响的流程图**：无\n\n## 2. 原型\n\n## 3. 开发任务\n\n### 3.1 任务路线图\n\n### 3.2 开发记录\n\n## 4. 测试记录\n\n## 5. 发布说明\n"
+    );
+    write_atomic(&f, &text)?;
+    Ok(f.to_string_lossy().into_owned())
+}
+
 /// 启动 Tauri App。
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
-            lock_status, history, diff, snapshot_xml, restore, create_diagram
+            lock_status, history, diff, snapshot_xml, restore, create_diagram,
+            read_md, save_md, tagged_nodes, create_feat
         ])
         .on_window_event(|window, event| {
             // 窗口关闭时释放本 App 持有的全部用户锁

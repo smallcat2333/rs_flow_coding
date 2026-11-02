@@ -90,28 +90,33 @@ pub fn list_drawio(dir: &Path) -> Vec<PathBuf> {
     v
 }
 
-/// 扫描一个根目录，返回所有含 `docs/flow` 的 APP（即使目录里暂无图，也列出以便新建）。
+/// 扫描一个根目录，返回所有含 `docs/flow` 或 `docs/feat` 的 APP（目录里暂无文件也列出，以便新建）。
+/// `flow_dir` 统一为 `<app>/docs/flow`，该目录可能尚不存在（只有 feat 时）。
 pub fn scan_root(root: &Path) -> Vec<FlowDir> {
-    let mut out = Vec::new();
+    let mut out: Vec<FlowDir> = Vec::new();
     let walker = walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_entry(|e| {
         !(e.file_type().is_dir()
             && SKIP_DIRS.contains(&e.file_name().to_string_lossy().to_lowercase().as_str()))
     });
     for entry in walker.flatten() {
-        if !entry.file_type().is_dir() || entry.file_name() != "flow" {
+        if !entry.file_type().is_dir() || !(entry.file_name() == "flow" || entry.file_name() == "feat") {
             continue;
         }
-        let flow = entry.path();
-        let Some(docs) = flow.parent().filter(|d| d.file_name().is_some_and(|n| n == "docs")) else { continue };
+        let Some(docs) = entry.path().parent().filter(|d| d.file_name().is_some_and(|n| n == "docs")) else { continue };
         let Some(app_dir) = docs.parent() else { continue };
+        let flow = docs.join("flow");
+        let flow_s = flow.to_string_lossy().into_owned();
+        if out.iter().any(|d| d.flow_dir == flow_s) {
+            continue;
+        }
         let (group, app) = app_of(app_dir);
         out.push(FlowDir {
             root: root.to_string_lossy().into_owned(),
             group,
             app,
             app_dir: app_dir.to_string_lossy().into_owned(),
-            flow_dir: flow.to_string_lossy().into_owned(),
-            files: list_drawio(flow).iter().map(|p| p.to_string_lossy().into_owned()).collect(),
+            flow_dir: flow_s,
+            files: list_drawio(&flow).iter().map(|p| p.to_string_lossy().into_owned()).collect(),
         });
     }
     out.sort_by(|a, b| (&a.group, &a.app).cmp(&(&b.group, &b.app)));
@@ -131,11 +136,14 @@ mod tests {
         std::fs::write(flow.join("b.drawio"), "<mxfile/>").unwrap();
         std::fs::write(flow.join("a.drawio"), "<mxfile/>").unwrap();
         std::fs::write(flow.join("note.md"), "").unwrap();
+        std::fs::create_dir_all(tmp.join("apps/app_z/docs/feat")).unwrap();
         let r = scan_root(&tmp);
-        assert_eq!(r.len(), 1);
-        assert_eq!((r[0].group.as_str(), r[0].app.as_str()), ("group_x", "app_y"));
-        assert_eq!(r[0].files.len(), 2);
-        assert!(r[0].files[0].ends_with("a.drawio"));
+        assert_eq!(r.len(), 2);
+        assert_eq!((r[0].group.as_str(), r[0].app.as_str()), ("", "app_z"));
+        assert!(r[0].files.is_empty());
+        assert_eq!((r[1].group.as_str(), r[1].app.as_str()), ("group_x", "app_y"));
+        assert_eq!(r[1].files.len(), 2);
+        assert!(r[1].files[0].ends_with("a.drawio"));
         assert_eq!(app_label(&flow.join("a.drawio")), "group_x/app_y");
         std::fs::remove_dir_all(&tmp).ok();
     }

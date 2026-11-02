@@ -43,7 +43,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/__samples":
             data = {}
             if self.samples:
-                for f in sorted(self.samples.glob("*.drawio")):
+                for f in sorted([*self.samples.glob("*.drawio"), *self.samples.glob("Feat_*.md")]):
                     data[f.name] = f.read_text(encoding="utf-8")
             return self._send(json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
         return super().do_GET()

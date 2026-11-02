@@ -32,7 +32,8 @@ pub const STATUSES: [&str; 8] = [
 /// 一个参与统计的流程图节点。
 /// - `page_id`/`page_name`：所在页（draw.io 多页）；
 /// - `id`：mxCell id，页内唯一，用于历史对比；
-/// - `label`：去 HTML 后的纯文本；`status`：见模块说明；`fill`：原始填充色（小写）。
+/// - `label`：去 HTML 后的纯文本；`status`：见模块说明；`fill`：原始填充色（小写）；
+/// - `tags`：draw.io 标签（`<object tags="Feat_260910_1 T2">`），用于关联 Feat，历史库不存。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Node {
     pub page_id: String,
@@ -41,6 +42,8 @@ pub struct Node {
     pub label: String,
     pub status: String,
     pub fill: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// 各状态计数，键为 `STATUSES` 中的状态名，始终包含全部键。
@@ -148,9 +151,9 @@ fn collect_model(model: roxmltree::Node, page_id: &str, page_name: &str, out: &m
         let wrapper = el
             .parent_element()
             .filter(|p| p.has_tag_name("object") || p.has_tag_name("UserObject"));
-        let (id, value) = match wrapper {
-            Some(w) => (w.attribute("id"), w.attribute("label")),
-            None => (el.attribute("id"), el.attribute("value")),
+        let (id, value, tags) = match wrapper {
+            Some(w) => (w.attribute("id"), w.attribute("label"), w.attribute("tags")),
+            None => (el.attribute("id"), el.attribute("value"), None),
         };
         let Some(id) = id else { continue };
         let (base, kv) = parse_style(el.attribute("style").unwrap_or(""));
@@ -165,6 +168,7 @@ fn collect_model(model: roxmltree::Node, page_id: &str, page_name: &str, out: &m
             label: strip_html(value.unwrap_or("")),
             status: status.to_string(),
             fill,
+            tags: tags.map(|t| t.split_whitespace().map(str::to_string).collect()).unwrap_or_default(),
         });
     }
 }
@@ -222,7 +226,7 @@ mod tests {
 <mxCell id="h" value="标题" style="text;html=1;" vertex="1" parent="1"/>
 <mxCell id="i" value="V" style="swimlane;fillColor=#dae8fc;" vertex="1" parent="1"/>
 <mxCell id="j" style="endArrow=classic;" edge="1" parent="1" source="a" target="b"/>
-<object id="k" label="包裹"><mxCell style="fillColor=#f8cecc;" vertex="1" parent="1"/></object>
+<object id="k" label="包裹" tags="Feat_1 T2"><mxCell style="fillColor=#f8cecc;" vertex="1" parent="1"/></object>
 </root></mxGraphModel></diagram></mxfile>"##;
 
     #[test]
@@ -243,6 +247,8 @@ mod tests {
         );
         assert_eq!(nodes[0].label, "加载配置 m_xxx.load_config");
         assert_eq!(nodes[6].label, "包裹");
+        assert_eq!(nodes[6].tags, vec!["Feat_1", "T2"]);
+        assert!(nodes[0].tags.is_empty());
         let c = count(&nodes);
         assert_eq!(c["review"], 1);
         assert_eq!(c.len(), STATUSES.len());

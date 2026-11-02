@@ -1,19 +1,22 @@
 //! flowctl：Agent 侧命令行，与 App 共用锁和历史库。
 //!
 //! 用法：
-//!   flowctl lock <file> [--wait 秒]   加 Agent 锁；被用户持有时等待至超时（默认 0 不等），失败退出码 2
-//!   flowctl unlock <file>             释放 Agent 锁，并把当前内容记入历史（source=agent）
+//!   flowctl lock <file> [--wait 秒]   加 Agent 锁（.drawio 或 Feat 档案 .md）；被用户持有时等待至超时（默认 0 不等），失败退出码 2
+//!   flowctl unlock <file>             释放 Agent 锁；.drawio 先校验 XML 并记入历史（source=agent）
 //!   flowctl status <file>             输出锁 JSON（无锁输出 null）
 //!   flowctl stats <file|dir>...       输出各图状态计数 JSON
 //!   flowctl nodes <file> [--status s] 输出节点列表 JSON，可按状态过滤
 //!   flowctl new <dir> <name>          新建空白 .drawio
+//!   flowctl feat <feat.md> [--status s]  列出同 APP 流程图中挂了该 Feat 编号标签的节点
+//!   flowctl check <feat.md>           Feat 关闭门槛：挂了该 Feat 的节点全部无色才退出码 0，否则 3
 //!
-//! 约定：Agent 修改流程图必须 `lock → 编辑 → unlock`；编辑超 10 分钟需重新 lock 刷新。
+//! 约定：Agent 修改流程图或 Feat 档案必须 `lock → 编辑 → unlock`；编辑超 10 分钟需重新 lock 刷新。
+//! 节点关联 Feat：在 `<object>` 上写 `tags="Feat_YYMMDD_N"`（可多个，空格分隔）。
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rs_flow_coding_lib::{db, flow, lock, paths, scan, write_atomic};
+use rs_flow_coding_lib::{db, feat, flow, lock, paths, scan, write_atomic};
 
 /// 打印错误并返回退出码 1。
 fn fail(msg: impl std::fmt::Display) -> ExitCode {
@@ -31,6 +34,11 @@ fn opt(args: &[String], key: &str) -> Option<String> {
     args.iter().position(|a| a == key).and_then(|i| args.get(i + 1).cloned())
 }
 
+/// 是否流程图文件（.drawio）；其他文件（如 Feat 档案 .md）只加锁、不做 XML 校验与历史记录。
+fn is_drawio(p: &Path) -> bool {
+    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("drawio"))
+}
+
 /// lock：循环尝试加锁直到成功或超时；成功输出锁 JSON。
 fn cmd_lock(args: &[String]) -> Result<ExitCode, String> {
     let p = paths::norm(Path::new(&arg(args, 2, "file")?))?;
@@ -40,9 +48,11 @@ fn cmd_lock(args: &[String]) -> Result<ExitCode, String> {
         match lock::acquire(&p, "agent", lock::AGENT_TTL)? {
             Ok(l) => {
                 // 加锁时记一次基线快照，便于对比 Agent 本次改了什么
-                let xml = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-                let mut conn = db::open()?;
-                db::record(&mut conn, &p, &scan::app_label(&p), &xml, "external")?;
+                if is_drawio(&p) {
+                    let xml = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+                    let mut conn = db::open()?;
+                    db::record(&mut conn, &p, &scan::app_label(&p), &xml, "external")?;
+                }
                 println!("{}", serde_json::to_string(&l).unwrap());
                 return Ok(ExitCode::SUCCESS);
             }
@@ -58,10 +68,12 @@ fn cmd_lock(args: &[String]) -> Result<ExitCode, String> {
 /// unlock：校验 XML 可解析 → 记快照（agent）→ 释放锁。XML 损坏时不释放并报错，避免把坏图交给用户。
 fn cmd_unlock(args: &[String]) -> Result<ExitCode, String> {
     let p = paths::norm(Path::new(&arg(args, 2, "file")?))?;
-    let xml = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-    flow::parse(&xml).map_err(|e| format!("{e}；锁未释放，请修正后再 unlock"))?;
-    let mut conn = db::open()?;
-    db::record(&mut conn, &p, &scan::app_label(&p), &xml, "agent")?;
+    if is_drawio(&p) {
+        let xml = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+        flow::parse(&xml).map_err(|e| format!("{e}；锁未释放，请修正后再 unlock"))?;
+        let mut conn = db::open()?;
+        db::record(&mut conn, &p, &scan::app_label(&p), &xml, "agent")?;
+    }
     let released = lock::release(&p, "agent")?;
     println!("{}", serde_json::json!({ "released": released }));
     Ok(ExitCode::SUCCESS)
@@ -118,6 +130,43 @@ fn cmd_new(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// 由 Feat 档案路径推导同 APP 的流程图文件列表（`docs/feat/x.md` → `docs/flow/*.drawio`）。
+fn flows_of_feat(md: &Path) -> Result<Vec<PathBuf>, String> {
+    let docs = md.parent().and_then(Path::parent).ok_or("Feat 档案应位于 <app>/docs/feat/ 下")?;
+    Ok(scan::list_drawio(&docs.join("flow")))
+}
+
+/// feat：列出挂了该 Feat 编号标签的全部节点（跨同 APP 流程图），可 `--status` 过滤。
+fn cmd_feat(args: &[String]) -> Result<ExitCode, String> {
+    let md = paths::norm(Path::new(&arg(args, 2, "feat.md")?))?;
+    let id = feat::id_from_name(&md);
+    let want = opt(args, "--status");
+    let nodes: Vec<_> = feat::tagged(&feat::collect_nodes(&flows_of_feat(&md)?), &id)
+        .into_iter()
+        .filter(|t| want.as_deref().is_none_or(|w| t.node.status == w))
+        .collect();
+    println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "feat": id, "nodes": nodes })).unwrap());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// check：Feat 关闭门槛。挂了该 Feat 的节点必须至少 1 个且全部为无色（已实现），否则退出码 3 并列出未完成节点。
+fn cmd_check(args: &[String]) -> Result<ExitCode, String> {
+    let md = paths::norm(Path::new(&arg(args, 2, "feat.md")?))?;
+    let id = feat::id_from_name(&md);
+    let nodes = feat::tagged(&feat::collect_nodes(&flows_of_feat(&md)?), &id);
+    let pending: Vec<_> = nodes.iter().filter(|t| t.node.status != "none").collect();
+    let ok = !nodes.is_empty() && pending.is_empty();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "feat": id, "ok": ok, "total": nodes.len(), "pending": pending,
+            "reason": if nodes.is_empty() { "没有节点挂该 Feat 标签" } else if ok { "" } else { "存在非无色节点" },
+        }))
+        .unwrap()
+    );
+    Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(3) })
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let r = match args.get(1).map(String::as_str) {
@@ -132,7 +181,9 @@ fn main() -> ExitCode {
         Some("stats") => cmd_stats(&args),
         Some("nodes") => cmd_nodes(&args),
         Some("new") => cmd_new(&args),
-        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new> ...（详见源码顶部说明）".into()),
+        Some("feat") => cmd_feat(&args),
+        Some("check") => cmd_check(&args),
+        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check> ...（详见源码顶部说明）".into()),
     };
     r.unwrap_or_else(fail)
 }

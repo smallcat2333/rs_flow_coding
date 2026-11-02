@@ -13,7 +13,7 @@
     </header>
     <div id="side-tools">
       <button id="btn-refresh" title="重新读取已知目录并统计">刷新</button>
-      <button id="btn-rescan" title="遍历项目根，重新发现 docs/flow 目录">全量扫描</button>
+      <button id="btn-rescan" title="遍历项目根，重新发现 docs/flow 与 docs/feat 目录">全量扫描</button>
       <button id="btn-roots" title="配置项目根目录">项目根</button>
     </div>
     <div id="legend"></div>
@@ -22,19 +22,58 @@
   </aside>
 
   <main id="main">
-    <div id="bar">
-      <span id="cur-app"></span>
-      <span id="cur-name">未打开流程图</span>
-      <span id="cur-counts"></span>
-      <span id="lock-badge"></span>
-      <span id="save-state"></span>
-      <span class="spacer"></span>
-      <button id="btn-history" disabled>历史对比</button>
-    </div>
-    <div id="editor-wrap">
-      <iframe id="editor" title="draw.io"></iframe>
-      <div id="readonly-mask" hidden><div>Agent 正在编辑，暂时只读<br><small id="mask-detail"></small></div></div>
-      <div id="empty" class="empty">从左侧选择一张流程图</div>
+    <div id="panes">
+      <!-- 流程图栏 -->
+      <section id="flow-pane" class="pane">
+        <div id="bar" class="pane-bar">
+          <span id="cur-app"></span>
+          <span id="cur-name">未打开流程图</span>
+          <span id="cur-counts"></span>
+          <span id="lock-badge"></span>
+          <span id="save-state"></span>
+          <span class="spacer"></span>
+          <button id="btn-history" disabled>历史对比</button>
+          <button id="btn-flow-close" title="关闭流程图栏">×</button>
+        </div>
+        <div id="node-bar" hidden>
+          <span id="node-info"></span>
+          <span class="spacer"></span>
+          <button id="btn-tag" hidden></button>
+        </div>
+        <div id="editor-wrap">
+          <iframe id="editor" title="draw.io"></iframe>
+          <div id="readonly-mask" hidden><div>Agent 正在编辑，暂时只读<br><small id="mask-detail"></small></div></div>
+          <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
+        </div>
+      </section>
+
+      <div id="splitter" hidden title="拖动调整宽度"></div>
+
+      <!-- Feat 栏 -->
+      <section id="feat-pane" class="pane" hidden>
+        <div class="pane-bar">
+          <span id="feat-id"></span>
+          <span id="feat-title"></span>
+          <span id="feat-status"></span>
+          <span id="md-lock"></span>
+          <span id="md-state"></span>
+          <span class="spacer"></span>
+          <button id="btn-ref" title="把流程图中选中的节点插入为引用（图名#节点id）">插入节点引用</button>
+          <span id="md-modes"><button data-mode="edit">源码</button><button data-mode="split">分屏</button><button data-mode="preview">预览</button></span>
+          <button id="btn-feat-close" title="关闭 Feat 栏">×</button>
+        </div>
+        <div id="feat-body">
+          <div id="feat-side">
+            <div class="fs-head" id="fs-head">关联节点 <b id="feat-node-count">0</b></div>
+            <div id="feat-nodes"></div>
+          </div>
+          <div id="md-body" data-mode="split">
+            <div id="md-editor"></div>
+            <div id="md-preview" class="md"></div>
+            <div id="md-mask" hidden><div>Agent 正在编辑档案，暂时只读</div></div>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
 
@@ -66,6 +105,8 @@
     </div>
   </div>
 
+  <script src="vendor/vendor.js"></script>
   <script src="app.js"></script>
+  <script src="feat.js"></script>
 </body>
 </html>

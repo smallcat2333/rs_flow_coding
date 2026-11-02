@@ -58,8 +58,10 @@ def main() -> None:
     ap.add_argument("--proxy", default=None)
     args = ap.parse_args()
     war = download(args.version, args.proxy)
-    if DEST.exists():
-        shutil.rmtree(DEST)
+    # 只清空内容不删目录本身：目录可能被其他进程作为工作目录占用
+    DEST.mkdir(parents=True, exist_ok=True)
+    for child in DEST.iterdir():
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
     n = 0
     with zipfile.ZipFile(war) as z:
         for info in z.infolist():
@@ -68,7 +70,23 @@ def main() -> None:
             z.extract(info, DEST)
             n += 1
     (DEST / "VERSION").write_text(args.version, encoding="utf-8")
+    patch_index()
     print(f"已解压 {n} 个文件到 {DEST}")
+
+
+def patch_index() -> None:
+    """在 draw.io index.html 的 bootstrap.js 之前注入 Flow Coding 桥接脚本（ui/flow_bridge.js）。
+
+    桥接脚本包装 App.main 拿到编辑器实例，实现选中节点通知、按标签高亮与挂标签。
+    注入点找不到时直接报错（draw.io 版本变化需要人工核对）。
+    """
+    index = DEST / "index.html"
+    html = index.read_text(encoding="utf-8")
+    anchor = '<script src="js/bootstrap.js"></script>'
+    if anchor not in html:
+        raise SystemExit("index.html 中找不到 bootstrap.js，无法注入桥接脚本")
+    html = html.replace(anchor, '<script src="../flow_bridge.js"></script>\n\t' + anchor, 1)
+    index.write_text(html, encoding="utf-8")
 
 
 if __name__ == "__main__":
