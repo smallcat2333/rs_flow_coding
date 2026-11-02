@@ -33,25 +33,18 @@ window.Sidebar = (() => {
     return lock ? `<span class="lock-dot">${lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
   }
 
-  /** 文件行尾菜单入口，完整名称写入无障碍标签。 */
-  function actionButton(file, kind) {
-    return `<button class="entry-menu" data-kind="${kind}" data-entry="${esc(file.path)}" aria-label="${esc(file.title || file.name || file.id)}的状态操作" title="状态操作">⋯</button>`;
-  }
-
   /** 流程图行：启用与停用均可查看，停用项不显示日常待办徽标。 */
   function flowRow(f) {
-    return `<div class="file ${f.path === currentFlow ? 'active' : ''} ${f.enabled ? '' : 'archived-entry'}" data-path="${esc(f.path)}" title="${esc(f.path)}">
-      <span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>
-      <span class="life-state">${f.enabled ? '◉ 启用' : '○ 停用'}</span>${lockTag(f.lock)}
-      ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : f.enabled ? badges(f.counts) : ''}${actionButton(f, 'flow')}</div>`;
+    return `<div class="file ${f.path === currentFlow ? 'active' : ''} ${f.enabled ? '' : 'archived-entry'}" data-path="${esc(f.path)}" tabindex="0" title="${esc(f.path)}">
+      <span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>${lockTag(f.lock)}
+      ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : f.enabled ? badges(f.counts) : ''}</div>`;
   }
 
   /** Feat 行：阶段仍保留，关闭与废弃单独标识，不以开发完成推断关闭。 */
   function featRow(f) {
-    return `<div class="feat ${f.path === currentFeat ? 'active' : ''} ${f.archived ? 'archived-entry' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" title="${esc(f.path)}">
-      <div class="feat-line"><span class="file-name">${esc(f.title || f.id)}</span>
-        <span class="life-state">${f.archived ? f.status.startsWith('已废弃') ? '○ 废弃' : '○ 关闭' : '◉ 开启'}</span>${lockTag(f.lock)}
-        ${!f.archived ? f.closable ? '<span class="closable" title="关联节点全部已实现">可关闭</span>' : badges(f.counts) : ''}${actionButton(f, 'feat')}</div>
+    return `<div class="feat ${f.path === currentFeat ? 'active' : ''} ${f.archived ? 'archived-entry' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" tabindex="0" title="${esc(f.path)}">
+      <div class="feat-line"><span class="file-name">${esc(f.title || f.id)}</span>${lockTag(f.lock)}
+        ${!f.archived ? f.closable ? '<span class="closable" title="关联节点全部已实现">可关闭</span>' : badges(f.counts) : ''}</div>
       <div class="feat-meta"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></div></div>`;
   }
 
@@ -91,8 +84,13 @@ window.Sidebar = (() => {
     const collapsed = !search && prefs.collapsed.includes(key);
     const row = flow ? flowRow : featRow;
     const activeCount = all.filter((f) => flow ? f.enabled : !f.archived).length;
+    const icon = flow
+      ? '<rect x="6" y="1" width="6" height="5" rx="1"/><path d="M9 6v4M3 10h12M3 10v3M15 10v3"/><rect x="1" y="13" width="4" height="4" rx="1"/><rect x="13" y="13" width="4" height="4" rx="1"/>'
+      : '<rect x="3" y="1" width="12" height="16" rx="2"/><path d="m6 6 1 1 2-2M10 6h2M6 11h6M6 14h4"/>';
     return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}">
-      <div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}"><span>${flow ? 'Chart' : 'Feat'} <small>${activeCount} ${flow ? '启用' : '开启'}</small></span>
+      <div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}" title="${flow ? '流程图' : '功能需求档案'}">
+        <svg class="sec-icon" viewBox="0 0 18 18" aria-hidden="true">${icon}</svg>
+        <span class="sec-title">${flow ? 'Chart' : 'Feat'}</span><span class="sec-count" title="${flow ? '启用的流程图数量' : '开启的 Feat 数量'}">${activeCount}</span>
         <button class="${flow ? 'app-new' : 'feat-new'}" data-dir="${esc(flow ? a.flow_dir : a.feat_dir)}" title="${flow ? '新建流程图' : '新建 Feat 档案'}">＋</button></div>
       <div class="sec-body">${page(active, key, row) || `<div class="empty mini">${search ? '没有匹配的活跃项' : flow ? '暂无启用的流程图' : '暂无开启的 Feat'}</div>`}
       ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', flow ? 'disabled_at' : 'closed_at')}</div></div>`;
@@ -100,6 +98,7 @@ window.Sidebar = (() => {
 
   /** 重绘侧栏，合计继续使用后端只包含启用 Chart 的统计。 */
   function render(nextApps, flowPath, featPath) {
+    closeMenu();
     apps = nextApps; currentFlow = flowPath; currentFeat = featPath;
     const total = {};
     let html = '', group = null;
@@ -117,18 +116,19 @@ window.Sidebar = (() => {
     $('t-agent').textContent = count.agent;
   }
 
-  /** 移除菜单并把焦点还给触发按钮。 */
+  /** 关闭右键菜单并把焦点还给对应条目，避免滚动列表。 */
   function closeMenu() {
     if (!menu) return;
     const trigger = menu.trigger;
     menu.remove(); menu = null;
-    if (trigger.isConnected) trigger.focus();
+    if (trigger.isConnected) trigger.focus({ preventScroll: true });
   }
 
-  /** 显示行尾状态菜单，位置保持在窗口范围内。 */
-  function openMenu(trigger) {
+  /** 在条目的右键位置显示状态菜单；菜单边界保持在窗口内，不改变当前打开文件。 */
+  function openMenu(trigger, x, y) {
     closeMenu();
-    const kind = trigger.dataset.kind, path = trigger.dataset.entry;
+    const kind = trigger.classList.contains('file') ? 'flow' : 'feat';
+    const path = kind === 'flow' ? trigger.dataset.path : trigger.dataset.feat;
     const app = apps.find((a) => (kind === 'flow' ? a.files : a.feats).some((f) => f.path === path));
     const f = (kind === 'flow' ? app.files : app.feats).find((f) => f.path === path);
     const actions = kind === 'flow' ? [[f.enabled ? 'disable' : 'enable', f.enabled ? '停用并收纳' : '重新启用']]
@@ -143,9 +143,8 @@ window.Sidebar = (() => {
       changeStatus(kind, f, action).catch((error) => { $('side-msg').textContent = String(error); });
     };
     document.body.appendChild(menu);
-    const box = trigger.getBoundingClientRect();
-    menu.style.left = Math.max(4, Math.min(box.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 4)) + 'px';
-    menu.style.top = Math.max(4, Math.min(box.bottom + 3, innerHeight - menu.offsetHeight - 4)) + 'px';
+    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 4)) + 'px';
+    menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 4)) + 'px';
     menu.querySelector('button').focus();
   }
 
@@ -191,20 +190,30 @@ window.Sidebar = (() => {
     $('search-archived').checked = prefs.include_archived;
     $('tree-search').oninput = (e) => { search = e.target.value.trim().toLowerCase(); limits.clear(); closeMenu(); render(apps, currentFlow, currentFeat); };
     $('search-archived').onchange = (e) => { prefs.include_archived = e.target.checked; persist(); render(apps, currentFlow, currentFeat); };
+    $('tree').addEventListener('contextmenu', (e) => {
+      const row = e.target.closest('.file, .feat');
+      if (!row) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openMenu(row, e.clientX, e.clientY);
+    }, true);
     $('tree').addEventListener('click', (e) => {
-      const trigger = e.target.closest('.entry-menu');
       const more = e.target.closest('[data-more]');
       const archived = e.target.closest('[data-archive]');
       const head = e.target.closest('.app-head, .sec-head');
-      if (trigger) { e.stopImmediatePropagation(); openMenu(trigger); }
-      else if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
+      if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
       else if (head && !e.target.closest('.app-new, .feat-new')) { e.stopImmediatePropagation(); toggle(head.parentElement.dataset.key, false); }
     }, true);
     $('tree').addEventListener('keydown', (e) => {
       if (e.target.matches('.app-head, .sec-head') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }
+      if (e.target.matches('.file, .feat') && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+        e.preventDefault();
+        const box = e.target.getBoundingClientRect();
+        openMenu(e.target, box.left + 12, box.bottom);
+      }
     });
-    document.addEventListener('pointerdown', (e) => { if (menu && !menu.contains(e.target) && !e.target.closest('.entry-menu')) closeMenu(); });
+    document.addEventListener('pointerdown', (e) => { if (menu && !menu.contains(e.target)) closeMenu(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menu) { e.stopImmediatePropagation(); closeMenu(); } }, true);
     $('tree').addEventListener('wheel', closeMenu, { passive: true });
     window.addEventListener('resize', closeMenu);
