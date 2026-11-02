@@ -3,6 +3,16 @@
 <head>
   <meta charset="utf-8">
   <title>Flow Coding</title>
+  <!-- 主题尽早生效，避免深色模式下先闪一帧浅色 -->
+  <script>
+    (() => {
+      const t = localStorage.getItem('fc-theme') || 'auto';
+      const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      const w = localStorage.getItem('fc-side-w');
+      if (w) document.documentElement.style.setProperty('--side-w', w + 'px');
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,11 +25,14 @@
       <button id="btn-refresh" title="重新读取已知目录并统计">刷新</button>
       <button id="btn-rescan" title="遍历项目根，重新发现 docs/flow 与 docs/feat 目录">全量扫描</button>
       <button id="btn-roots" title="配置项目根目录">项目根</button>
+      <span class="spacer"></span>
+      <button id="btn-theme" title="切换浅色 / 深色 / 跟随系统">主题</button>
     </div>
     <div id="legend"></div>
     <div id="tree"></div>
     <div id="side-msg"></div>
   </aside>
+  <div id="side-splitter" title="拖动调整侧栏宽度，双击恢复默认"></div>
 
   <main id="main">
     <div id="panes">
@@ -33,17 +46,19 @@
           <span id="save-state"></span>
           <span class="spacer"></span>
           <button id="btn-history" disabled>历史对比</button>
-          <button id="btn-flow-close" title="关闭流程图栏">×</button>
-        </div>
-        <div id="node-bar" hidden>
-          <span id="node-info"></span>
-          <span class="spacer"></span>
-          <button id="btn-tag" hidden></button>
+          <button id="btn-flow-pop" class="no-solo" title="在独立窗口打开流程图" disabled>⧉</button>
+          <button id="btn-flow-close" class="no-solo" title="关闭流程图栏">×</button>
         </div>
         <div id="editor-wrap">
           <iframe id="editor" title="draw.io"></iframe>
           <div id="readonly-mask" hidden><div>Agent 正在编辑，暂时只读<br><small id="mask-detail"></small></div></div>
           <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
+        </div>
+        <!-- 底部常驻状态栏：选中节点信息与挂/摘 Feat，固定高度，不挤压编辑区 -->
+        <div id="node-bar">
+          <span id="node-info">未选中节点</span>
+          <span class="spacer"></span>
+          <button id="btn-tag" hidden></button>
         </div>
       </section>
 
@@ -59,8 +74,10 @@
           <span id="md-state"></span>
           <span class="spacer"></span>
           <button id="btn-ref" title="把流程图中选中的节点插入为引用（图名#节点id）">插入节点引用</button>
+          <button id="btn-toc" title="显示 / 隐藏标题大纲">大纲</button>
           <span id="md-modes"><button data-mode="edit">源码</button><button data-mode="split">分屏</button><button data-mode="preview">预览</button></span>
-          <button id="btn-feat-close" title="关闭 Feat 栏">×</button>
+          <button id="btn-feat-pop" class="no-solo" title="在独立窗口打开 Feat">⧉</button>
+          <button id="btn-feat-close" class="no-solo" title="关闭 Feat 栏">×</button>
         </div>
         <div id="feat-body">
           <div id="feat-side">
@@ -68,6 +85,7 @@
             <div id="feat-nodes"></div>
           </div>
           <div id="md-body" data-mode="split">
+            <nav id="md-toc"></nav>
             <div id="md-editor"></div>
             <div id="md-preview" class="md"></div>
             <div id="md-mask" hidden><div>Agent 正在编辑档案，暂时只读</div></div>

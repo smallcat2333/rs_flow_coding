@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / ".cache" / "vendor_build"
 OUT = ROOT / "ui" / "vendor" / "vendor.js"
-PKGS = ["codemirror@6", "@codemirror/lang-markdown@6", "marked@18", "esbuild@0.28"]
+PKGS = ["codemirror@6", "@codemirror/lang-markdown@6", "@codemirror/theme-one-dark@6", "marked@18", "esbuild@0.28"]
 
 
 def run(cmd: list[str], env: dict) -> None:

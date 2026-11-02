@@ -109,11 +109,32 @@
       mds[p] = `# ${p.split('/').pop().match(/^(Feat_\d+_\d+)/)[1]} ${title}\n\n> 状态：需求整理中\n`;
       return p;
     },
+    /** 弹出窗口：用 window.open 模拟（各窗口的模拟数据互相独立，只验证界面与窗口间路由）。 */
+    async open_popout({ kind, path, node }) {
+      const name = 'pop-' + kind;
+      if (popWins[name] && !popWins[name].closed) {
+        popWins[name].focus();
+        bc.postMessage({ name: 'popout-open', payload: { kind, path, node } });
+        return;
+      }
+      popWins[name] = window.open(`/index.html?solo=${kind}&path=${encodeURIComponent(path)}&node=${encodeURIComponent(node || '')}`, name, 'width=1100,height=820');
+    },
   };
+
+  // 窗口间事件：同一页面内直接派发，跨窗口经 BroadcastChannel（模拟 Tauri 的全局 emit）
+  const popWins = {};
+  const bc = new BroadcastChannel('fc-mock');
+  bc.onmessage = (e) => emit(e.data.name, e.data.payload);
+  const solo = new URLSearchParams(location.search).get('solo');
+  if (solo) window.addEventListener('pagehide', () => bc.postMessage({ name: 'popout-closed', payload: { kind: solo } }));
 
   window.__TAURI__ = {
     core: { invoke: (cmd, args) => (api[cmd] ? api[cmd](args || {}) : Promise.reject('mock 未实现 ' + cmd)) },
-    event: { listen: async (name, f) => { (listeners[name] = listeners[name] || []).push(f); return () => {}; } },
+    event: {
+      listen: async (name, f) => { (listeners[name] = listeners[name] || []).push(f); return () => {}; },
+      emit: async (name, payload) => { emit(name, payload); bc.postMessage({ name, payload }); },
+    },
+    window: { getCurrentWindow: () => ({ onCloseRequested: async () => () => {} }) },
   };
 
   window.__mock = {

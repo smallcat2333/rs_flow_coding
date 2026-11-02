@@ -4,7 +4,22 @@
 'use strict';
 
 const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+const { listen, emit } = window.__TAURI__.event;
+
+/** 窗口角色：'' 主窗口；'flow' / 'feat' 为弹出的独立窗口（只显示该栏）。 */
+const PARAMS = new URLSearchParams(location.search);
+const SOLO = PARAMS.get('solo') || '';
+/** 主窗口：某栏已弹到独立窗口时为 true，该类文件改由弹出窗口打开。 */
+const popped = { flow: false, feat: false };
+/** 主窗口退出时，等待已弹出的窗口保存并关闭。 */
+const closingPopouts = {};
+/** 当前打开的 Feat（可能在另一个窗口里），由 ui-cur-feat 事件在窗口间同步。 */
+let curFeat = { id: '', path: '' };
+/** 最近一次选中的节点（可能来自另一个窗口的流程图），供「插入节点引用」使用。 */
+let lastSel = { file: null, cells: [] };
+/** 本窗口是否负责流程图栏 / Feat 栏。 */
+const ownsFlow = () => SOLO === 'flow' || (!SOLO && !popped.flow);
+const ownsFeat = () => SOLO === 'feat' || (!SOLO && !popped.feat);
 
 /** 状态元数据：顺序即展示顺序。who 表示「轮到谁处理」：user=待你审，agent=待 Agent。 */
 const STATUS = [
@@ -41,6 +56,8 @@ const st = {
   pendingXml: null,   // 保存进行中时到来的最新内容
   readOnly: false,
   suppressUntil: 0,   // 此时刻前的 autosave 视为回显
+  loaded: false,      // 当前图已在编辑器中载入完成
+  pendingSelect: '',  // 图载入完成后要选中的节点 id
   histSel: [],        // 历史面板勾选的快照 id
   histRows: [],
 };
@@ -113,7 +130,6 @@ async function refresh(full = false) {
 function renderTree() {
   const total = {};
   const collapsed = new Set([...document.querySelectorAll('.collapsed[data-key]')].map((e) => e.dataset.key));
-  const curFeat = window.FeatPane ? FeatPane.curPath() : null;
   let html = '', lastGroup = null;
   for (const a of st.apps) {
     for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
@@ -129,7 +145,7 @@ function renderTree() {
         ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : badges(f.counts)}
       </div>`).join('');
     const feats = a.feats.map((f) => `
-      <div class="feat ${f.path === curFeat ? 'active' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" title="${esc(f.path)}">
+      <div class="feat ${f.path === curFeat.path ? 'active' : ''}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" title="${esc(f.path)}">
         <div class="feat-line">
           <span class="file-name">${esc(f.title || f.id)}</span>
           ${lockTag(f.lock)}
@@ -184,6 +200,7 @@ function renderCurrentBar() {
   $('cur-name').textContent = e ? e.file.name.replace(/\.drawio$/i, '') : (st.cur ? st.cur : '未打开流程图');
   $('cur-counts').innerHTML = e ? badges(e.file.counts) : '';
   $('btn-history').disabled = !st.cur;
+  $('btn-flow-pop').disabled = !st.cur;
   const badge = $('lock-badge');
   if (st.readOnly) { badge.className = 'agent'; badge.textContent = 'Agent 持锁'; }
   else if (st.holding) { badge.className = 'user'; badge.textContent = '你持锁'; }
@@ -199,7 +216,7 @@ $('tree').addEventListener('click', async (ev) => {
     try {
       const p = await invoke('create_diagram', { dir: nb.dataset.dir, name });
       await refresh();
-      openDiagram(p);
+      routeDiagram(p);
     } catch (e) { sideMsg(String(e)); }
     return;
   }
@@ -211,14 +228,14 @@ $('tree').addEventListener('click', async (ev) => {
     try {
       const p = await invoke('create_feat', { dir: fb.dataset.dir, title });
       await refresh();
-      FeatPane.open(p);
+      routeFeat(p);
     } catch (e) { sideMsg(String(e)); }
     return;
   }
   const file = ev.target.closest('.file');
-  if (file) return openDiagram(file.dataset.path);
+  if (file) return routeDiagram(file.dataset.path);
   const feat = ev.target.closest('.feat');
-  if (feat) return FeatPane.open(feat.dataset.feat);
+  if (feat) return routeFeat(feat.dataset.feat);
   const head = ev.target.closest('.app-head, .sec-head');
   if (head) head.parentElement.classList.toggle('collapsed');
 });
@@ -236,6 +253,7 @@ function ensureEditor() {
     noExitBtn: '1', noSaveBtn: '1', saveAndExit: '0', stealth: '1', pwa: '0', splash: '0',
     libraries: '1', grid: '1',
   });
+  if (isDark()) q.set('dark', '1');
   editor.src = `drawio/index.html?${q}`;
 }
 
@@ -255,6 +273,7 @@ async function openDiagram(path) {
   await releaseNow();
   st.cur = path;
   st.pendingXml = null;
+  st.loaded = false;
   selCells = [];
   renderNodeBar();
   $('empty').hidden = true;
@@ -368,14 +387,17 @@ window.addEventListener('message', (ev) => {
       break;
     case 'init':
       st.ready = true;
+      post({ action: 'fc-theme', dark: isDark() });
       if (st.cur) pushFromDisk(true);
       break;
     case 'fc-select':
-      onNodeSelect(m.cells || []);
+      onNodeSelect(m.cells || [], !!m.auto);
       break;
     case 'load':
-      // 图载入完成后按当前 Feat 重新高亮
-      FlowLink.highlight(FeatPane.curId());
+      // 图载入完成：按当前 Feat 重新高亮，执行等待中的节点定位
+      st.loaded = true;
+      applyFeat();
+      if (st.pendingSelect) { post({ action: 'fc-select-cell', id: st.pendingSelect }); st.pendingSelect = ''; }
       break;
     case 'autosave':
     case 'save':
@@ -392,71 +414,185 @@ window.addEventListener('message', (ev) => {
 /** 当前选中的节点（来自桥接脚本），用于「挂到当前 Feat」。 */
 let selCells = [];
 
-/** 节点选中：显示节点信息条；只挂 1 个 Feat 直接打开，多个弹列表选择，0 个不切换。 */
-function onNodeSelect(cells) {
+/**
+ * 节点选中：更新底部状态栏并把选中广播给其他窗口；用户点选（auto=false）时，
+ * 节点只挂 1 个本 APP 的 Feat 直接打开，挂多个弹列表选择，0 个不切换。
+ * auto=true 为程序定位（如从 Feat 关联节点列表跳来），只更新状态，不再反向打开 Feat。
+ */
+function onNodeSelect(cells, auto) {
   selCells = cells;
+  lastSel = { file: st.cur, cells };
+  emit('ui-flow-sel', lastSel);
   renderNodeBar();
-  if (cells.length !== 1) return;
+  if (auto || cells.length !== 1) return;
   const app = appOf(st.cur);
   if (!app) return;
   const feats = app.feats.filter((f) => cells[0].tags.includes(f.id));
-  if (feats.length === 1) FeatPane.open(feats[0].path, { node: cells[0].id });
+  if (feats.length === 1) routeFeat(feats[0].path, cells[0].id);
   else if (feats.length > 1) pickFeat(feats, cells[0]);
 }
 
-/** 多 Feat 时弹出选择列表。 */
+/** 多 Feat 时弹出选择列表；Esc、点空白处或「取消」关闭。 */
 function pickFeat(feats, cell) {
   const wrap = document.createElement('div');
   wrap.id = 'roots-dlg';
   wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」关联了 ${feats.length} 个 Feat</b>
     <div class="pick">${feats.map((f) => `<button data-p="${esc(f.path)}"><b>${esc(f.id)}</b> ${esc(f.title)}<small>${esc(f.status)}</small></button>`).join('')}</div>
-    <div class="dlg-btns"><button data-x="1">取消</button></div></div>`;
+    <div class="dlg-btns"><button data-x="1">取消（Esc）</button></div></div>`;
   document.body.appendChild(wrap);
+  const close = (path) => {
+    document.removeEventListener('keydown', onKey, true);
+    wrap.remove();
+    if (path) routeFeat(path, cell.id);
+  };
+  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  document.addEventListener('keydown', onKey, true);
   wrap.onclick = (ev) => {
     const b = ev.target.closest('button');
     if (!b && ev.target !== wrap) return;
-    wrap.remove();
-    if (b && b.dataset.p) FeatPane.open(b.dataset.p, { node: cell.id });
+    close(b && b.dataset.p);
   };
+  // 焦点原在 draw.io iframe 内，按键到不了本页；移到第一个选项上，Esc 才能生效
+  wrap.querySelector('.pick button').focus();
 }
 
-/** 顶栏节点信息：选中节点的标签，以及对当前 Feat 的挂/摘按钮。 */
+/** 当前流程图与当前 Feat 是否属于同一 APP（Feat 编号只在 APP 内唯一，只允许同 APP 挂接与高亮）。 */
+function sameApp() {
+  const a = appOf(st.cur);
+  return !!a && a === appOf(curFeat.path);
+}
+
+/** 底部状态栏：选中节点的标签，以及对当前 Feat 的挂/摘按钮；跨 APP 时只允许摘除。 */
 function renderNodeBar() {
-  const bar = $('node-bar');
-  const fid = FeatPane.curId();
-  if (!selCells.length || !st.cur) { bar.hidden = true; return; }
-  bar.hidden = false;
-  const tags = [...new Set(selCells.flatMap((c) => c.tags))];
-  const allHave = fid && selCells.every((c) => c.tags.includes(fid));
-  $('node-info').innerHTML = `选中 ${selCells.length} 个节点` +
-    (tags.length ? '：' + tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('') : '：未挂标签');
+  const fid = curFeat.id;
   const btn = $('btn-tag');
-  btn.hidden = !fid || st.readOnly;
-  btn.textContent = allHave ? `从 ${fid} 摘除` : `挂到 ${fid}`;
-  btn.onclick = () => {
-    post({ action: 'fc-tag', tag: fid, add: !allHave });
-    setTimeout(() => refresh(false), 1500);
-  };
+  btn.hidden = true;
+  if (!st.cur || !selCells.length) {
+    $('node-info').textContent = st.cur ? '未选中节点' : '未打开流程图';
+    return;
+  }
+  const tags = [...new Set(selCells.flatMap((c) => c.tags))];
+  let info = `选中 ${selCells.length} 个节点` +
+    (tags.length ? '：' + tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('') : '：未挂标签');
+  if (fid && !st.readOnly) {
+    const allHave = selCells.every((c) => c.tags.includes(fid));
+    const anyHave = selCells.some((c) => c.tags.includes(fid));
+    if (sameApp() || anyHave) {
+      const remove = sameApp() ? allHave : true;
+      btn.hidden = false;
+      btn.textContent = remove ? `从 ${fid} 摘除` : `挂到 ${fid}`;
+      btn.onclick = () => {
+        post({ action: 'fc-tag', tag: fid, add: !remove });
+        setTimeout(() => refresh(false), 1500);
+      };
+    }
+    if (!sameApp()) {
+      const fa = appOf(curFeat.path);
+      info += `<span class="hint">　${esc(fid)} 属于 ${esc(fa ? fa.app : '其他 APP')}，只能挂到该 APP 的流程图</span>`;
+    }
+  }
+  $('node-info').innerHTML = info;
+}
+
+/** 按当前 Feat 刷新高亮（仅同 APP）、状态栏与树中选中项。 */
+function applyFeat() {
+  if (st.ready && st.cur) post({ action: 'fc-highlight', tag: sameApp() ? curFeat.id : '' });
+  renderNodeBar();
+  document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === curFeat.path));
+}
+
+/**
+ * 打开流程图并可选定位节点：本窗口负责流程图栏时本地打开；否则交给主窗口路由
+ * （独立窗口发 ui-route 给主窗口；主窗口在流程图已弹出时转给弹出窗口）。
+ */
+async function routeDiagram(path, node) {
+  if (ownsFlow()) {
+    if (path !== st.cur || !st.loaded) {
+      st.pendingSelect = node || '';
+      await openDiagram(path);
+    } else if (node) post({ action: 'fc-select-cell', id: node });
+    return;
+  }
+  if (SOLO) emit('ui-route', { kind: 'flow', path, node: node || '' });
+  else await invoke('open_popout', { kind: 'flow', path, node: node || null });
+}
+
+/** 打开 Feat 档案并可选定位节点引用：路由规则同 routeDiagram。 */
+async function routeFeat(path, node) {
+  if (ownsFeat()) return FeatPane.open(path, { node });
+  if (SOLO) emit('ui-route', { kind: 'feat', path, node: node || '' });
+  else await invoke('open_popout', { kind: 'feat', path, node: node || null });
 }
 
 /** 供 FeatPane 调用的流程图侧接口。 */
 window.FlowLink = {
-  /** 高亮挂了 tag 的节点；tag 为空清除。 */
-  highlight(tag) { if (st.ready && st.cur) post({ action: 'fc-highlight', tag: tag || '' }); renderNodeBar(); },
-  /** 打开图并选中节点。 */
-  async reveal(file, nodeId) {
-    if (file !== st.cur) {
-      await openDiagram(file);
-      // 等编辑器载入新图
-      await new Promise((r) => setTimeout(r, 800));
-    }
-    post({ action: 'fc-select-cell', id: nodeId });
+  /** 当前 Feat 变化（打开 / 关闭）：本窗口立即生效并广播给其他窗口。 */
+  setFeat(id, path) {
+    curFeat = { id: id || '', path: path || '' };
+    applyFeat();
+    emit('ui-cur-feat', curFeat);
   },
-  curFile: () => st.cur,
+  /** 打开图并选中节点（可能在另一个窗口）。 */
+  reveal: (file, nodeId) => routeDiagram(file, nodeId),
+  curFile: () => lastSel.file || st.cur,
   appOf,
   refresh: () => refresh(false),
 };
-window.FlowSel = () => selCells;
+window.FlowSel = () => lastSel.cells;
+
+// ---------------- 多窗口 ----------------
+
+/** 其他窗口的当前 Feat / 节点选中同步过来。 */
+listen('ui-cur-feat', (ev) => {
+  const p = ev.payload || {};
+  if (p.id === curFeat.id && p.path === curFeat.path) return;
+  curFeat = { id: p.id || '', path: p.path || '' };
+  applyFeat();
+});
+listen('ui-flow-sel', (ev) => { lastSel = ev.payload || { file: null, cells: [] }; });
+
+if (!SOLO) {
+  /** 新独立窗口就绪后补发当前状态，保证弹出流程图仍高亮当前 Feat、弹出档案仍能引用已选节点。 */
+  listen('ui-state-request', () => {
+    emit('ui-cur-feat', curFeat);
+    emit('ui-flow-sel', lastSel);
+  });
+  /** 主窗口：独立窗口请求打开某类文件时由主窗口路由。 */
+  listen('ui-route', (ev) => {
+    const { kind, path, node } = ev.payload;
+    if (kind === 'flow') routeDiagram(path, node);
+    else routeFeat(path, node);
+  });
+  /** 弹出窗口关闭：该类文件恢复在主窗口打开。 */
+  listen('popout-closed', (ev) => {
+    const kind = ev.payload.kind;
+    popped[kind] = false;
+    if (closingPopouts[kind]) { closingPopouts[kind](); delete closingPopouts[kind]; }
+    if (kind === 'flow') { lastSel = { file: null, cells: [] }; $('empty').textContent = EMPTY_TEXT; }
+    if (kind === 'feat' && curFeat.path && $('feat-pane').hidden) FlowLink.setFeat('', '');
+  });
+} else {
+  /** 独立窗口：主窗口把新文件转过来。 */
+  listen('popout-open', (ev) => {
+    const { kind, path, node } = ev.payload;
+    if (kind !== SOLO) return;
+    if (kind === 'flow') routeDiagram(path, node || '');
+    else routeFeat(path, node || '');
+  });
+}
+
+/** 主窗口：把流程图栏 / Feat 栏弹到独立窗口，主窗口关闭该栏，之后该类文件都在独立窗口打开。 */
+async function popOut(kind) {
+  const path = kind === 'flow' ? st.cur : FeatPane.curPath();
+  if (!path) return;
+  if (kind === 'flow') await closeFlow('流程图已在独立窗口中打开');
+  else await FeatPane.close();
+  popped[kind] = true;
+  try { await invoke('open_popout', { kind, path, node: null }); }
+  catch (e) { popped[kind] = false; sideMsg(String(e)); }
+}
+$('btn-flow-pop').onclick = () => popOut('flow');
+$('btn-feat-pop').onclick = () => popOut('feat');
 
 // ---------------- 文件变化 ----------------
 
@@ -552,7 +688,7 @@ $('btn-hist-view').onclick = async () => {
     }
   };
   window.addEventListener('message', onMsg);
-  frame.src = 'drawio/index.html?' + new URLSearchParams({ embed: '1', proto: 'json', chrome: '0', lang: 'zh', stealth: '1', pwa: '0', splash: '0', nav: '1' });
+  frame.src = 'drawio/index.html?' + new URLSearchParams({ embed: '1', proto: 'json', chrome: '0', lang: 'zh', stealth: '1', pwa: '0', splash: '0', nav: '1', ...(isDark() ? { dark: '1' } : {}) });
   $('viewer').hidden = false;
 };
 $('btn-viewer-close').onclick = () => { $('viewer').hidden = true; $('viewer-frame').src = 'about:blank'; };
@@ -590,7 +726,7 @@ $('roots-ok').onclick = async () => {
   } catch (e) { sideMsg(String(e)); }
 };
 
-// ---------------- 启动 ----------------
+// ---------------- 分栏 ----------------
 
 /** 主区分栏：流程图 / Feat 两栏，可拖动分隔；只打开一个时占满。 */
 window.Split = {
@@ -628,15 +764,121 @@ window.Split = {
     sp.addEventListener('pointerup', up);
   });
 })();
-$('btn-flow-close').onclick = async () => {
+/** 流程图栏空白时的提示。 */
+const EMPTY_TEXT = '从左侧选择一张流程图或一个 Feat';
+
+/** 关闭当前流程图：释放锁；Feat 栏开着时收起流程图栏，否则保留栏并显示提示 msg。 */
+async function closeFlow(msg) {
   await releaseNow();
   st.cur = null;
+  st.loaded = false;
+  selCells = [];
+  $('empty').textContent = msg || EMPTY_TEXT;
   $('empty').hidden = false;
-  Split.hide('flow');
+  if (!$('feat-pane').hidden) Split.hide('flow');
   renderTree();
   renderCurrentBar();
+  renderNodeBar();
+}
+$('btn-flow-close').onclick = () => closeFlow();
+
+// ---------------- 侧栏宽度 ----------------
+
+/** 拖动侧栏右边线调整宽度（200–640px），记入 localStorage；双击恢复默认 330px。 */
+(() => {
+  const sp = $('side-splitter');
+  const root = document.documentElement;
+  sp.addEventListener('pointerdown', (e) => {
+    sp.setPointerCapture(e.pointerId);
+    document.body.classList.add('dragging-side');
+    let w = $('side').getBoundingClientRect().width;
+    const move = (ev) => {
+      w = Math.round(Math.min(640, Math.max(200, ev.clientX)));
+      root.style.setProperty('--side-w', w + 'px');
+    };
+    const up = () => {
+      sp.removeEventListener('pointermove', move);
+      sp.removeEventListener('pointerup', up);
+      document.body.classList.remove('dragging-side');
+      localStorage.setItem('fc-side-w', String(w));
+    };
+    sp.addEventListener('pointermove', move);
+    sp.addEventListener('pointerup', up);
+  });
+  sp.ondblclick = () => { root.style.removeProperty('--side-w'); localStorage.removeItem('fc-side-w'); };
+})();
+
+// ---------------- 主题 ----------------
+
+/** 主题设置：auto 跟随系统 / light / dark，存 localStorage（各窗口共享，storage 事件同步）。 */
+const THEME_NAMES = { auto: '◐ 自动', light: '☀ 浅色', dark: '☾ 深色' };
+const themeSetting = () => localStorage.getItem('fc-theme') || 'auto';
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+/** 当前是否深色。 */
+function isDark() {
+  const t = themeSetting();
+  return t === 'dark' || (t === 'auto' && darkQuery.matches);
+}
+/** 应用主题：页面变量、draw.io（桥接 setDarkMode）、Markdown 编辑器（fc-theme 事件由 feat.js 处理）。 */
+function applyTheme() {
+  const dark = isDark();
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('btn-theme').textContent = THEME_NAMES[themeSetting()];
+  if (st.ready) post({ action: 'fc-theme', dark });
+  window.dispatchEvent(new CustomEvent('fc-theme', { detail: { dark } }));
+}
+$('btn-theme').onclick = () => {
+  const order = ['auto', 'light', 'dark'];
+  localStorage.setItem('fc-theme', order[(order.indexOf(themeSetting()) + 1) % order.length]);
+  applyTheme();
 };
+darkQuery.addEventListener('change', applyTheme);
+window.addEventListener('storage', (e) => { if (e.key === 'fc-theme') applyTheme(); });
+
+// ---------------- 启动 ----------------
 
 $('legend').innerHTML = STATUS.map((s) => `<span><span class="sw s-${s.key}"></span>${s.name}</span>`).join('');
 window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.cur }); });
-refresh(false);
+applyTheme();
+
+/**
+ * 关窗前把待保存内容写盘并释放锁（beforeunload 里的异步调用不保证完成）：
+ * 同步阻止默认关闭，待保存与释放完成后主动销毁窗口。
+ */
+const currentWindow = window.__TAURI__.window.getCurrentWindow();
+let closing = false;
+if (SOLO) listen('ui-close-popouts', () => currentWindow.close());
+currentWindow.onCloseRequested(async (event) => {
+  event.preventDefault();
+  if (closing) return;
+  closing = true;
+  if (!SOLO) {
+    const wait = Object.keys(popped).filter((kind) => popped[kind]).map((kind) =>
+      new Promise((resolve) => { closingPopouts[kind] = resolve; }));
+    await emit('ui-close-popouts');
+    await Promise.all(wait);
+  }
+  // 只在本窗口确实开着档案时关闭，避免流程图窗口关闭时把其他窗口的当前 Feat 广播清空
+  if (FeatPane.curPath()) await FeatPane.close();
+  await releaseNow();
+  await currentWindow.destroy();
+});
+
+// 所有外部脚本加载完再初始化，确保独立 Feat 窗口可直接调用 FeatPane。
+window.addEventListener('DOMContentLoaded', () => {
+  if (SOLO) {
+    // 独立窗口：只显示一栏，打开 URL 参数指定的文件
+    document.body.classList.add('solo');
+    Split.hide(SOLO === 'flow' ? 'feat' : 'flow');
+    refresh(false).then(() => {
+      emit('ui-state-request');
+      const path = PARAMS.get('path');
+      const node = PARAMS.get('node') || '';
+      if (!path) return;
+      if (SOLO === 'flow') routeDiagram(path, node);
+      else routeFeat(path, node);
+    });
+  } else {
+    refresh(false);
+  }
+}, { once: true });

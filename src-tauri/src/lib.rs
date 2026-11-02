@@ -410,6 +410,37 @@ fn create_feat(dir: String, title: String) -> Result<String, String> {
     Ok(f.to_string_lossy().into_owned())
 }
 
+/// 把流程图栏或 Feat 栏弹到独立窗口（每种最多一个，标签 `pop-flow` / `pop-feat`）。
+/// 输入：kind = "flow" | "feat"；path = 要打开的文件；node = 打开后定位的节点 id（可空）。
+/// 窗口已存在：改标题、置前，并发 `popout-open` 事件让该窗口切换文件；不存在：以
+/// `index.html?solo=<kind>&path=..&node=..` 新建，前端按 solo 参数只显示这一栏。
+#[tauri::command]
+fn open_popout(app: tauri::AppHandle, kind: String, path: String, node: Option<String>) -> Result<(), String> {
+    if kind != "flow" && kind != "feat" {
+        return Err(format!("未知窗口类型: {kind}"));
+    }
+    let label = format!("pop-{kind}");
+    let name = Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let title = format!("{name} - Flow Coding");
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.set_title(&title);
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return app
+            .emit_to(&label, "popout-open", serde_json::json!({ "kind": kind, "path": path, "node": node }))
+            .map_err(|e| e.to_string());
+    }
+    let enc = |s: &str| percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let url = format!("index.html?solo={kind}&path={}&node={}", enc(&path), enc(node.as_deref().unwrap_or("")));
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(1100.0, 820.0)
+        .min_inner_size(600.0, 400.0)
+        .build()
+        .map_err(|e| format!("打开窗口失败: {e}"))?;
+    Ok(())
+}
+
 /// 启动 Tauri App。
 ///
 /// - 单实例：重复启动时由插件通知已有实例，已有窗口还原并置前，新进程直接退出（不会再去抢 WebView2 数据目录）；
@@ -428,13 +459,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
-            read_md, save_md, tagged_nodes, create_feat
+            read_md, save_md, tagged_nodes, create_feat, open_popout
         ])
         .on_window_event(|window, event| {
-            // 窗口关闭时释放本 App 持有的全部用户锁
             if let tauri::WindowEvent::Destroyed = event {
-                let _ = window;
-                release_all_user_locks();
+                let label = window.label();
+                if label == "main" {
+                    // 主窗口关闭即退出：释放本 App 持有的全部用户锁，弹出窗口一并关闭
+                    release_all_user_locks();
+                    window.app_handle().exit(0);
+                } else if let Some(kind) = label.strip_prefix("pop-") {
+                    // 弹出窗口关闭：通知主窗口恢复该栏的路由（弹出窗口自己的锁已在关闭前由前端释放）
+                    let _ = window.app_handle().emit("popout-closed", serde_json::json!({ "kind": kind }));
+                }
             }
         })
         .run(tauri::generate_context!())

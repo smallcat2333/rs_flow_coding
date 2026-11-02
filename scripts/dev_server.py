@@ -27,7 +27,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -47,6 +46,11 @@ class Handler(SimpleHTTPRequestHandler):
                     data[f.name] = f.read_text(encoding="utf-8")
             return self._send(json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
         return super().do_GET()
+
+    def end_headers(self) -> None:
+        """所有响应都禁止缓存，改完前端刷新即生效。"""
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def log_message(self, fmt: str, *args) -> None:
         """静默静态资源日志，只打印非 200。"""

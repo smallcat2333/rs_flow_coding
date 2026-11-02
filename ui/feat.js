@@ -7,7 +7,7 @@
 window.FeatPane = (() => {
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
-  const { EditorView, EditorState, Transaction, basicSetup, keymap, indentWithTab, undo, redo, markdown, marked } = window.Vendor;
+  const { EditorView, EditorState, Transaction, Compartment, basicSetup, keymap, indentWithTab, undo, redo, markdown, oneDark, marked } = window.Vendor;
   const $ = (id) => document.getElementById(id);
 
   /** 停止输入多久后保存（毫秒）；停止编辑多久后释放锁。 */
@@ -31,31 +31,135 @@ window.FeatPane = (() => {
   /** HTML 转义。 */
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-  /** 编辑器扩展：basicSetup 自带撤销历史（Ctrl+Z 撤销、Ctrl+Y 重做）；内容变化时触发防抖保存与预览刷新。 */
-  const extensions = [
+  /** 编辑器主题槽：深色用 oneDark，浅色为空；切换主题时 reconfigure，不重建状态。 */
+  const themeSlot = new Compartment();
+  let dark = document.documentElement.dataset.theme === 'dark';
+
+  /**
+   * 编辑器扩展（函数形式：重建状态时带上当前主题）。basicSetup 自带撤销历史（Ctrl+Z 撤销、Ctrl+Y 重做）；
+   * 内容变化时刷新预览与大纲并防抖保存；滚动时同步大纲选中项。
+   */
+  const extensions = () => [
     basicSetup,
     keymap.of([indentWithTab]),
     markdown(),
     EditorView.lineWrapping,
     EditorState.readOnly.of(false),
+    themeSlot.of(dark ? oneDark : []),
     EditorView.updateListener.of((u) => {
       if (!u.docChanged || st.applying) return;
       renderPreview();
+      scheduleToc();
       if (st.readOnly) return;
       clearTimeout(st.saveTimer);
       st.saveTimer = setTimeout(save, SAVE_DEBOUNCE_MS);
       setState('编辑中…');
     }),
+    EditorView.domEventHandlers({ scroll: () => syncTocFromEditor() }),
   ];
 
   /** CodeMirror 实例。 */
-  const view = new EditorView({ parent: $('md-editor'), state: EditorState.create({ doc: '', extensions }) });
+  const view = new EditorView({ parent: $('md-editor'), state: EditorState.create({ doc: '', extensions: extensions() }) });
 
   /** 换档案时重建编辑器状态：撤销历史清空，不能撤销到上一个档案或空白内容。 */
   function resetDoc(text) {
-    view.setState(EditorState.create({ doc: text, extensions }));
+    view.setState(EditorState.create({ doc: text, extensions: extensions() }));
     renderPreview();
+    renderToc();
   }
+
+  /** 主题切换（app.js 派发 fc-theme）：只换编辑器主题，内容与撤销历史不变。 */
+  window.addEventListener('fc-theme', (e) => {
+    dark = e.detail.dark;
+    view.dispatch({ effects: themeSlot.reconfigure(dark ? oneDark : []) });
+  });
+
+  // ---------------- 标题大纲 ----------------
+
+  /** 当前大纲：[{level, text, line}]，line 为 1 起的源码行号；与预览中 h1–h4 按出现顺序一一对应。 */
+  let toc = [];
+  let tocTimer = 0;
+
+  /** 输入时防抖重建大纲。 */
+  function scheduleToc() {
+    clearTimeout(tocTimer);
+    tocTimer = setTimeout(renderToc, 300);
+  }
+
+  /** 从源码提取 1–4 级 ATX 标题（跳过 ``` / ~~~ 代码块），渲染为缩进列表。 */
+  function renderToc() {
+    const lines = view.state.doc.toString().split('\n');
+    let fence = '';
+    toc = [];
+    lines.forEach((ln, i) => {
+      const f = ln.match(/^\s*(```|~~~)/);
+      if (f) { fence = fence ? (fence === f[1] ? '' : fence) : f[1]; return; }
+      if (fence) return;
+      const m = ln.match(/^(#{1,4})\s+(.+?)\s*#*\s*$/);
+      if (m) toc.push({ level: m[1].length, text: m[2].replace(/\*\*|__|`/g, ''), line: i + 1 });
+    });
+    $('md-toc').innerHTML = toc.length
+      ? toc.map((h, i) => `<div class="toc-item l${h.level}" data-i="${i}" title="${esc(h.text)}">${esc(h.text)}</div>`).join('')
+      : '<div class="empty mini">没有标题</div>';
+    syncTocFromPreview();
+  }
+
+  /** 标记大纲选中项并保持可见。 */
+  function markToc(i) {
+    document.querySelectorAll('.toc-item.active').forEach((e) => e.classList.remove('active'));
+    const el = document.querySelector(`.toc-item[data-i="${i}"]`);
+    if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
+  }
+
+  /** 预览滚动：取顶部之上最后一个标题。 */
+  function syncTocFromPreview() {
+    if (st.mode === 'edit') return;
+    const pv = $('md-preview');
+    const hs = pv.querySelectorAll('h1, h2, h3, h4');
+    const top = pv.getBoundingClientRect().top + 8;
+    let cur = 0;
+    hs.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
+    if (hs.length) markToc(cur);
+  }
+
+  /** 源码滚动（只在源码模式下跟随，分屏时以预览为准）：取视口顶行之上最后一个标题。 */
+  function syncTocFromEditor() {
+    if (st.mode !== 'edit' || !toc.length) return;
+    const topLine = view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number;
+    let cur = 0;
+    toc.forEach((h, i) => { if (h.line <= topLine) cur = i; });
+    markToc(cur);
+  }
+
+  /** 点大纲：源码滚到该行，预览滚到对应标题。 */
+  $('md-toc').onclick = (e) => {
+    const it = e.target.closest('.toc-item');
+    if (!it) return;
+    const i = Number(it.dataset.i);
+    const h = toc[i];
+    if (st.mode !== 'preview') {
+      const pos = view.state.doc.line(h.line).from;
+      view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start' }) });
+    }
+    if (st.mode !== 'edit') {
+      const el = $('md-preview').querySelectorAll('h1, h2, h3, h4')[i];
+      if (el) el.scrollIntoView({ block: 'start' });
+    }
+    markToc(i);
+  };
+  $('md-preview').addEventListener('scroll', syncTocFromPreview);
+
+  /** 大纲显示开关，记入 localStorage（默认显示）。 */
+  function applyTocVisible(show) {
+    $('md-body').classList.toggle('no-toc', !show);
+    $('btn-toc').classList.toggle('on', show);
+  }
+  $('btn-toc').onclick = () => {
+    const show = $('md-body').classList.contains('no-toc');
+    localStorage.setItem('fc-toc', show ? '1' : '0');
+    applyTocVisible(show);
+  };
+  applyTocVisible(localStorage.getItem('fc-toc') !== '0');
 
   /** 顶栏保存状态。 */
   function setState(text, isError) {
@@ -76,6 +180,7 @@ window.FeatPane = (() => {
     });
     st.applying = false;
     renderPreview();
+    renderToc();
   }
 
   /** 渲染预览：marked 转 HTML；`<图名>#<节点id>` 形式的引用渲染成可点击链接。 */
@@ -167,7 +272,7 @@ window.FeatPane = (() => {
     const nodes = await invoke('tagged_nodes', { flowDir: app.flow_dir, tag: st.id });
     $('feat-node-count').textContent = nodes.length;
     if (!nodes.length) {
-      box.innerHTML = `<div class="empty mini">还没有节点挂 ${esc(st.id)} 标签。打开流程图选中节点，点顶栏「挂到 ${esc(st.id)}」。</div>`;
+      box.innerHTML = `<div class="empty mini">还没有节点挂 ${esc(st.id)} 标签。打开流程图选中节点，点底部状态栏「挂到 ${esc(st.id)}」。</div>`;
       return;
     }
     const byFile = {};
@@ -212,7 +317,7 @@ window.FeatPane = (() => {
       document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === path));
       await checkLock();
       renderBar();
-      FlowLink.highlight(st.id);
+      FlowLink.setFeat(st.id, st.path);
     }
     await renderNodes();
     if (opts.node) revealNode(opts.node);
@@ -230,7 +335,7 @@ window.FeatPane = (() => {
     st.path = null;
     st.id = '';
     Split.hide('feat');
-    FlowLink.highlight('');
+    FlowLink.setFeat('', '');
     document.querySelectorAll('.feat.active').forEach((e) => e.classList.remove('active'));
   }
 
@@ -304,7 +409,7 @@ window.FeatPane = (() => {
     e.preventDefault();
     if (!cmd(view)) setState(cmd === undo ? '没有可撤销的改动' : '没有可重做的改动');
   });
-  window.addEventListener('beforeunload',() => { if (st.holding) invoke('release_lock', { path: st.path }); });
+  window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.path }); });
   setMode('split');
 
   return {
@@ -312,5 +417,6 @@ window.FeatPane = (() => {
     close,
     curPath: () => st.path,
     curId: () => st.id,
+    flush,
   };
 })();
