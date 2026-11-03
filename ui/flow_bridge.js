@@ -219,8 +219,25 @@
       { name: '计划删除', fill: '#F5F5F5', dashed: true },
       { name: '确认删除', fill: '#D5E8D4', dashed: true },
     ];
+    /** 按文件中的填充色和虚线识别协作状态，口径与 flow.rs 一致，不受深色主题显示色影响。 */
+    function currentState(graph, cell) {
+      var style = {};
+      (graph.model.getStyle(cell) || '').split(';').forEach(function (part) {
+        var at = part.indexOf('=');
+        if (at >= 0) style[part.slice(0, at)] = part.slice(at + 1);
+      });
+      var fill = (style.fillColor || '').toUpperCase();
+      var dashed = style.dashed === '1';
+      if (['', 'NONE', 'DEFAULT', '#FFFFFF'].indexOf(fill) >= 0) return states[0];
+      var state = states.filter(function (s) {
+        return s.fill === fill && (fill === '#D5E8D4' || fill === '#F5F5F5' ? s.dashed === dashed : true);
+      })[0];
+      return state || { name: '未识别颜色', fill: fill, dashed: dashed };
+    }
     var css = document.createElement('style');
-    css.textContent = '.fc-status-styles{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:12px 16px}' +
+    css.textContent = '.fc-current-status{display:flex;align-items:center;gap:8px;padding:12px 22px 0;font-size:12px}' +
+      '.fc-status-mixed{background:linear-gradient(135deg,#fff 0 45%,#808080 45% 55%,#fff 55%)}' +
+      '.fc-status-styles{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:12px 16px}' +
       '.fc-status-style{display:flex;align-items:center;gap:6px;min-width:0;padding:7px 6px;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left}' +
       '.fc-status-style:hover{background:light-dark(#eef2f6,#333a44)}' +
       '.fc-status-style:focus-visible{outline:2px solid #0969da;outline-offset:1px}' +
@@ -233,6 +250,29 @@
       if (!graph.getSelectionCells().some(function (cell) { return graph.model.isVertex(cell); })) {
         return originalAddStyles.apply(this, arguments);
       }
+      var selectedStates = graph.getSelectionCells().filter(function (cell) {
+        return graph.model.isVertex(cell);
+      }).map(function (cell) { return currentState(graph, cell); });
+      var current = selectedStates[0];
+      var mixed = selectedStates.some(function (state) {
+        return state.name !== current.name || state.fill !== current.fill || state.dashed !== current.dashed;
+      });
+      var summary = document.createElement('div');
+      summary.className = 'fc-current-status';
+      summary.setAttribute('role', 'status');
+      summary.appendChild(document.createTextNode('当前状态：'));
+      var currentSwatch = document.createElement('span');
+      currentSwatch.className = 'fc-status-swatch';
+      currentSwatch.setAttribute('aria-hidden', 'true');
+      if (mixed || !CSS.supports('background-color', current.fill)) {
+        currentSwatch.classList.add('fc-status-mixed');
+      } else {
+        currentSwatch.style.backgroundColor = current.fill;
+        currentSwatch.style.borderStyle = current.dashed ? 'dashed' : 'solid';
+      }
+      summary.appendChild(currentSwatch);
+      summary.appendChild(document.createTextNode(mixed ? '混合状态' : current.name));
+      container.appendChild(summary);
       var panel = document.createElement('div');
       panel.className = 'fc-status-styles';
       panel.setAttribute('role', 'group');
