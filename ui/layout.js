@@ -257,9 +257,6 @@ window.Split = (() => {
   /** 布局菜单的选中状态与推进矩阵开关。 */
   function renderMenu() {
     document.querySelectorAll('[data-layout-mode]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.layoutMode === pref.mode)));
-    const mx = $('layout-mx');
-    mx.setAttribute('aria-pressed', String(isOpen('mx')));
-    mx.textContent = isOpen('mx') ? '关闭推进矩阵' : '打开推进矩阵';
   }
 
   /** 布局菜单：点按钮展开，点外部或 Esc 收起。 */
@@ -272,14 +269,6 @@ window.Split = (() => {
     menu.querySelectorAll('[data-layout-mode]').forEach((b) => {
       b.onclick = () => { pref.mode = b.dataset.layoutMode; save(); layout(); };
     });
-    $('layout-mx').onclick = () => (isOpen('mx') ? MatrixPane.close() : MatrixPane.open());
-    $('layout-reset').onclick = () => {
-      pref.w = {};
-      pref.float = { flow: null, feat: null, mx: null };
-      pref.order = ['flow', 'feat', 'mx'];
-      save();
-      layout();
-    };
   }
 
   /** 绑定分隔条、标题栏、悬浮按钮与尺寸手柄；窗口尺寸变化时把悬浮栏限制回主区。 */

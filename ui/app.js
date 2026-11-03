@@ -23,14 +23,14 @@ const ownsFeat = () => SOLO === 'feat' || (!SOLO && !popped.feat);
 
 /** 状态元数据：顺序即统计条与徽标的展示顺序（按协作流转：实现 → 待审 → 想法 → 确认 → 问题 → 删除 → 未识别）。 */
 const STATUS = [
-  { key: 'none', name: '已实现' },
-  { key: 'review', name: '起草待审' },
-  { key: 'idea', name: '你的想法' },
-  { key: 'confirmed', name: '已确认' },
-  { key: 'issue', name: '有问题' },
-  { key: 'plan_delete', name: '计划删除' },
-  { key: 'confirm_delete', name: '确认删除' },
-  { key: 'unknown', name: '未识别颜色' },
+  { key: 'none', name: '已实现', details: ['无色或白色实线：代码已与流程图一致。', '有新想法或需要调整时，由你标蓝；发现问题时标红。'] },
+  { key: 'review', name: '起草待审', details: ['黄色实线：Agent 已起草方案或完成修正，等待你审核。', '同意方案：你改为绿色，交给 Agent 实现。', '不同意或有问题：你改为红色，并写明原因。'] },
+  { key: 'idea', name: '你的想法', details: ['蓝色实线：你提出的新想法或改动，尚待 Agent 评估。', '可行：Agent 补充方案后标黄，等待你审核。', '不可行：保持蓝色，用便签写明原因。'] },
+  { key: 'confirmed', name: '已确认', details: ['绿色实线：你已认可方案，等待 Agent 实现。', 'Agent 按图修改代码；完成后改回无色或白色实线。'] },
+  { key: 'issue', name: '有问题', details: ['红色实线：你指出方案或实现存在问题。', '在节点内或关联便签中写清问题与期望。', 'Agent 修正后标黄，再交给你审核。'] },
+  { key: 'plan_delete', name: '计划删除', details: ['灰色虚线：Agent 建议删除该步骤，等待你确认。', '同意删除：你改为绿色虚线。', '不同意删除：你改回无色或白色实线，保留该步骤。'] },
+  { key: 'confirm_delete', name: '确认删除', details: ['绿色虚线：你已确认删除该步骤。', 'Agent 删除对应节点及相关代码，并处理受影响的连接与引用。'] },
+  { key: 'unknown', name: '未识别颜色', details: ['节点使用了协作规则之外的颜色，暂时无法归类。', '按实际进度改为上述协作状态对应的颜色与实线／虚线。', '连线、便签、文本、泳道和分组不计入节点统计。'] },
 ];
 /** 编辑器调色板只给协作色（draw.io 颜色值不带 #）。 */
 const PALETTE = ['FFF2CC', 'F5F5F5', 'F8CECC', 'DAE8FC', 'D5E8D4', 'FFFFFF'];
@@ -80,7 +80,7 @@ function badges(counts) {
 }
 
 /** 绘制八种状态的统计行：「已实现」只显示数量；其余状态以其中最大值为满格画数量条，零值不填充。
- *  悬停显示数量与占全部节点的百分比；文字与数量提供非颜色识别。 */
+ *  悬停显示数量、占比及分条协作说明；文字与数量提供非颜色识别。 */
 function renderStatusStats(counts) {
   const total = STATUS.reduce((sum, s) => sum + (counts[s.key] || 0), 0);
   const max = Math.max(0, ...STATUS.filter((s) => s.key !== 'none').map((s) => counts[s.key] || 0));
@@ -89,7 +89,7 @@ function renderStatusStats(counts) {
     const pct = total ? value / total * 100 : 0;
     const bar = s.key === 'none' ? '<span class="status-track none" aria-hidden="true"></span>'
       : `<span class="status-track" aria-hidden="true"><span class="status-fill s-${s.key}" style="width:${max ? value / max * 100 : 0}%"></span></span>`;
-    return `<div class="status-row" data-status="${s.key}" title="${s.name}：${value.toLocaleString()} / ${total.toLocaleString()} 节点（${pct.toFixed(1)}%）"><span class="sw s-${s.key}" aria-hidden="true"></span><span class="status-name">${s.name}</span>${bar}<b class="status-value">${value.toLocaleString()}</b></div>`;
+    return `<div class="status-row" data-status="${s.key}" title="${esc(`${s.name}：${value.toLocaleString()} / ${total.toLocaleString()} 节点（${pct.toFixed(1)}%）\n\n${s.details.map((text) => '• ' + text).join('\n')}`)}"><span class="sw s-${s.key}" aria-hidden="true"></span><span class="status-name">${s.name}</span>${bar}<b class="status-value">${value.toLocaleString()}</b></div>`;
   }).join('');
 }
 

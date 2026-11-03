@@ -165,22 +165,22 @@ window.Sidebar = (() => {
     return `${f.path === current ? 'active' : ''} ${archived ? 'archived-entry' : ''} ${prefs.unseen.includes(norm(f.path)) ? 'unseen' : ''}`;
   }
 
-  /** 流程图行：启用与停用均可查看；平铺时第一行放图名和统计，第二行显示来源 APP。 */
-  function flowRow(f, app) {
+  /** 流程图统一两行：第一行图名与统计，第二行来源 APP，编辑状态靠右显示。 */
+  function flowRow(f, app, source = app) {
     const flat = app !== undefined;
     return `<div class="file ${flat ? 'flat-file' : ''} ${rowClass(f, currentFlow, !f.enabled)}" data-path="${esc(f.path)}" tabindex="0" title="${esc(f.path)}">
-      <div class="file-line">${flat ? svg('row-icon', ICON_FLOW) : ''}<span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>${lockTag(f.lock)}
+      <div class="file-line">${flat ? svg('row-icon', ICON_FLOW) : ''}<span class="file-name">${esc(f.name.replace(/\.drawio$/i, ''))}</span>
       ${f.error ? `<span class="err" title="${esc(f.error)}">解析失败</span>` : f.enabled ? badges(f.counts) : ''}</div>
-      ${flat ? `<div class="file-source" title="来源：${esc(app)}">来源：${esc(app)}</div>` : ''}</div>`;
+      <div class="file-source"><span class="entry-detail" title="来源：${esc(source)}">来源：${esc(source)}</span>${lockTag(f.lock)}</div></div>`;
   }
 
   /** Feat 行：阶段仍保留，关闭与废弃单独标识，不以开发完成推断关闭；平铺排布同流程图行加图标与 APP 名。 */
   function featRow(f, app) {
     const flat = app !== undefined;
     return `<div class="feat ${flat ? 'flat-feat' : ''} ${rowClass(f, currentFeat, f.archived)}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" tabindex="0" title="${esc(f.path)}">
-      <div class="feat-line">${flat ? svg('row-icon', ICON_FEAT) : ''}<span class="file-name">${esc(f.title || f.id)}</span>${flat ? `<span class="row-app">${esc(app)}</span>` : ''}${lockTag(f.lock)}
+      <div class="feat-line">${flat ? svg('row-icon', ICON_FEAT) : ''}<span class="file-name">${esc(f.title || f.id)}</span>${flat ? `<span class="row-app">${esc(app)}</span>` : ''}
         ${!f.archived ? f.closable ? '<span class="closable" title="关联节点全部已实现">可关闭</span>' : badges(f.counts) : ''}</div>
-      <div class="feat-meta"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></div></div>`;
+      <div class="feat-meta"><span class="entry-detail"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></span>${lockTag(f.lock)}</div></div>`;
   }
 
   /** 每组最多先显示 20 项；继续加载不改变文件状态。搜索时也分批，避免大历史一次撑满树。 */
@@ -222,7 +222,7 @@ window.Sidebar = (() => {
     if ((search || filtering) && !active.length && !archived.length) return '';
     const key = a.flow_dir + '#' + kind;
     const collapsed = !search && !statusFilter && prefs.collapsed.includes(key);
-    const row = flow ? flowRow : featRow;
+    const row = flow ? (f) => flowRow(f, undefined, prefs.app_aliases[a.flow_dir] || a.app) : featRow;
     const activeCount = filtering ? active.length : all.filter((f) => flow ? f.enabled : !f.archived).length;
     return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}">
       <div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}" title="${flow ? '流程图' : '功能需求档案'}">
@@ -398,7 +398,7 @@ window.Sidebar = (() => {
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       row.setAttribute('aria-pressed', String(selected));
-      row.title += selected ? '；点击取消过滤' : '；点击过滤流程图';
+      row.title += selected ? '\n\n点击取消过滤' : '\n\n点击过滤流程图';
     }
     syncToggleAll();
     syncLayout();
@@ -424,7 +424,7 @@ window.Sidebar = (() => {
     actions.unshift(['copy-name', '复制名称'], ['copy-path', '复制路径']);
     menu = document.createElement('div');
     menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
-    menu.innerHTML = actions.map(([action, name]) => `<button role="menuitem" data-action="${action}">${name}</button>`).join('');
+    menu.innerHTML = actions.map(([action, name]) => `<button role="menuitem" data-action="${action}">${MenuIcons.forLabel(name)}<span>${name}</span></button>`).join('');
     menu.onclick = (e) => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (!action) return;

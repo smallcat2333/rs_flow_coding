@@ -23,13 +23,14 @@
     <header id="side-tools">
       <div class="side-tools-left">
         <button id="btn-refresh" class="icon-button" title="刷新：重新读取已知目录" aria-label="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 7a7 7 0 0 1 11.5-1L20 9M4 15l2.3 3A7 7 0 0 0 17.8 17"/></svg></button>
-        <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
-      </div>
-      <nav aria-label="工具入口">
         <button id="btn-arrange" class="icon-button" title="侧栏排布" aria-label="侧栏排布" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="arrange-icon" d="M4 5h9M6 5v13M6 11h4M6 18h4M13 11h7M13 18h7"/></svg></button>
-        <button id="btn-layout" class="icon-button" title="布局与推进矩阵" aria-label="布局" aria-haspopup="true" aria-controls="layout-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M10.5 4.5v15M10.5 12h10"/></svg></button>
         <button id="btn-toggle-all" class="icon-button" title="全部收纳" aria-label="全部收纳"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="toggle-all-icon" d="m7 9 5-5 5 5M7 15l5 5 5-5"/></svg></button>
+      </div>
+      <span class="side-tools-divider" aria-hidden="true"></span>
+      <nav aria-label="工具入口">
         <button id="btn-search" class="icon-button" title="搜索名称或 Feat 编号" aria-label="搜索" aria-controls="tree-filter" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
+        <button id="btn-layout" class="icon-button" title="排布方式" aria-label="排布方式" aria-haspopup="true" aria-controls="layout-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M10.5 4.5v15M10.5 12h10"/></svg></button>
+        <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
         <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
       </nav>
       <div id="layout-menu" role="group" aria-label="布局" hidden>
@@ -37,11 +38,7 @@
         <div class="lm-modes">
           <button role="menuitemradio" data-layout-mode="row" aria-checked="true" title="各栏左右并排"><span class="lm-pic row"><i></i><i></i></span>左右</button>
           <button role="menuitemradio" data-layout-mode="col" aria-checked="false" title="各栏上下堆叠"><span class="lm-pic col"><i></i><i></i></span>上下</button>
-          <button role="menuitemradio" data-layout-mode="lr2" aria-checked="false" title="第一栏在左，另两栏在右侧上下；不足三栏时左右并排"><span class="lm-pic lr2"><i></i><i></i><i></i></span>左+右上下</button>
         </div>
-        <p class="lm-hint">拖动栏的标题栏到另一栏上可交换位置；标题栏右侧按钮切换悬浮。</p>
-        <button id="layout-mx" aria-pressed="false">打开推进矩阵</button>
-        <button id="layout-reset">恢复默认排布</button>
       </div>
       <div id="tree-filter" role="search" hidden>
         <input id="tree-search" type="search" placeholder="搜索名称或 Feat 编号" aria-label="搜索名称或 Feat 编号">
@@ -315,6 +312,7 @@ flowctl unlock &lt;文件&gt;</pre>
   </dialog>
 
   <script src="vendor/vendor.js"></script>
+  <script src="menu_icons.js"></script>
   <script src="sidebar.js"></script>
   <script src="layout.js"></script>
   <script src="app.js"></script>

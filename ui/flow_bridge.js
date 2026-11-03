@@ -325,6 +325,23 @@
     var origPopup = ui.menus.createPopupMenu;
     ui.menus.createPopupMenu = function (menu, cell, evt) {
       menu.smartSeparators = true;
+      // 原生操作与子菜单复用同一组 SVG；保留 draw.io 自带图标和勾选标记。
+      if (!menu.fcIconsInstalled) {
+        menu.fcIconsInstalled = true;
+        var addItem = menu.addItem;
+        menu.addItem = function (title, image, funct, parent, iconCls, enabled) {
+          var item = addItem.apply(this, arguments);
+          var icons = window.parent.MenuIcons;
+          if (item && !image && !iconCls && icons) {
+            item.firstChild.innerHTML = icons.forLabel(title || '');
+            var icon = item.firstChild.firstChild;
+            icon.style.display = 'block';
+            icon.style.margin = '0 auto';
+            icon.style.opacity = enabled === false ? '.4' : '.85';
+          }
+          return item;
+        };
+      }
       var sel = graph.getSelectionCells().filter(function (c) { return graph.model.isVertex(c); });
       if (cell && graph.model.isVertex(cell) && sel.length) {
         // 点菜单时焦点在本 iframe，外层文档写剪贴板会因未聚焦被拒，所以在这里写，结果交外层提示。
