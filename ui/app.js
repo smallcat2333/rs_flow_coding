@@ -512,7 +512,26 @@ function sameApp() {
   return !!a && a === appOf(curFeat.path);
 }
 
-/** 底部状态栏：选中节点的标签，以及对当前 Feat 的挂/摘按钮；跨 APP 时只允许摘除。 */
+/** 单按钮提示：只说明原因，不改图、不改标签。关闭后移除，避免遮罩残留。 */
+function alertBox(title, message) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'lifecycle-dialog';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  const detail = document.createElement('p');
+  detail.textContent = message;
+  const form = document.createElement('form');
+  form.method = 'dialog';
+  form.className = 'dlg-btns';
+  form.innerHTML = '<button value="cancel">知道了</button>';
+  dialog.append(heading, detail, form);
+  document.body.appendChild(dialog);
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.showModal();
+}
+
+/** 底部状态栏：选中节点的标签，以及对当前 Feat 的挂/摘按钮。
+ *  跨 APP 不在状态栏预告；点「挂到」时弹框拒绝，已挂上的残留标签仍可摘除。 */
 function renderNodeBar() {
   const fid = curFeat.id;
   const btn = $('btn-tag');
@@ -533,19 +552,20 @@ function renderNodeBar() {
   if (fid && !st.readOnly) {
     const allHave = selCells.every((c) => c.tags.includes(fid));
     const anyHave = selCells.some((c) => c.tags.includes(fid));
-    if (sameApp() || anyHave) {
-      const remove = sameApp() ? allHave : true;
-      btn.hidden = false;
-      btn.textContent = remove ? `从 ${fid} 摘除` : `挂到 ${fid}`;
-      btn.onclick = () => {
-        post({ action: 'fc-tag', tag: fid, add: !remove });
-        setTimeout(() => refresh(false), 1500);
-      };
-    }
-    if (!sameApp()) {
-      const fa = appOf(curFeat.path);
-      info += `<span class="hint">　${esc(fid)} 属于 ${esc(fa ? fa.app : '其他 APP')}，只能挂到该 APP 的流程图</span>`;
-    }
+    const cross = !sameApp();
+    // 跨 APP 且节点已有该标签时只摘除；否则显示「挂到」，点击后再拒绝跨 APP。
+    const remove = cross ? anyHave : allHave;
+    btn.hidden = false;
+    btn.textContent = remove ? `从 ${fid} 摘除` : `挂到 ${fid}`;
+    btn.onclick = () => {
+      if (!remove && cross) {
+        const fa = appOf(curFeat.path);
+        alertBox('不能挂接', `${fid} 属于 ${fa ? fa.app : '其他 APP'}，只能挂到该 APP 的流程图`);
+        return;
+      }
+      post({ action: 'fc-tag', tag: fid, add: !remove });
+      setTimeout(() => refresh(false), 1500);
+    };
   }
   $('node-info').innerHTML = info;
   $('node-info').title = $('node-info').textContent;
