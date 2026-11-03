@@ -32,7 +32,7 @@ window.FeatBoard = (() => {
   const st = {
     path: '',              // 当前渲染的档案；换档案时页签回到当前阶段
     tab: '',               // 当前页签章节号
-    filterT: '',           // 开发页：只看某个 T 的开发记录
+    selectedT: '',         // 开发页选中的 T；只控制详情区，开发记录始终完整显示
     onlyTodo: false,       // 测试页：§4.2 只看未填
     open: new Set(),       // 展开的开发记录（记录标题行号）；空表示默认展开最新一条
     openTouched: false,    // 用户手动展开 / 收起过记录后不再套用默认
@@ -514,19 +514,18 @@ window.FeatBoard = (() => {
       ${card(d, '2.5', '截图', meaningful(shots) ? `<div class="fb-prose">${md(shots.map((l) => l.t).join('\n'))}</div><p class="fb-hint">截图为本地文件，在文件夹中查看。</p>` : empty('开发 / 测试阶段补充截图', ''))}`;
   }
 
-  /** 依赖图节点尺寸与间距（像素）。 */
-  const G = { w: 188, h: 52, gx: 56, gy: 12, pad: 10 };
+  /** 依赖图排版尺寸：节点保留两行标题，窄栏转为纵向并按可用宽度折行，不缩小字体。 */
+  const G = { w: 188, h: 74, gap: 32, rowGap: 14, pad: 12 };
 
   /**
-   * §3.1 依赖关系图：按依赖深度分列（无依赖在最左，每列为前置最深一层 + 1），同列按前置所在行的平均位置排序以减少交叉；
-   * 节点为 T（编号 + 状态 + 任务名，超长省略，悬停看全文），连线从前置右侧连到后续左侧，前置已完成为绿、未完成为黄。
-   * 编号重复的行都画出，依赖连到该编号的最后一行；依赖到路线图里没有的编号不画线；成环时环内节点按深度 0 处理，不会死循环。
-   * 点击节点筛选 §3.2 记录，悬停高亮前置与后续。
+   * 输出依赖图节点与连线，保留依赖深度、排序与两端下标；实际坐标由 layoutGraph 根据图容器宽度计算。
+   * 同编号行全部显示，依赖连到最后一行；缺失依赖不画线，循环依赖用访问集合终止递归。
+   * 点击只切换任务详情，不筛选开发记录。
    */
   function taskGraph(d) {
-    const list = d.tasks;
-    const at = new Map(list.map((t, i) => [t.id, i]));
+    const list = d.tasks, at = new Map(list.map((t, i) => [t.id, i]));
     const depth = [], visiting = new Set();
+    /** 从前置任务递归计算层次，回访环内节点时结束当前分支。 */
     const deep = (i) => {
       if (depth[i] != null) return depth[i];
       if (visiting.has(i)) return 0;
@@ -537,39 +536,94 @@ window.FeatBoard = (() => {
       return depth[i];
     };
     list.forEach((_, i) => deep(i));
-    const cols = [];
-    list.forEach((_, i) => (cols[depth[i]] = cols[depth[i]] || []).push(i));
-    const row = new Map();
-    cols.forEach((c, ci) => {
-      if (ci) {
-        const bary = (i) => { const rs = list[i].deps.map((p) => row.get(at.get(p))).filter((r) => r != null); return rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : Infinity; };
-        c.sort((a, b) => bary(a) - bary(b) || a - b);
-      }
-      c.forEach((i, r) => row.set(i, r));
-    });
-    const pos = (i) => ({ x: G.pad + depth[i] * (G.w + G.gx), y: G.pad + row.get(i) * (G.h + G.gy) });
-    const width = G.pad * 2 + cols.length * G.w + (cols.length - 1) * G.gx;
-    const height = G.pad * 2 + Math.max(...cols.map((c) => c.length)) * (G.h + G.gy) - G.gy;
     const edges = [];
     list.forEach((t, i) => t.deps.forEach((p) => {
       const j = at.get(p);
       if (j == null || j === i) return;
-      const a = pos(j), b = pos(i), x1 = a.x + G.w, y1 = a.y + G.h / 2, x2 = b.x - 2, y2 = b.y + G.h / 2;
-      const bend = Math.max(24, (x2 - x1) / 2);
       const tone = list[j].state === 'done' ? 'done' : ['cancelled', 'paused', 'unknown'].includes(list[j].state) ? 'muted' : 'pending';
-      edges.push(`<path class="fb-edge ${tone}" data-from="${esc(p)}" data-to="${esc(t.id)}" marker-end="url(#fb-arrow-${tone})" d="M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}"/>`);
+      edges.push(`<path class="fb-edge ${tone}" data-from="${esc(p)}" data-to="${esc(t.id)}" data-source="${j}" data-target="${i}" marker-end="url(#fb-arrow-${tone})"/>`);
     }));
     const marker = (tone) => `<marker id="fb-arrow-${tone}" class="${tone}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker>`;
     const nodes = list.map((t, i) => {
-      const { x, y } = pos(i);
-      const tip = [`${t.id} ${t.title}`, `状态：${t.raw || '未填'}`, t.depRaw && t.depRaw !== '-' ? `依赖：${t.depRaw}` : '无依赖', t.par.length ? `可并行：${t.par.join('、')}` : '', '点击只看该 T 的开发记录'].filter(Boolean).join('\n');
-      return `<button class="fb-node t-${t.state}${st.filterT === t.id ? ' on' : ''}" style="left:${x}px;top:${y}px;width:${G.w}px;height:${G.h}px" data-node="${esc(t.id)}" data-deps="${esc(t.deps.join(' '))}" data-line="${t.n}" data-key="task-${esc(t.id)}" title="${esc(tip)}" ${act(() => { st.filterT = st.filterT === t.id ? '' : t.id; render(); })}>
+      const tip = [`${t.id} ${t.title}`, `状态：${t.raw || '未填'}`, t.depRaw && t.depRaw !== '-' ? `依赖：${t.depRaw}` : '无依赖', '点击查看任务详情，再点取消选中'].join('\n');
+      return `<button class="fb-node t-${t.state}${st.selectedT === t.id ? ' on' : ''}" data-level="${depth[i]}" data-node="${esc(t.id)}" data-deps="${esc(t.deps.join(' '))}" data-line="${t.n}" data-key="task-${esc(t.id)}" aria-pressed="${st.selectedT === t.id}" title="${esc(tip)}" ${act(() => selectTask(t.id))}>
         <span class="fb-node-head"><b>${esc(t.id)}</b><span class="fb-node-st">${TASK_NAME[t.state]}</span></span>
         <span class="fb-node-title">${esc(t.title)}</span></button>`;
     }).join('');
-    return `<div class="fb-graph"><div class="fb-graph-in" style="width:${width}px;height:${height}px">
-      <svg width="${width}" height="${height}" aria-hidden="true"><defs>${['done', 'pending', 'muted'].map(marker).join('')}</defs>${edges.join('')}</svg>${nodes}</div></div>
-      <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span><span class="fb-hint">悬停高亮前后依赖 · 点击筛选开发记录</span></div>`;
+    return `<div class="fb-graph" role="group" aria-label="任务依赖关系图"><div class="fb-graph-in">
+      <svg aria-hidden="true"><defs>${['done', 'pending', 'muted'].map(marker).join('')}</defs>${edges.join('')}</svg>${nodes}</div></div>
+      <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span></div>`;
+  }
+
+  /**
+   * 用实际图宽重排节点与连线：横向能放下全部依赖层时从左到右，否则从上到下，同一层按宽度折为多行。
+   * 只更新几何，不重建控件或改变选中状态；ResizeObserver 和每次渲染后调用。隐藏或零宽度时等下次可见再排。
+   */
+  function layoutGraph() {
+    const graph = $('feat-board').querySelector('.fb-graph');
+    if (!graph || !graph.clientWidth) return;
+    const nodes = [...graph.querySelectorAll('.fb-node')], width = graph.clientWidth;
+    const levels = [];
+    nodes.forEach((node, i) => (levels[Number(node.dataset.level)] ||= []).push(i));
+    const horizontal = levels.length * G.w + (levels.length - 1) * G.gap + G.pad * 2 <= width;
+    const cols = Math.max(1, Math.min(3, Math.floor((width - G.pad * 2 + G.rowGap) / (150 + G.rowGap))));
+    const nodeW = horizontal ? G.w : Math.min(300, (width - G.pad * 2 - (cols - 1) * G.rowGap) / cols);
+    const positions = [];
+    let y = G.pad, height = 0;
+    levels.forEach((level, li) => {
+      if (!level) return;
+      level.forEach((i, order) => {
+        if (horizontal) positions[i] = { x: G.pad + li * (G.w + G.gap), y: G.pad + order * (G.h + G.rowGap) };
+        else {
+          const row = Math.floor(order / cols), inRow = Math.min(cols, level.length - row * cols);
+          const left = (width - inRow * nodeW - (inRow - 1) * G.rowGap) / 2;
+          positions[i] = { x: left + (order % cols) * (nodeW + G.rowGap), y: y + row * (G.h + G.rowGap) };
+        }
+      });
+      if (!horizontal) y += Math.ceil(level.length / cols) * (G.h + G.rowGap) - G.rowGap + G.gap;
+    });
+    nodes.forEach((node, i) => {
+      const p = positions[i];
+      Object.assign(node.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${nodeW}px`, height: `${G.h}px` });
+      height = Math.max(height, p.y + G.h + G.pad);
+    });
+    const inside = graph.querySelector('.fb-graph-in'), svg = inside.querySelector('svg');
+    inside.style.height = `${height}px`;
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    graph.dataset.direction = horizontal ? 'horizontal' : 'vertical';
+    graph.querySelectorAll('.fb-edge').forEach((edge) => {
+      const a = positions[Number(edge.dataset.source)], b = positions[Number(edge.dataset.target)];
+      const x1 = horizontal ? a.x + nodeW : a.x + nodeW / 2, y1 = horizontal ? a.y + G.h / 2 : a.y + G.h;
+      const x2 = horizontal ? b.x - 3 : b.x + nodeW / 2, y2 = horizontal ? b.y + G.h / 2 : b.y - 3;
+      const bend = Math.max(16, (horizontal ? x2 - x1 : y2 - y1) / 2);
+      // 跨越中间层的依赖沿图边缘绕行，避免穿过中间节点；箭头仍指向后续任务的入口。
+      const skip = Number(nodes[Number(edge.dataset.target)].dataset.level) - Number(nodes[Number(edge.dataset.source)].dataset.level) > 1;
+      if (skip) {
+        edge.setAttribute('d', horizontal
+          ? `M${x1} ${y1} H${x1 + 8} V4 H${x2 - 8} V${y2} H${x2}`
+          : `M${x1} ${y1} V${y1 + 7} H5 V${y2 - 7} H${x2} V${y2}`);
+      } else edge.setAttribute('d', horizontal ? `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
+        : `M${x1} ${y1} C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`);
+    });
+  }
+
+  /** 选中或取消 T：更新独立详情，保持开发记录不变，把详情区移到可见范围。 */
+  function selectTask(id) {
+    st.selectedT = st.selectedT === id ? '' : id;
+    render();
+    $('feat-board').querySelector('.fb-task-panel')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  /** 未选中时的全部任务概览：完整名称、状态、依赖和记录数量，点击任一行展开对应详情。 */
+  function taskOverview(d) {
+    return `<section class="fb-card fb-task-panel"><header class="fb-card-head"><h3>任务详情</h3><span class="fb-badge">全部 ${d.tasks.length} 项</span></header>
+      <div class="fb-task-list">${d.tasks.map((t) => {
+        const count = d.devs.filter((r) => r.ts.includes(t.id) || r.subs.some((s) => s.id.startsWith(t.id + '.'))).length;
+        return `<button class="fb-task-row" ${act(() => selectTask(t.id))}>
+          <span class="fb-tid sm">${esc(t.id)}</span><span class="fb-task-summary"><strong>${esc(t.title)}</strong>
+          <span>${t.depRaw && t.depRaw !== '-' ? `前置 ${esc(t.depRaw)} · ` : ''}${count ? `${count} 条开发记录` : '暂无开发记录'}</span></span>${pill(t.state, TASK_NAME[t.state], t.raw)}</button>`;
+      }).join('')}</div></section>`;
   }
 
   /**
@@ -579,11 +633,11 @@ window.FeatBoard = (() => {
    */
   function taskDetail(d, id) {
     const rows = d.tasks.filter((t) => t.id === id);
-    const close = `<button class="fb-icon" ${act(() => { st.filterT = ''; render(); })} title="关闭详情，显示全部开发记录" aria-label="关闭详情">×</button>`;
-    if (!rows.length) return `<section class="fb-card fb-detail"><header class="fb-card-head"><h3>${esc(id)} 详情</h3><span class="spacer"></span>${close}</header>${empty('路线图中已没有该编号', '')}</section>`;
+    const close = `<button class="fb-detail-back" ${act(() => selectTask(id))} aria-label="返回全部任务">全部任务</button>`;
+    if (!rows.length) return `<section class="fb-card fb-task-panel fb-detail"><header class="fb-card-head"><h3>${esc(id)} 详情</h3><span class="spacer"></span>${close}</header>${empty('路线图中已没有该编号', '')}</section>`;
     const t = rows[rows.length - 1];
     const state = (p) => d.tasks.filter((x) => x.id === p).pop()?.state || 'unknown';
-    const chip = (p) => `<button class="fb-tchip t-${state(p)}" ${act(() => { st.filterT = p; render(); })} title="${esc(p)}：${TASK_NAME[state(p)]}">${esc(p)}</button>`;
+    const chip = (p) => `<button class="fb-tchip t-${state(p)}" ${act(() => selectTask(p))} title="${esc(p)}：${TASK_NAME[state(p)]}">${esc(p)}</button>`;
     const after = [...new Set(d.tasks.filter((x) => x.deps.includes(id)).map((x) => x.id))];
     const recs = d.devs.filter((r) => r.ts.some((x) => x === id || x.startsWith(id + '.')) || r.subs.some((s) => s.id.startsWith(id + '.')));
     const subs = new Map();
@@ -594,8 +648,9 @@ window.FeatBoard = (() => {
     const command = t.state === 'waiting' ? cmd(`/smallcat-feat-3-dev ${api.id()} ${id} 用户确认通过`)
       : ['todo', 'doing'].includes(t.state) && !blocked.length ? cmd(`/smallcat-feat-3-dev ${api.id()} ${id}`) : '';
     const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
-    return `<section class="fb-card fb-detail t-${t.state}" data-line="${t.n}">
-      <header class="fb-card-head"><h3><span class="fb-tid">${esc(id)}</span>${esc(t.title)}</h3>${pill(t.state, TASK_NAME[t.state], t.raw)}${rows.length > 1 ? pill('warn', `编号重复 ${rows.length} 行`) : ''}<span class="spacer"></span>${src(t.n)}${close}</header>
+    return `<section class="fb-card fb-task-panel fb-detail t-${t.state}" data-line="${t.n}">
+      <header class="fb-card-head"><h3>任务详情 <span class="fb-tid sm">${esc(id)}</span></h3><span class="spacer"></span>${src(t.n)}${close}</header>
+      <div class="fb-detail-heading"><h4>${esc(t.title)}</h4>${pill(t.state, TASK_NAME[t.state], t.raw)}${rows.length > 1 ? pill('warn', `编号重复 ${rows.length} 行`) : ''}</div>
       <dl class="fb-detail-grid">
         ${row('状态', esc(t.raw || '未填'))}
         ${row('前置', t.deps.length ? `<span class="fb-chips">${t.deps.map(chip).join('')}</span>${blocked.length ? `<span class="fb-detail-note warn">未完成：${esc(blocked.join('、'))}</span>` : ''}` : '<span class="fb-none">无</span>')}
@@ -609,18 +664,14 @@ window.FeatBoard = (() => {
     </section>`;
   }
 
-  /** 开发页（§3）：路线图依赖关系图（点节点筛选记录，待用户确认的 T 另列确认命令）、开发记录卡（可折叠，子任务状态行）。 */
+  /** 开发页：依赖图、任务详情（默认全部 T 概览，选中后单项详情）、始终完整的开发记录。 */
   function page3(d) {
     const x = d.stats.tasks;
     const counts = Object.entries(d.tasks.reduce((m, t) => ((m[t.state] = (m[t.state] || 0) + 1), m), {}))
       .map(([k, v]) => pill(k, `${TASK_NAME[k]} ${v}`)).join('');
-    const waits = d.tasks.filter((t) => t.state === 'waiting');
-    const tasks = d.tasks.length ? taskGraph(d) +(waits.length ? `<div class="fb-waits">${waits.map((t) => `<div class="fb-wait" data-line="${t.n}">
-      <span class="fb-tid sm">${esc(t.id)}</span><span class="fb-wait-title">${esc(t.title)}</span>${pill('waiting', t.raw || '待用户确认', t.raw)}
-      ${cmd(`/smallcat-feat-3-dev ${api.id()} ${t.id} 用户确认通过`)}</div>`).join('')}</div>` : '')
-      : empty('还没有任务路线图', 'smallcat-feat-3-dev');
+    const tasks = d.tasks.length ? taskGraph(d) : empty('还没有任务路线图', 'smallcat-feat-3-dev');
 
-    const devs = [...d.devs].reverse().filter((r) => !st.filterT || r.ts.some((t) => t === st.filterT || t.startsWith(st.filterT + '.')) || r.subs.some((s) => s.id.startsWith(st.filterT + '.')));
+    const devs = [...d.devs].reverse();
     const newest = d.devs.length ? d.devs[d.devs.length - 1].n : 0;
     const isOpen = (r) => (st.openTouched ? st.open.has(r.n) : r.n === newest);
     const recs = devs.length ? `<div class="fb-recs">${devs.map((r) => {
@@ -636,11 +687,10 @@ window.FeatBoard = (() => {
           ${tags.length ? `<div class="fb-tags">${tags.join('')}</div>` : ''}
           ${r.subs.length ? `<ul class="fb-subs">${r.subs.map((s) => `<li data-line="${s.n}"><span class="fb-tid sm">${esc(s.id)}</span><span class="fb-sub-goal">${cell(s.goal)}</span><span class="fb-who">${esc(s.who)}</span>${pill(s.state, TASK_NAME[s.state], s.raw)}</li>`).join('')}</ul>` : ''}
         </div>` : ''}</article>`;
-    }).join('')}</div>` : empty(st.filterT ? `${st.filterT} 还没有开发记录` : '还没有开发记录', st.filterT ? '' : 'smallcat-feat-3-dev');
-    const filter = st.filterT ? `<span class="fb-filter">只看 ${esc(st.filterT)}<button ${act(() => { st.filterT = ''; render(); })} title="清除筛选" aria-label="清除筛选">×</button></span>` : '';
+    }).join('')}</div>` : empty('还没有开发记录', 'smallcat-feat-3-dev');
     return `${card(d, '3.1', '任务路线图', tasks, x.total ? ring(x.done, x.total) + `<span class="fb-pills">${counts}</span>` : '')}
-      ${st.filterT ? taskDetail(d, st.filterT) : ''}
-      ${card(d, '3.2', '开发记录', recs, filter)}`;
+      ${d.tasks.length ? (st.selectedT ? taskDetail(d, st.selectedT) : taskOverview(d)) : ''}
+      ${card(d, '3.2', '开发记录', recs, pill('muted', `全部 ${d.devs.length} 条`))}`;
   }
 
   /** §4.1 自测：只读列表，结果色块，备注像路径时带复制按钮。 */
@@ -753,7 +803,7 @@ window.FeatBoard = (() => {
     if (!path) { box.innerHTML = ''; st.path = ''; return; }
     const d = model(api.text());
     const fresh = path !== st.path;
-    if (fresh) Object.assign(st, { path, tab: d.stage, filterT: '', onlyTodo: false, open: new Set(), openTouched: false });
+    if (fresh) Object.assign(st, { path, tab: d.stage, selectedT: '', onlyTodo: false, open: new Set(), openTouched: false });
     if (!STAGES.some((s) => s.k === st.tab) || (st.tab === '0' && !d.h2['0'])) st.tab = d.stage;
     const key = st.focusKey || (box.contains(active) ? active.dataset.key : '');
     st.focusKey = '';
@@ -771,6 +821,9 @@ window.FeatBoard = (() => {
     // Agent 持锁：只禁用会写原文的控件（勾选、OK / NG、复测、备注），筛选与展开等视图操作照常可用。
     box.classList.toggle('readonly', api.readOnly());
     if (api.readOnly()) box.querySelectorAll('.fb-check, .fb-verdict button, .fb-note').forEach((el) => { el.disabled = true; });
+    layoutGraph();
+    // 刚打开/切换分栏时父容器尚未完成布局，下一轮再测量一次；后台窗口也不依赖动画帧。
+    setTimeout(layoutGraph, 0);
     box.scrollTop = scroll;
     if (key) box.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
   }
@@ -796,13 +849,14 @@ window.FeatBoard = (() => {
     const box = $('feat-board');
     box.addEventListener('click', (e) => {
       const tab = e.target.closest('[data-tab]');
-      if (tab) { st.tab = tab.dataset.tab; st.filterT = ''; render(); box.scrollTop = 0; return; }
+      if (tab) { st.tab = tab.dataset.tab; st.selectedT = ''; render(); box.scrollTop = 0; return; }
       const jump = e.target.closest('[data-jump]');
       if (jump) { flashTo(box.querySelector(`.fb-page [data-line="${jump.dataset.jump}"]`), 'start'); return; }
       const tj = e.target.closest('[data-tjump]');
       if (tj) {
-        if (st.tab !== '3') { st.tab = '3'; st.filterT = ''; render(); }
-        flashTo(box.querySelector(`.fb-node[data-node="${CSS.escape(tj.dataset.tjump)}"]`), 'center');
+        st.tab = '3';
+        st.selectedT = '';
+        selectTask(tj.dataset.tjump);
         return;
       }
       const copyBtn = e.target.closest('[data-copy]');
@@ -884,7 +938,7 @@ window.FeatBoard = (() => {
     if (!api.path()) return;
     const d = parse(api.text());
     const sec = Object.values(d.h2).filter((s) => s.n <= line).sort((a, b) => b.n - a.n)[0];
-    if (sec && PAGES[sec.k] && sec.k !== st.tab) { st.tab = sec.k; st.filterT = ''; }
+    if (sec && PAGES[sec.k] && sec.k !== st.tab) { st.tab = sec.k; st.selectedT = ''; }
     render();
     const box = $('feat-board');
     const hit = [...box.querySelectorAll('.fb-page [data-line]')].filter((el) => Number(el.dataset.line) && Number(el.dataset.line) <= line)
@@ -903,6 +957,9 @@ window.FeatBoard = (() => {
   function init(a) {
     api = a;
     bind();
+    // 只重算图形几何，拖动分栏不会重建输入框、详情或开发记录的展开状态。
+    new ResizeObserver(layoutGraph).observe($('feat-board'));
+    window.addEventListener('resize', layoutGraph);
   }
 
   return {
@@ -910,7 +967,7 @@ window.FeatBoard = (() => {
     /** 文本、锁或节点变化：控件页可见时下一帧重绘。 */
     changed: schedule,
     /** 控件页刚显示：有积压变化时立即重绘。 */
-    shown: () => { if (st.dirty || !$('feat-board').innerHTML) render(); },
+    shown: () => { if (st.dirty || !$('feat-board').innerHTML) render(); layoutGraph(); },
     revealLine,
     /** 供浏览器自测：解析结果（不含 DOM）。 */
     model,

@@ -10,6 +10,8 @@
 #feat-board {
   --fb-ok: var(--ok-fg); --fb-err: var(--danger); --fb-warn: var(--warn-fg); --fb-info: var(--accent); --fb-muted: var(--muted);
   flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--bg2); line-height: 1.55;
+  container-type: inline-size; container-name: board;
+  scrollbar-width: thin;
 }
 #feat-board:focus { outline: none; }
 #feat-board .spacer { flex: 1; }
@@ -43,10 +45,11 @@
 .fb-next.ok { border-color: color-mix(in srgb, var(--fb-ok) 35%, transparent); background: color-mix(in srgb, var(--ok-bg) 60%, transparent); }
 .fb-next.warn { border-color: var(--warn-bd); background: color-mix(in srgb, var(--warn-bg) 60%, transparent); }
 .fb-next.err { border-color: color-mix(in srgb, var(--fb-err) 40%, transparent); background: color-mix(in srgb, var(--fb-err) 7%, transparent); }
-.fb-next-text { flex: 1 1 220px; }
+.fb-next-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.fb-next .fb-cmd { flex: 0 1 auto; margin-left: 16px; }
 
 /* 命令与小按钮 */
-.fb-cmd { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; max-width: 100%; font-size: 12px; border-color: var(--border); background: var(--bg); }
+.fb-cmd { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 100%; box-sizing: border-box; font-size: 12px; border-color: var(--border); background: var(--bg); }
 .fb-cmd code { font-family: Consolas, "Microsoft YaHei UI", monospace; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-cmd svg, .fb-icon svg, .fb-src svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--fg2); }
 .fb-cmd.copied, .fb-icon.copied { border-color: var(--fb-ok); }
@@ -174,10 +177,10 @@
 .fb-tid { font-family: Consolas, monospace; font-weight: 700; padding: 1px 7px; border-radius: 4px; background: var(--bg2); border: 1px solid var(--border2); flex-shrink: 0; }
 .fb-tid.sm { font-size: 11px; padding: 0 5px; font-weight: 600; }
 
-/* §3.1 依赖关系图：节点绝对定位在 SVG 连线之上，宽度超出时横向滚动 */
-.fb-graph { overflow: auto; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); }
-.fb-graph-in { position: relative; }
-.fb-graph svg { position: absolute; inset: 0; overflow: visible; }
+/* §3.1 依赖关系图：宽区横向、窄区纵向，同层按可用宽度换行，无图内滚动条。 */
+.fb-graph { min-width: 0; border-radius: 6px; background: var(--bg2); }
+.fb-graph-in { position: relative; width: 100%; }
+.fb-graph svg { position: absolute; inset: 0; pointer-events: none; }
 .fb-edge { fill: none; stroke-width: 1.6; transition: opacity .15s, stroke-width .15s; }
 .fb-edge.done { stroke: color-mix(in srgb, var(--fb-ok) 70%, transparent); }
 .fb-edge.pending { stroke: var(--warn-bd); }
@@ -186,13 +189,13 @@
 .fb-graph marker.done path { fill: color-mix(in srgb, var(--fb-ok) 70%, transparent); }
 .fb-graph marker.pending path { fill: var(--warn-bd); }
 .fb-graph marker.muted path { fill: var(--border); }
-.fb-node { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 4px 9px 4px 11px; border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 6px; background: var(--bg); text-align: left; overflow: hidden; transition: opacity .15s, box-shadow .15s; }
+.fb-node { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 7px 10px; border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 6px; background: var(--bg); text-align: left; overflow: hidden; transition: opacity .15s, box-shadow .15s; }
 .fb-node:hover:not(:disabled) { background: var(--bg); box-shadow: 0 2px 10px var(--shadow); }
 .fb-node.on { box-shadow: 0 0 0 2px var(--accent-bd); }
 .fb-node-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .fb-node-head b { font-family: Consolas, monospace; }
 .fb-node-st { margin-left: auto; font-size: 11px; color: var(--fg2); }
-.fb-node-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.fb-node-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12px; line-height: 1.5; overflow: hidden; overflow-wrap: anywhere; color: var(--fg); }
 .fb-node.t-done { border-left-color: var(--fb-ok); }
 .fb-node.t-done .fb-node-st { color: var(--fb-ok); }
 .fb-node.t-doing { border-left-color: var(--fb-info); }
@@ -203,7 +206,7 @@
 .fb-node.t-paused, .fb-node.t-cancelled { opacity: .6; border-style: dashed; }
 .fb-node.t-cancelled .fb-node-title { text-decoration: line-through; }
 .fb-node.t-unknown { border-left-color: var(--muted); border-left-style: dotted; }
-.fb-graph.focus .fb-node:not(.hi-self):not(.hi-dep):not(.hi-of) { opacity: .35; }
+.fb-graph.focus .fb-node:not(.hi-self):not(.hi-dep):not(.hi-of) { opacity: .7; }
 .fb-graph.focus .fb-edge:not(.hi) { opacity: .15; }
 .fb-graph .fb-edge.hi { stroke-width: 2.4; }
 .fb-node.hi-dep { box-shadow: 0 0 0 2px var(--warn-bd); }
@@ -214,11 +217,20 @@
 .fb-legend i.pending { border-color: var(--warn-bd); }
 .fb-legend i.muted { border-color: var(--border); border-top-style: dashed; }
 .fb-legend .fb-hint { margin: 0; }
-/* 选中 T 的详情区块 */
-.fb-detail { border-left: 4px solid var(--accent-bd); }
-.fb-detail.t-done { border-left-color: var(--fb-ok); }
-.fb-detail.t-waiting { border-left-color: var(--warn-bd); }
-.fb-detail .fb-card-head h3 { gap: 8px; align-items: center; }
+/* 任务详情：默认全部任务列表，选中后在同一块内展示完整详情。 */
+.fb-task-list { display: flex; flex-direction: column; }
+.fb-task-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border: 0; border-top: 1px solid var(--border2); border-radius: 0; background: transparent; text-align: left; }
+.fb-task-row:first-child { border-top: 0; }
+.fb-task-summary { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.fb-task-summary strong { font-size: 13px; font-weight: 600; }
+.fb-task-summary > span { color: var(--fg2); font-size: 12px; }
+.fb-detail { border-top: 2px solid var(--accent-bd); }
+.fb-detail.t-done { border-top-color: var(--fb-ok); }
+.fb-detail.t-waiting { border-top-color: var(--warn-bd); }
+.fb-detail-back { font-size: 12px; color: var(--accent); background: transparent; }
+.fb-detail .fb-card-head h3 { align-items: center; }
+.fb-detail-heading { display: flex; align-items: flex-start; gap: 10px; margin: 2px 0 16px; }
+.fb-detail-heading h4 { flex: 1; min-width: 0; font-size: 14px; line-height: 1.7; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
 .fb-detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
 .fb-detail-grid dt { color: var(--muted); font-size: 12px; padding-top: 2px; }
 .fb-detail-grid dd { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
@@ -227,13 +239,8 @@
 .fb-detail-note { font-size: 12px; }
 .fb-detail-note.warn { color: var(--warn-fg); }
 .fb-detail-cmd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border2); color: var(--fg2); font-size: 12px; }
-.fb-waits { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.fb-wait { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--warn-bd); background: color-mix(in srgb, var(--warn-bg) 45%, transparent); }
-.fb-wait-title { flex: 1 1 160px; min-width: 0; font-weight: 600; }
 
 /* §3.2 开发记录 */
-.fb-filter { display: inline-flex; align-items: center; gap: 4px; padding: 0 0 0 8px; border-radius: 10px; font-size: 12px; background: var(--sel); color: var(--accent); border: 1px solid var(--accent-bd); }
-.fb-filter button { border: 0; background: transparent; padding: 0 6px; color: inherit; }
 .fb-recs { display: flex; flex-direction: column; gap: 6px; }
 .fb-rec { border: 1px solid var(--border2); border-radius: 6px; }
 .fb-rec.open { border-color: var(--border); }
@@ -300,18 +307,42 @@
 /* Agent 持锁：写入控件已禁用，整体略淡 */
 #feat-board.readonly .fb-verdict, #feat-board.readonly .fb-check, #feat-board.readonly .fb-note { opacity: .55; }
 
-/* 窄栏：导航改为顶部横排（不显示摘要与连线），字段与备注不再缩进 */
-@container feat (max-width: 560px) {
+/* 按控件页自身的可用宽度判断，右侧推进栏占去的空间不会误计为正文空间。 */
+@container board (max-width: 760px) {
+  .fb-rail { flex-basis: 130px; }
+  .fb-rail-in { padding: 10px 6px; }
+  .fb-meta-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fb-page { padding: 12px; }
+  .fb-nexts { padding: 12px 12px 0; }
+  .fb-card { padding: 10px; }
+}
+/* 更窄时阶段导航放到上方自动换行，只保留当前阶段的章节入口。 */
+@container board (max-width: 520px) {
   .fb-shell { flex-direction: column; }
-  .fb-rail { flex: none; border-right: 0; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+  .fb-rail { flex: none; border-right: 0; border-bottom: 1px solid var(--border); }
   .fb-rail-in { position: static; padding: 8px 12px; gap: 6px; }
-  .fb-meta { display: none; }
+  .fb-rail-head, .fb-meta { display: none; }
   .fb-stages { flex-direction: row; flex-wrap: wrap; }
-  .fb-stage { width: auto; grid-template-columns: 10px auto; column-gap: 6px; padding: 4px 8px; }
-  .fb-stage-item::after, .fb-stage-sum, .fb-toc, .fb-tchips { display: none; }
+  .fb-stage { width: auto; grid-template-columns: 8px auto; column-gap: 6px; padding: 4px 6px; }
+  .fb-stage-item::after, .fb-stage-sum, .fb-tchips { display: none; }
   .fb-stage-dot { grid-row: auto; margin-top: 0; width: 8px; height: 8px; }
-  .fb-page, .fb-nexts { padding-left: 12px; padding-right: 12px; }
+  .fb-stage-item:has(.on) { display: contents; }
+  .fb-stage-item:has(.on) .fb-toc { order: 1; display: flex; flex: 0 0 100%; flex-direction: row; flex-wrap: wrap; gap: 2px 6px; padding: 4px 0 0; border-top: 1px solid var(--border2); }
+  .fb-toc button { font-size: 11px; }
+  .fb-stage .fb-badge { padding: 0 4px; }
   .fb-acc-fields, .fb-note { margin-left: 0; padding-left: 0; }
   .fb-note { padding-left: 9px; }
   .fb-acc-head { flex-wrap: wrap; }
+  .fb-detail-heading { flex-direction: column; gap: 6px; }
+  .fb-task-row { flex-wrap: wrap; }
+  .fb-task-summary { flex-basis: calc(100% - 50px); }
+  .fb-task-row > .fb-pill { margin-left: 40px; }
+  .fb-rec-toggle { gap: 5px; flex-wrap: wrap; }
+  .fb-rec-title { flex-basis: 100%; order: 1; }
+  .fb-rec-body { padding: 4px 10px 10px; }
+  .fb-subs li { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-node, .fb-edge, .fb-chev, .fb-ring circle.v { transition: none; }
+  .fb-flash { animation: none; outline: 2px solid var(--accent-bd); }
 }
