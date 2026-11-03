@@ -234,19 +234,26 @@ window.Sidebar = (() => {
       ? `<button class="show-more" data-more="${esc(key)}">再显示 ${Math.min(PAGE_SIZE, list.length - limit)} 项（还有 ${list.length - limit} 项）</button>` : '');
   }
 
-  /** 收纳区按关闭/停用年份分组（dateOf 取条目日期）；日期缺失的旧档案归到「未注明年份」。 */
-  function archive(list, key, row, label, dateOf) {
+  /** 收纳分组标签：Feat 取 YYYY-MM（如 2026-11），Chart 仍取年份；日期缺失归到「未注明年份」。 */
+  function timeBucket(date, byMonth) {
+    const text = String(date || '');
+    const month = byMonth && /^\d{4}-\d{2}/.exec(text);
+    return (month ? month[0] : /^\d{4}/.exec(text)?.[0]) || '未注明年份';
+  }
+
+  /** 收纳区按关闭/停用时间分组（bucketOf 决定年或月）；日期缺失的旧档案归到「未注明年份」。 */
+  function archive(list, key, row, label, bucketOf) {
     if (!list.length) return '';
     const expanded = prefs.expanded_archives.includes(key) || !!search;
     let content = '';
     if (expanded) {
-      const years = new Map();
+      const groups = new Map();
       for (const f of list) {
-        const year = /^\d{4}/.exec(dateOf(f))?.[0] || '未注明年份';
-        if (!years.has(year)) years.set(year, []);
-        years.get(year).push(f);
+        const bucket = bucketOf(f);
+        if (!groups.has(bucket)) groups.set(bucket, []);
+        groups.get(bucket).push(f);
       }
-      content = [...years.keys()].sort().reverse().map((year) => `<div class="archive-year">${esc(year)}</div>${page(years.get(year), key + '#' + year, row)}`).join('');
+      content = [...groups.keys()].sort().reverse().map((bucket) => `<div class="archive-year">${esc(bucket)}</div>${page(groups.get(bucket), key + '#' + bucket, row)}`).join('');
     }
     return `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(key)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} ${label}</span><span>${list.length}</span></button>${expanded ? `<div class="archive-body">${content}</div>` : ''}</div>`;
   }
@@ -276,7 +283,7 @@ window.Sidebar = (() => {
         <span class="sec-title">${flow ? 'Chart' : 'Feat'}</span><span class="sec-count" title="${flow ? '启用的流程图数量' : '开启的 Feat 数量'}">${activeCount}</span>
         <button class="${flow ? 'app-new' : 'feat-new'}" data-dir="${esc(flow ? a.flow_dir : a.feat_dir)}" title="${flow ? '新建流程图' : '新建 Feat 档案'}">＋</button></div>
       <div class="sec-body">${page(active, key, row) || `<div class="empty mini">${search ? '没有匹配的活跃项' : flow ? '暂无启用的流程图' : '暂无开启的 Feat'}</div>`}
-      ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', (f) => flow ? f.disabled_at : f.closed_at)}</div></div>`;
+      ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', (f) => timeBucket(flow ? f.disabled_at : f.closed_at, !flow))}</div></div>`;
   }
 
   /** 原位编辑 APP 或分组显示名：Enter/失焦保存、Esc 取消；空值或填回原名恢复默认，写入失败恢复旧别名。
@@ -419,7 +426,7 @@ window.Sidebar = (() => {
     if (!active.length && !archived.length) return '';
     const row = (e) => e.kind === 'flow' ? flowRow(e.f, e.app) : featRow(e.f, e.app);
     return `<div class="flat-list">${page(active, '#flat', row) || '<div class="empty mini">没有活跃的 Chart 或 Feat</div>'}
-      ${archive(archived, '#flat#archive', row, '已停用 / 已收纳', (e) => e.kind === 'flow' ? e.f.disabled_at : e.f.closed_at)}</div>`;
+      ${archive(archived, '#flat#archive', row, '已停用 / 已收纳', (e) => timeBucket(e.kind === 'flow' ? e.f.disabled_at : e.f.closed_at, e.kind !== 'flow'))}</div>`;
   }
 
   /** 重绘侧栏：按排布偏好输出分层树或平铺列表，合计继续使用后端只包含启用 Chart 的统计。
