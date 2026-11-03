@@ -25,6 +25,14 @@
   'use strict';
   var origMain = null;
   var ui = null;
+  var noteTools = null;
+  var notesScript = document.createElement('script');
+  notesScript.src = new URL('flow_notes.js', document.currentScript.src).href;
+  var notesReady = new Promise(function (resolve, reject) {
+    notesScript.onload = resolve;
+    notesScript.onerror = function () { reject(new Error('挂载注释模块加载失败')); };
+  });
+  document.head.appendChild(notesScript);
   var highlighted = [];   // 当前高亮的 mxCellHighlight 实例
   var autoSelect = false; // 正在执行程序定位（fc-select-cell），选中通知带 auto 标记
   var marks = {};         // 节点 id -> {cell, overlay, key}：当前显示的书签角标
@@ -168,6 +176,7 @@
     }
     refreshLinkMarks(graph, cells);
     refreshIdMarks(graph, cells);
+    if (noteTools) noteTools.refresh();
   }
 
   /** 发消息给外层 App。 */
@@ -322,6 +331,12 @@
    */
   function installNodeMenu() {
     var graph = ui.editor.graph;
+    // 原生文字列左侧留了 30px；有图标后收紧为 8px，子菜单沿用相同间距。
+    var menuStyle = document.createElement('style');
+    menuStyle.textContent =
+      'html table.fc-compact-menu td.mxPopupMenuItem{padding-left:8px;padding-right:16px}' +
+      'html table.fc-compact-menu td.mxPopupMenuIcon{width:24px;min-width:24px;padding-left:4px;padding-right:4px;box-sizing:border-box}';
+    document.head.appendChild(menuStyle);
     var origPopup = ui.menus.createPopupMenu;
     ui.menus.createPopupMenu = function (menu, cell, evt) {
       menu.smartSeparators = true;
@@ -331,6 +346,7 @@
         var addItem = menu.addItem;
         menu.addItem = function (title, image, funct, parent, iconCls, enabled) {
           var item = addItem.apply(this, arguments);
+          if (item) item.closest('table').classList.add('fc-compact-menu');
           var icons = window.parent.MenuIcons;
           if (item && !image && !iconCls && icons) {
             item.firstChild.innerHTML = icons.forLabel(title || '');
@@ -390,6 +406,15 @@
     var graph = ui.editor.graph;
     var savedViewport = null; // 同一张图外部同步前的缩放与滚动位置，仅用于本次更新。
     var presentation = null; // 演示前的编辑状态与视图，退出后恢复。
+    var readOnly = false;    // Agent 持锁只读：禁用编辑，保留缩放、滚动和平移查看。
+
+    /** 只读切换：结束正在进行的文字编辑并禁用图编辑；演示中只记下状态，退出演示时按它恢复。 */
+    function setReadOnly(on) {
+      readOnly = on;
+      if (presentation) { presentation.enabled = !on; return; }
+      if (on) graph.stopEditing(false);
+      graph.setEnabled(!on);
+    }
     var presentationCss = document.createElement('style');
     presentationCss.textContent = 'body.fc-presentation .geMenubarContainer,body.fc-presentation .geToolbarContainer,' +
       'body.fc-presentation .geSidebarContainer,body.fc-presentation .geFooterContainer,' +
@@ -454,6 +479,11 @@
     }
     // 调试入口：浏览器预览 / 开发者工具中可直接检查编辑器与角标
     window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks, linkMarks: linkMarks, idMarks: idMarks };
+    notesReady.then(function () {
+      noteTools = window.installFlowNotes(ui);
+      window.fcBridge.notes = noteTools;
+      refreshMarks(graph);
+    }).catch(function (error) { console.error('flow notes', error); });
     useShortIds(graph.model);
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
       var cells = graph.getSelectionCells().filter(function (c) { return graph.model.isVertex(c); });
@@ -503,6 +533,8 @@
           ui.actions.get('fitWindow').funct();
         }
         savedViewport = null;
+      } else if (m.action === 'fc-readonly') {
+        setReadOnly(!!m.on);
       } else if (m.action === 'fc-presentation') {
         setPresentation(!!m.show);
       } else if (m.action === 'fc-feats') {
@@ -524,6 +556,12 @@
     });
     // iframe 内的按键不会冒泡到外层；Esc 转发给窗口，draw.io 对话框打开时优先由其处理。
     document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && noteTools && noteTools.isPicking()) {
+        noteTools.cancelPick();
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        return;
+      }
       if (ev.key === 'Escape' && !ev.isComposing && !(ui.dialogs && ui.dialogs.length)) {
         send({ event: 'fc-escape' });
       }

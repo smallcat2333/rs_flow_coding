@@ -1,0 +1,93 @@
+/* Feat 右侧栏「推进」区：五个阶段串成竖向主干，开发阶段下挂 T 树，T 下挂子 T。 */
+#feat-progress { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 6px 10px 16px 12px; font-size: 12px; }
+#fp-sum { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#fp-sum .w { color: var(--warn-fg); font-weight: 600; }
+.fp-status { padding: 0 0 6px 22px; color: var(--muted); font-size: 11px; }
+.fp-flag { margin-left: 6px; padding: 0 5px; border-radius: 3px; background: var(--warn-bg); color: var(--warn-fg); }
+.fp-tree, .fp-tasks, .fp-subs { list-style: none; margin: 0; padding: 0; }
+
+/* 阶段主干：圆点之间的竖线，已过阶段的线段为实色 */
+.fp-stage { position: relative; padding-bottom: 8px; }
+.fp-stage:not(:last-child)::before { content: ""; position: absolute; left: 6px; top: 16px; bottom: -6px; width: 2px; background: var(--border2); }
+.fp-stage.past:not(:last-child)::before { background: var(--ok-fg); opacity: .55; }
+.fp-node { display: grid; grid-template-columns: 14px auto minmax(0, 1fr); column-gap: 8px; row-gap: 3px; align-items: center; width: 100%; padding: 4px 6px 4px 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; position: relative; }
+.fp-node:hover { background: var(--hover); }
+.fp-dot { width: 14px; height: 14px; box-sizing: border-box; border: 2px solid var(--border); border-radius: 50%; background: var(--bg2); }
+.fp-name { font-weight: 650; white-space: nowrap; }
+.fp-label { min-width: 0; color: var(--fg2); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.fp-span { grid-column: 2 / -1; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.fp-bar { grid-column: 2 / -1; display: block; height: 4px; border-radius: 2px; background: var(--border2); overflow: hidden; }
+.fp-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--muted); transition: width .3s ease; }
+.fp-stage.past .fp-dot { border-color: var(--ok-fg); background: var(--ok-fg); }
+.fp-stage.past .fp-bar > i { background: var(--ok-fg); }
+.fp-stage.now .fp-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+.fp-stage.now .fp-name, .fp-stage.now .fp-label { color: var(--fg); }
+.fp-stage.now .fp-bar > i { background: var(--accent); }
+.fp-stage.next .fp-dot { border-style: dashed; border-color: var(--muted); }
+.fp-stage.next .fp-name, .fp-stage.next .fp-label { color: var(--muted); }
+.fp-stage.skip .fp-dot { border-color: var(--muted); background: repeating-linear-gradient(135deg, var(--bg2) 0 2px, var(--muted) 2px 4px); }
+.fp-stage.skip .fp-label { color: var(--muted); }
+.fp-stage.warn > .fp-node .fp-label { color: var(--warn-fg); }
+.fp-note { margin: 2px 0 2px 22px; color: var(--muted); }
+
+/* T 树：从主干横向分出，左侧状态圆点 */
+.fp-tasks { margin: 4px 0 2px 7px; }
+.fp-t { position: relative; padding: 5px 4px 6px 24px; border-radius: 6px; transition: opacity .15s ease, background-color .15s ease; }
+.fp-t::after { content: ""; position: absolute; left: 0; top: 13px; width: 13px; border-top: 1px solid var(--border); }
+.fp-t::before { content: ""; position: absolute; left: 12px; top: 9px; width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg2); background: var(--bg2); }
+.fp-t.doing::before { border-color: var(--accent); background: var(--accent); }
+.fp-t.waiting::before { border-color: var(--warn-fg); background: var(--warn-fg); }
+.fp-t.done::before { border-color: var(--ok-fg); background: var(--ok-fg); }
+.fp-t.paused::before, .fp-t.cancelled::before { border-color: var(--muted); border-style: dashed; }
+.fp-t.unknown::before { border-color: var(--muted); background: repeating-linear-gradient(45deg, var(--bg2) 0 2px, var(--muted) 2px 3px); }
+.fp-t.waiting { box-shadow: inset 2px 0 0 var(--warn-bd); }
+.fp-tnode { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.fp-tnode:hover .fp-ttl { color: var(--accent); }
+.fp-tid { flex-shrink: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.fp-ttl { min-width: 0; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.fp-t.done .fp-ttl, .fp-t.paused .fp-ttl, .fp-t.cancelled .fp-ttl { color: var(--fg2); }
+.fp-t.cancelled .fp-ttl { text-decoration: line-through; }
+.fp-dup { flex-shrink: 0; padding: 0 4px; border-radius: 3px; background: var(--warn-bg); color: var(--warn-fg); font-size: 11px; }
+.fp-tmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; margin-top: 4px; }
+.fp-pill { padding: 0 7px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; line-height: 17px; white-space: nowrap; color: var(--fg2); }
+.fp-pill.done { background: var(--ok-bg); color: var(--ok-fg); border-color: transparent; }
+.fp-pill.doing { background: var(--sel); color: var(--accent); border-color: var(--accent-bd); }
+.fp-pill.waiting { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); font-weight: 600; }
+.fp-pill.todo { border-style: dashed; }
+.fp-pill.paused, .fp-pill.cancelled, .fp-pill.unknown { color: var(--muted); border-style: dashed; }
+/* 依赖：前置 T 已完成为绿，未完成为黄，路线图里找不到为灰虚线 */
+.fp-dep { padding: 0 6px; border: 1px solid var(--warn-bd); border-radius: 9px; background: transparent; color: var(--warn-fg); font-family: inherit; font-size: 11px; line-height: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fp-dep.done { border-color: color-mix(in srgb, var(--ok-fg) 50%, transparent); color: var(--ok-fg); }
+.fp-dep.unknown, .fp-dep.cancelled { border-color: var(--border); border-style: dashed; color: var(--muted); }
+.fp-dep:hover { background: var(--hover); }
+.fp-date { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fp-fold { padding: 0 4px; border: 0; background: transparent; color: var(--fg2); font-family: inherit; font-size: 11px; line-height: 17px; white-space: nowrap; }
+.fp-fold:hover { color: var(--accent); }
+
+/* 子 T：T 下方虚线引出 */
+.fp-subs { margin: 5px 0 0 2px; padding-left: 9px; border-left: 1px dashed var(--border); }
+.fp-snode { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: baseline; width: 100%; padding: 3px 4px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; font-size: 11.5px; text-align: left; }
+.fp-snode:hover { background: var(--hover); }
+.fp-sid { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fp-sttl { overflow-wrap: anywhere; line-height: 1.45; }
+.fp-sst { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.fp-s.done .fp-sst { color: var(--ok-fg); }
+.fp-s.doing .fp-sst { color: var(--accent); }
+.fp-s.waiting .fp-sst { color: var(--warn-fg); font-weight: 600; }
+.fp-s.done .fp-sttl, .fp-s.cancelled .fp-sttl { color: var(--fg2); }
+.fp-s.cancelled .fp-sttl { text-decoration: line-through; }
+
+/* 悬停 T：高亮前置与后续，其余变淡；文字标注不只靠颜色区分 */
+#feat-progress.fp-focus .fp-t { opacity: .4; }
+#feat-progress.fp-focus .fp-t.hi-self, #feat-progress.fp-focus .fp-t.hi-dep, #feat-progress.fp-focus .fp-t.hi-of { opacity: 1; }
+.fp-t.hi-self { background: var(--hover); }
+.fp-t.hi-dep { background: color-mix(in srgb, var(--warn-bg) 70%, transparent); }
+.fp-t.hi-of { background: var(--sel); }
+.fp-t.hi-dep > .fp-tnode .fp-tid::after, .fp-t.hi-of > .fp-tnode .fp-tid::after { margin-left: 4px; padding: 0 4px; border-radius: 3px; font-size: 10px; font-weight: 500; vertical-align: 1px; }
+.fp-t.hi-dep > .fp-tnode .fp-tid::after { content: "前置"; color: var(--warn-fg); border: 1px solid var(--warn-bd); }
+.fp-t.hi-of > .fp-tnode .fp-tid::after { content: "后续"; color: var(--accent); border: 1px solid var(--accent-bd); }
+.fp-t.flash { animation: fp-flash 1.2s ease; }
+@keyframes fp-flash { 0%, 40% { box-shadow: inset 0 0 0 2px var(--accent); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
+
+@media (prefers-reduced-motion: reduce) { .fp-bar > i, .fp-t { transition: none; } .fp-t.flash { animation: none; outline: 2px solid var(--accent); } }
+@media (forced-colors: active) { .fp-dot, .fp-t::before { border-color: CanvasText; } .fp-bar > i { background: Highlight; } }

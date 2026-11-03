@@ -1,6 +1,7 @@
 // Feat 档案编辑栏：CodeMirror 6 就地实时预览，实时保存、加锁（与流程图同口径），
 // 并与流程图联动：打开 Feat 时高亮挂了该编号标签的节点，列出关联节点可点击定位；
 // 从节点打开 Feat 时滚动到档案中提及该节点 id 的位置。
+// 右侧栏上为关联节点、下为推进树（progress.js），默认 1:3，可上下拖动分隔条、各自收起。
 // 依赖：ui/vendor/vendor.js（window.Vendor）、app.js 暴露的 window.FlowLink / window.Split。
 'use strict';
 
@@ -255,7 +256,7 @@ window.FeatPane = (() => {
     const app = FlowLink.appOf(st.path);
     if (!app) { box.innerHTML = ''; return; }
     const nodes = await invoke('tagged_nodes', { flowDir: app.flow_dir, tag: st.id });
-    $('feat-node-count').textContent = nodes.length;
+    $('feat-node-count').textContent = $('fs-node-count').textContent = nodes.length;
     if (!nodes.length) {
       box.innerHTML = `<div class="empty mini">还没有节点挂 ${esc(st.id)} 标签。打开流程图选中节点，点底部状态栏「挂到 ${esc(st.id)}」。</div>`;
       return;
@@ -264,9 +265,13 @@ window.FeatPane = (() => {
     for (const n of nodes) (byFile[n.file] = byFile[n.file] || []).push(n);
     box.innerHTML = Object.entries(byFile).map(([file, list]) => `
       <div class="nf"><div class="nf-name">${esc(file.split(/[\\/]/).pop().replace(/\.drawio$/i, ''))}</div>
-      ${list.map((n) => `<div class="nn" data-file="${esc(file)}" data-id="${esc(n.id)}">
+      ${list.map((n) => {
+        const extra = n.tags.filter((t) => t !== st.id);
+        const detail = [n.id, n.label || n.id, extra.length ? '其他标签：' + extra.join('、') : ''].filter(Boolean).join('\n');
+        return `<div class="nn" data-file="${esc(file)}" data-id="${esc(n.id)}" title="${esc(detail).replace(/\n/g, '&#10;')}">
         <span class="sw s-${n.status}"></span><div class="nn-content"><span class="nn-id">${esc(n.id)}</span><span class="nn-label">${esc(n.label || n.id)}</span>
-        <span class="nn-tags">${n.tags.filter((t) => t !== st.id).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span></div></div>`).join('')}
+        <span class="nn-tags">${extra.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span></div></div>`;
+      }).join('')}
       </div>`).join('');
   }
 
@@ -282,7 +287,7 @@ window.FeatPane = (() => {
     view.dispatch({ selection: { anchor: m.index, head: m.index + m[0].length }, scrollIntoView: true });
   }
 
-  /** 定位到源文件第 line 行（1 起，推进矩阵点阶段 / T 时传入），行首置于视口顶部。 */
+  /** 定位到源文件第 line 行（1 起，推进树点阶段 / T / 子 T 时传入），行首置于视口顶部。 */
   function revealLine(line) {
     const pos = view.state.doc.line(Math.min(line, view.state.doc.lines)).from;
     view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 8 }) });
@@ -302,11 +307,11 @@ window.FeatPane = (() => {
       view.dispatch({ effects: lockSlot.reconfigure([EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
       setState('');
       await reload(true);
-      document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === path));
       await checkLock();
       renderBar();
       FlowLink.setFeat(st.id, st.path);
     }
+    FeatProgress.show(st.path);
     await renderNodes();
     if (opts.node) revealNode(opts.node);
     else if (opts.line) revealLine(opts.line);
@@ -334,14 +339,12 @@ window.FeatPane = (() => {
   async function close() {
     await flush();
     await release();
+    Sidebar.deselect(st.path);
     st.path = null;
     st.id = '';
+    FeatProgress.show('');
     Split.hide('feat');
-    // 矩阵仍在查看该 Feat 时，关闭正文只收起文档，保留矩阵选中项和流程图高亮。
-    if (!Split.isOpen('mx')) {
-      FlowLink.setFeat('', '');
-      document.querySelectorAll('.feat.active').forEach((e) => e.classList.remove('active'));
-    }
+    FlowLink.setFeat('', '');
   }
 
   /** 锁巡检：Agent 加锁转只读，释放后恢复。 */
@@ -365,22 +368,66 @@ window.FeatPane = (() => {
   /** 流程图变化可能改变节点标签与颜色：刷新关联节点列表。 */
   listen('flow-changed', () => { if (st.path) setTimeout(renderNodes, 500); });
 
+  // ---------------- 右侧栏：关联节点（上）+ 推进（下） ----------------
+
   const nodesBody = $('feat-body');
-  const nodesToggle = $('btn-feat-nodes');
   const nodesResize = $('feat-nodes-resize');
-  let nodesExpanded = localStorage.getItem('fc-feat-nodes-open') !== 'false';
-  let narrowNodesOpen = false;
+  const sideSplit = $('fs-split');
+  /** 两个区：工具栏开关按钮、区元素、宽栏展开状态的 localStorage 键。 */
+  const SECS = {
+    nodes: { btn: $('btn-feat-nodes'), sec: $('fs-nodes'), key: 'fc-feat-nodes-open' },
+    prog: { btn: $('btn-feat-prog'), sec: $('fs-prog'), key: 'fc-feat-prog-open' },
+  };
+  /** 宽栏下两区默认都展开并记住；窄栏（浮层）另记一份，不持久化、默认收起。两区都收起时整个右侧栏隐藏。 */
+  const wideOpen = { nodes: localStorage.getItem(SECS.nodes.key) !== 'false', prog: localStorage.getItem(SECS.prog.key) !== 'false' };
+  const narrowOpen = { nodes: false, prog: false };
   let nodesNarrow = false;
   let nodesWidth = Number(localStorage.getItem('fc-feat-nodes-width')) || 280;
+  /** 关联节点区占两区总高的比例，默认 0.25（即 1:3）。 */
+  const SIDE_RATIO = 0.25;
+  let sideRatio = Number(localStorage.getItem('fc-feat-side-ratio')) || SIDE_RATIO;
 
+  /** 按当前宽窄状态刷新两区展开、按钮高亮与分隔条显示。 */
   function updateNodesSide() {
-    const open = nodesNarrow ? narrowNodesOpen : nodesExpanded;
-    nodesBody.classList.toggle('nodes-open', open);
+    const open = nodesNarrow ? narrowOpen : wideOpen;
+    const any = open.nodes || open.prog;
+    nodesBody.classList.toggle('nodes-open', any);
     nodesBody.classList.toggle('nodes-narrow', nodesNarrow);
-    nodesToggle.classList.toggle('on', open);
-    nodesToggle.setAttribute('aria-expanded', String(open));
-    $('feat-side').inert = !open;
+    for (const [k, s] of Object.entries(SECS)) {
+      s.sec.classList.toggle('collapsed', !open[k]);
+      s.btn.classList.toggle('on', open[k]);
+      s.btn.setAttribute('aria-expanded', String(open[k]));
+      s.sec.querySelector('.fs-head').setAttribute('aria-expanded', String(open[k]));
+    }
+    sideSplit.hidden = !(open.nodes && open.prog);
+    $('feat-side').inert = !any;
+    applySideRatio();
   }
+
+  /** 展开 / 收起一个区（工具栏按钮与区头共用）。 */
+  function toggleSec(k) {
+    const open = nodesNarrow ? narrowOpen : wideOpen;
+    open[k] = !open[k];
+    if (!nodesNarrow) localStorage.setItem(SECS[k].key, String(open[k]));
+    updateNodesSide();
+  }
+
+  /**
+   * 两区都展开时按比例分高；只展开一个时该区占满（flex-grow 之和小于 1 时不会占满剩余空间）。
+   */
+  function applySideRatio() {
+    const both = !sideSplit.hidden;
+    SECS.nodes.sec.style.flexGrow = String(both ? sideRatio : 1);
+    SECS.prog.sec.style.flexGrow = String(both ? 1 - sideRatio : 1);
+  }
+
+  /** 设置关联节点区的高度比例（0.1–0.9），推进区取余下部分。 */
+  function setSideRatio(r) {
+    sideRatio = Math.max(0.1, Math.min(0.9, r));
+    sideSplit.setAttribute('aria-valuenow', String(Math.round(sideRatio * 100)));
+    applySideRatio();
+  }
+  setSideRatio(sideRatio);
 
   function setNodesWidth(width) {
     nodesWidth = Math.round(Math.max(220, Math.min(480, width)));
@@ -391,21 +438,41 @@ window.FeatPane = (() => {
   new ResizeObserver(([entry]) => {
     if (!entry.contentRect.width) return;
     const narrow = entry.contentRect.width < 760;
-    if (narrow !== nodesNarrow) narrowNodesOpen = false;
+    if (narrow !== nodesNarrow) narrowOpen.nodes = narrowOpen.prog = false;
     nodesNarrow = narrow;
     updateNodesSide();
   }).observe(nodesBody);
   updateNodesSide();
 
-  nodesToggle.onclick = () => {
-    if (nodesNarrow) narrowNodesOpen = !narrowNodesOpen;
-    else {
-      nodesExpanded = !nodesExpanded;
-      localStorage.setItem('fc-feat-nodes-open', String(nodesExpanded));
-    }
-    updateNodesSide();
+  for (const [k, s] of Object.entries(SECS)) {
+    s.btn.onclick = () => toggleSec(k);
+    s.sec.querySelector('.fs-head').onclick = () => toggleSec(k);
+  }
+  /** 上下分隔条：按两区当前总高换算比例，各区至少 60px；双击恢复 1:3。 */
+  sideSplit.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sideSplit.setPointerCapture(e.pointerId);
+    const a = SECS.nodes.sec.getBoundingClientRect(), b = SECS.prog.sec.getBoundingClientRect();
+    const total = a.height + b.height;
+    const min = Math.min(60, total / 2);
+    sideSplit.onpointermove = (ev) => setSideRatio(Math.max(min, Math.min(total - min, ev.clientY - a.top)) / total);
+    sideSplit.onpointerup = sideSplit.onpointercancel = () => {
+      sideSplit.onpointermove = null;
+      localStorage.setItem('fc-feat-side-ratio', String(sideRatio));
+    };
   };
-  $('fs-head').onclick = () => { nodesToggle.click(); nodesToggle.focus(); };
+  sideSplit.onkeydown = (e) => {
+    if (!['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    setSideRatio(sideRatio + (e.key === 'ArrowUp' ? -0.05 : 0.05));
+    localStorage.setItem('fc-feat-side-ratio', String(sideRatio));
+  };
+  sideSplit.ondblclick = () => {
+    setSideRatio(SIDE_RATIO);
+    localStorage.setItem('fc-feat-side-ratio', String(SIDE_RATIO));
+  };
+  FeatProgress.bind(revealLine);
   nodesResize.onpointerdown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -466,9 +533,17 @@ window.FeatPane = (() => {
   });
   window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.path }); });
 
+  /** 视口顶部所在的源文件行号（1 起）；转到另一窗口打开时据此恢复阅读位置，未打开档案时为 0。 */
+  function topLine() {
+    if (!st.path) return 0;
+    const block = view.lineBlockAtHeight(view.scrollDOM.getBoundingClientRect().top - view.documentTop);
+    return view.state.doc.lineAt(block.from).number;
+  }
+
   return {
     open,
     close,
+    topLine,
     curPath: () => st.path,
     curId: () => st.id,
     flush,

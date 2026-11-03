@@ -9,6 +9,8 @@ window.Settings = (() => {
   /** 内容更新偏好与主题一样保存在本机 localStorage，各窗口共享，未设置时默认开启。 */
   const keepFlowView = () => localStorage.getItem('fc-keep-flow-view') !== '0';
   const keepFeatPosition = () => localStorage.getItem('fc-keep-feat-position') !== '0';
+  /** 链接另开页签默认关闭，各窗口共享本机偏好。 */
+  const linksNewTab = () => localStorage.getItem('fc-links-new-tab') === '1';
 
   /** 字节显示使用二进制单位，零明确显示为 0 B。 */
   function bytes(value) {
@@ -118,6 +120,7 @@ window.Settings = (() => {
     $('settings-auto-top').checked = Sidebar.autoTop();
     $('settings-keep-flow-view').checked = keepFlowView();
     $('settings-keep-feat-position').checked = keepFeatPosition();
+    $('settings-links-new-tab').checked = linksNewTab();
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -155,6 +158,10 @@ window.Settings = (() => {
         $('settings-msg').textContent = '内容更新设置已保存';
       };
     }
+    $('settings-links-new-tab').onchange = (e) => {
+      localStorage.setItem('fc-links-new-tab', e.currentTarget.checked ? '1' : '0');
+      $('settings-msg').textContent = '链接打开方式已保存';
+    };
     $('settings-project-save').onclick = (e) => act(e.currentTarget, async () => {
       const roots = $('roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       const cfg = await invoke('set_roots', { roots });
@@ -184,5 +191,5 @@ window.Settings = (() => {
     });
   }
 
-  return { init, keepFlowView, keepFeatPosition };
+  return { init, keepFlowView, keepFeatPosition, linksNewTab };
 })();

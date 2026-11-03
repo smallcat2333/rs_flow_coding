@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="settings.css">
   <link rel="stylesheet" href="guide.css">
-  <link rel="stylesheet" href="matrix.css">
+  <link rel="stylesheet" href="progress.css">
 </head>
 <body>
   <aside id="side">
@@ -54,6 +54,8 @@
   <div id="side-splitter" title="拖动调整侧栏宽度，双击恢复默认"></div>
 
   <main id="main">
+    <!-- 页签：每个页签记一张图和 / 或一个 Feat，见 tabs.js；独立窗口不显示 -->
+    <div id="tabbar" class="no-solo" role="tablist" aria-label="页签" hidden></div>
     <div id="panes">
       <!-- 流程图栏 -->
       <section id="flow-pane" class="pane">
@@ -71,11 +73,14 @@
           <button id="btn-flow-full" class="icon-button" title="全屏显示流程图（Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
           <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
           <button id="btn-flow-pop" class="no-solo" title="在独立窗口打开流程图" disabled>⧉</button>
+          <button id="btn-flow-tab" class="icon-button no-solo" title="拆分流程图到独立页签" aria-label="流程图在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
           <button id="btn-flow-close" class="no-solo" title="关闭流程图栏">×</button>
+          <button id="btn-flow-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这张图">回到主窗口</button>
         </div>
+        <!-- 只读提示条：Agent 持锁时显示在画布上方，不遮挡画布，仍可缩放、滚动查看 -->
+        <div id="readonly-mask" class="ro-strip" role="status" hidden>Agent 正在编辑，暂时只读，可缩放、滚动查看<small id="mask-detail"></small></div>
         <div id="editor-wrap">
           <iframe id="editor" title="draw.io" allow="clipboard-write"></iframe>
-          <div id="readonly-mask" hidden><div>Agent 正在编辑，暂时只读<br><small id="mask-detail"></small></div></div>
           <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
         </div>
         <!-- 底部常驻状态栏：选中节点信息与挂/摘 Feat，固定高度，不挤压编辑区 -->
@@ -89,7 +94,6 @@
       </section>
 
       <div id="split-a" class="splitter" hidden title="拖动调整大小，双击等分"></div>
-      <div id="split-b" class="splitter" hidden title="拖动调整大小，双击等分"></div>
 
       <!-- Feat 栏 -->
       <section id="feat-pane" class="pane" hidden>
@@ -102,40 +106,35 @@
           <span class="spacer"></span>
           <button id="btn-ref" title="把流程图中选中的节点插入为引用（图名#节点id）">插入节点引用</button>
           <button id="btn-toc" title="显示 / 隐藏标题大纲">大纲</button>
-          <button id="btn-feat-nodes" title="显示 / 隐藏关联节点" aria-controls="feat-side" aria-expanded="true">关联节点 · <b id="feat-node-count">0</b></button>
-          <button id="btn-feat-mx" class="no-solo" title="打开推进矩阵并定位到本 Feat">推进</button>
+          <button id="btn-feat-nodes" title="显示 / 隐藏关联节点" aria-controls="fs-nodes" aria-expanded="true">关联节点 · <b id="feat-node-count">0</b></button>
+          <button id="btn-feat-prog" title="显示 / 隐藏本 Feat 的推进树" aria-controls="fs-prog" aria-expanded="true">推进</button>
           <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
           <button id="btn-feat-pop" class="no-solo" title="在独立窗口打开 Feat">⧉</button>
+          <button id="btn-feat-tab" class="icon-button no-solo" title="拆分 Feat 到独立页签" aria-label="Feat 在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
           <button id="btn-feat-close" class="no-solo" title="关闭 Feat 栏">×</button>
+          <button id="btn-feat-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这个档案（保持阅读位置）">回到主窗口</button>
         </div>
+        <!-- 只读提示条：Agent 持锁时显示在正文上方，不遮挡正文，仍可滚动、选中复制 -->
+        <div id="md-mask" class="ro-strip" role="status" hidden>Agent 正在编辑档案，暂时只读，可滚动、选中复制</div>
         <div id="feat-body">
           <div id="md-body">
             <nav id="md-toc" aria-label="标题大纲"></nav>
             <div id="md-editor"></div>
-            <div id="md-mask" hidden><div>Agent 正在编辑档案，暂时只读</div></div>
           </div>
-          <div id="feat-nodes-resize" role="separator" tabindex="0" aria-label="调整关联节点栏宽度" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="480" aria-valuenow="280"></div>
-          <aside id="feat-side" aria-label="关联节点">
-            <button class="fs-head" id="fs-head" title="收起关联节点栏">关联节点 <span aria-hidden="true">›</span></button>
-            <div id="feat-nodes"></div>
+          <div id="feat-nodes-resize" role="separator" tabindex="0" aria-label="调整右侧栏宽度" aria-orientation="vertical" aria-valuemin="220" aria-valuemax="480" aria-valuenow="280"></div>
+          <!-- 右侧栏：上为关联节点，下为推进树，默认 1:3，中间分隔条可上下拖动 -->
+          <aside id="feat-side" aria-label="关联节点与推进">
+            <section id="fs-nodes" class="fs-sec">
+              <button class="fs-head" aria-controls="feat-nodes" aria-expanded="true" title="收起 / 展开关联节点"><span>关联节点</span><b id="fs-node-count"></b><span class="fs-chev" aria-hidden="true">▾</span></button>
+              <div id="feat-nodes"></div>
+            </section>
+            <div id="fs-split" role="separator" tabindex="0" aria-label="调整关联节点与推进的高度比例" aria-orientation="horizontal" aria-valuemin="10" aria-valuemax="90" aria-valuenow="25" title="拖动调整高度，双击恢复 1:3"></div>
+            <section id="fs-prog" class="fs-sec">
+              <button class="fs-head" aria-controls="feat-progress" aria-expanded="true" title="收起 / 展开推进"><span>推进</span><span id="fp-sum"></span><span class="fs-chev" aria-hidden="true">▾</span></button>
+              <div id="feat-progress"></div>
+            </section>
           </aside>
         </div>
-        <div class="pane-grip" title="拖动调整悬浮栏大小" aria-hidden="true"></div>
-      </section>
-
-      <!-- 推进矩阵栏 -->
-      <section id="mx-pane" class="pane" hidden aria-label="Feat 推进矩阵">
-        <div class="pane-bar">
-          <b class="mx-head">推进矩阵</b>
-          <select id="mx-app" aria-label="APP"></select>
-          <select id="mx-all" aria-label="显示范围"><option value="open">开启中</option><option value="all">全部</option></select>
-          <span id="mx-sum"></span>
-          <span id="mx-msg" class="mx-err"></span>
-          <span class="spacer"></span>
-          <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
-          <button id="btn-mx-close" class="no-solo" title="关闭推进矩阵">×</button>
-        </div>
-        <div id="mx-body"></div>
         <div class="pane-grip" title="拖动调整悬浮栏大小" aria-hidden="true"></div>
       </section>
     </div>
@@ -169,6 +168,7 @@
           <ul role="group">
             <li role="treeitem" data-settings-tab="appearance" aria-selected="true" tabindex="0"><span class="settings-node">外观</span></li>
             <li role="treeitem" data-settings-tab="sidebar" aria-selected="false" tabindex="-1"><span class="settings-node">侧栏</span></li>
+            <li role="treeitem" data-settings-tab="links" aria-selected="false" tabindex="-1"><span class="settings-node">链接与页签</span></li>
             <li role="treeitem" data-settings-tab="updates" aria-selected="false" tabindex="-1"><span class="settings-node">内容更新</span></li>
           </ul>
         </li>
@@ -192,6 +192,10 @@
         <section data-settings-panel="sidebar" aria-label="侧栏" hidden>
           <h3>侧栏</h3><p>分组和 APP 可在侧栏中上下拖动排序，双击名称修改显示名。</p>
           <div class="settings-well"><label class="settings-check"><input id="settings-auto-top" type="checkbox">更新自动置顶</label><p>Agent 或外部改动流程图、Feat 时，条目移到所在列表最上，所属 APP 和分组也移到最上，并以淡蓝底色标记，点开后标记消失。在 App 内自己编辑不触发。</p></div>
+        </section>
+        <section data-settings-panel="links" aria-label="链接与页签" hidden>
+          <h3>链接与页签</h3>
+          <div class="settings-well"><label class="settings-check"><input id="settings-links-new-tab" type="checkbox">链接在独立页签打开</label><p>默认关闭。开启后，点击节点右上角的 Feat 书签或图间链接标记，在新页签打开目标并定位，保留来源页签。</p></div>
         </section>
         <section data-settings-panel="updates" aria-label="内容更新" hidden>
           <h3>内容更新</h3><p>Agent 或外部修改当前文件时，控制同步后的显示位置。</p>
@@ -246,6 +250,7 @@
             <li>左侧按 APP 列出 <code>docs/flow</code> 下的流程图（Chart）和 <code>docs/feat</code> 下的 Feat 档案。</li>
             <li>点一张图在右侧打开。所有改动立即写盘，没有「保存」按钮。</li>
           </ol>
+          <p>在左侧 APP 或分组标题上右键，可「复制路径」「复制名称」或「移除目录」。复制名称取磁盘目录原名；移除前会再次确认，只从 Flow Coding 列表排除，保留磁盘文件，重新扫描也不会自动恢复。恢复时在设置的「项目目录」中添加被移除目录的完整路径，再保存并扫描。</p>
           <figure><img src="guide/shot_flow.png" alt="左侧为 APP 树和状态统计，右侧为内嵌的 draw.io 编辑器"><figcaption>左侧树与状态统计，右侧直接编辑流程图。</figcaption></figure>
         </section>
         <section id="guide-colors">
@@ -282,6 +287,25 @@
           <p>选中节点，点底部状态栏「挂到 Feat_xxx」把节点关联到当前 Feat。挂了 Feat 的节点右上角显示蓝色书签，点书签打开档案，并与流程图左右分栏显示。</p>
           <figure><img src="guide/shot_feat.png" alt="流程图与 Feat 档案左右分栏，档案顶部列出关联节点"><figcaption>档案顶部列出关联节点，点击即可在图中定位。</figcaption></figure>
           <p>档案里用 <code>图名.drawio#节点id</code> 引用节点，预览中可点击跳转；「插入节点引用」把当前选中节点插入光标处。</p>
+          <h4>左侧 Feat 状态标签</h4>
+          <p>Feat 名称旁显示简短状态标签，第二行保留档案中的原始状态说明和任务进度。名称过长时省略，状态标签保持单行完整显示。</p>
+          <table class="guide-states">
+            <thead><tr><th>标签</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td>探讨中</td><td>正在讨论目标与方案。</td></tr>
+              <tr><td>需求中</td><td>正在整理需求与验收标准。</td></tr>
+              <tr><td>UI设计</td><td>正在设计界面。</td></tr>
+              <tr><td>开发中</td><td>正在开发或部分功能已接入。</td></tr>
+              <tr><td>待测试</td><td>档案明确标记开发完成，等待测试。</td></tr>
+              <tr><td>测试中</td><td>正在执行测试。</td></tr>
+              <tr><td>待验收</td><td>档案标记测试完成，或等待用户确认、验收。</td></tr>
+              <tr><td>已暂停</td><td>暂时停止推进。</td></tr>
+              <tr><td>已关闭 / 已废弃</td><td>已正式收口或放弃需求，归入收纳区。</td></tr>
+              <tr><td>待明确</td><td>档案未注明状态，或状态文字无法明确判断。</td></tr>
+            </tbody>
+          </table>
+          <p><strong>注意：</strong>标签按档案「状态」开头的文字归纳，不会因为说明里出现「验证通过」「待验收」就自动切换阶段。例如「开发已接入，程序 / FAB 验证通过，待 LR 协议及现场定位验收」仍显示「开发中」。</p>
+          <p>节点颜色与数量表示关联流程图的实现情况；「可关闭」仅表示关联节点全部已实现，不代表任务、测试和人工验收全部完成。关闭 Feat 前仍需核对档案与验收结果，并通过关闭流程正式收口。</p>
         </section>
         <section id="guide-link">
           <h3>图间链接</h3>
@@ -315,11 +339,12 @@ flowctl unlock &lt;文件&gt;</pre>
   <script src="menu_icons.js"></script>
   <script src="sidebar.js"></script>
   <script src="layout.js"></script>
+  <script src="tabs.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="live_markdown.js"></script>
+  <script src="progress.js"></script>
   <script src="feat.js"></script>
-  <script src="matrix.js"></script>
   <script src="rename.js"></script>
   <script src="guide.js"></script>
 </body>

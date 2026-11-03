@@ -12,7 +12,7 @@
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
   const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
-  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], layout: 'tree', ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
+  const config = { roots: ['(mock)'], flow_dirs: [], excluded_dirs: JSON.parse(localStorage.getItem('fc-mock-excluded') || '[]'), sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], layout: 'tree', ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
@@ -153,7 +153,16 @@
   const api = {
     async get_config() { return config; },
     async feat_progress() { return Object.keys(mds).sort().reverse().map(progress); },
-    async set_roots({ roots }) { config.roots = roots; return config; },
+    async set_roots({ roots }) {
+      config.roots = roots;
+      config.excluded_dirs = config.excluded_dirs.filter((d) => !roots.includes(d));
+      localStorage.setItem('fc-mock-excluded', JSON.stringify(config.excluded_dirs));
+      return config;
+    },
+    async remove_directory({ path }) {
+      if (!config.excluded_dirs.includes(path)) config.excluded_dirs.push(path);
+      localStorage.setItem('fc-mock-excluded', JSON.stringify(config.excluded_dirs));
+    },
     async save_sidebar({ sidebar }) { config.sidebar = sidebar; localStorage.setItem('fc-mock-sidebar', JSON.stringify(sidebar)); },
     async set_chart_enabled({ path, enabled }) {
       if (agentLock) throw 'LOCKED:agent 正在编辑';
@@ -197,7 +206,7 @@
       const feats = Object.keys(mds).sort().reverse().map(featEntry);
       // 另附两个空 APP（同一分组），用于预览分组/APP 拖动排序与分组别名。
       const empty = (app) => ({ group: 'group_tools', app, root: '', flow_dir: `/mock/group_tools/${app}/docs/flow`, feat_dir: `/mock/group_tools/${app}/docs/feat`, files: [], feats: [], counts: counts('') });
-      return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }, empty('app_demo_a'), empty('app_demo_b')];
+      return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }, empty('app_demo_a'), empty('app_demo_b')].filter((a) => !config.excluded_dirs.some((d) => a.flow_dir === d || a.flow_dir.startsWith(d + '/')));
     },
     /** 浏览器预览中模拟同目录重命名；真实锁、引用和历史一致性由 Rust 测试覆盖。 */
     async rename_entry({ path, name }) {

@@ -1,5 +1,6 @@
 // Flow Coding 前端：APP 树（流程图 + Feat）+ 状态统计 + draw.io 嵌入编辑（实时保存、加锁）+ 历史对比
-// + 节点与 Feat 联动（Feat 档案编辑见 feat.js，通过 window.FeatPane / window.FlowLink 互调）。
+// + 节点与 Feat 联动（Feat 档案编辑见 feat.js，通过 window.FeatPane / window.FlowLink 互调）
+// + 主窗口页签（tabs.js，经 tabApi 打开 / 关闭页签内容）。
 // 与 Rust 通信：window.__TAURI__.core.invoke；文件变化：flow-changed / md-changed 事件。
 'use strict';
 
@@ -9,8 +10,15 @@ const { listen, emit } = window.__TAURI__.event;
 /** 窗口角色：'' 主窗口；'flow' / 'feat' 为弹出的独立窗口（只显示该栏）。 */
 const PARAMS = new URLSearchParams(location.search);
 const SOLO = PARAMS.get('solo') || '';
-/** 主窗口：某栏已弹到独立窗口时为 true，该类文件改由弹出窗口打开。 */
-const popped = { flow: false, feat: false };
+/** 本机记住的打开方式（localStorage）：值为 '1' 表示该类文件上次在独立窗口打开，下次启动仍弹出。 */
+const POP_KEY = { flow: 'fc-pop-flow', feat: 'fc-pop-feat' };
+/** 主窗口：某栏已弹到独立窗口时为 true，该类文件改由弹出窗口打开；启动时按记住的打开方式初始化。 */
+const popped = {
+  flow: !SOLO && localStorage.getItem(POP_KEY.flow) === '1',
+  feat: !SOLO && localStorage.getItem(POP_KEY.feat) === '1',
+};
+/** 主窗口：独立窗口点「回到主窗口」后待其关闭再在主窗口打开的文件，按类别存 { path, node, line }。 */
+const docking = {};
 /** 主窗口退出时，等待已弹出的窗口保存并关闭。 */
 const closingPopouts = {};
 /** 当前打开的 Feat（可能在另一个窗口里），由 ui-cur-feat 事件在窗口间同步。 */
@@ -137,13 +145,13 @@ async function refresh(full = false) {
   }
   renderTree();
   renderCurrentBar();
-  if (!SOLO) MatrixPane.refreshed();
   return true;
 }
 
 /** 重绘侧栏与顶部合计；生命周期、收纳和本机偏好由 Sidebar 统一维护。 */
 function renderTree() {
   Sidebar.render(st.apps, st.cur, curFeat.path);
+  if (!SOLO) Tabs.render();
 }
 
 /** 当前图在汇总中的条目。 */
@@ -222,10 +230,14 @@ $('tree').addEventListener('click', async (ev) => {
     } catch (e) { sideMsg(String(e)); }
     return;
   }
-  const file = ev.target.closest('.file');
-  if (file) return routeDiagram(file.dataset.path);
-  const feat = ev.target.closest('.feat');
-  if (feat) return routeFeat(feat.dataset.feat);
+  // 已打开内容优先跳转到已有页签；Ctrl+点击只为尚未打开的内容新建页签。
+  const file = ev.target.closest('.file'), feat = ev.target.closest('.feat');
+  if (file || feat) {
+    const kind = file ? 'flow' : 'feat', path = file ? file.dataset.path : feat.dataset.feat;
+    if (!SOLO && await Tabs.reveal(kind, path)) { Sidebar.select(path); return; }
+    if (ev.ctrlKey && !SOLO) return Tabs.openNew(kind, path);
+    return file ? routeDiagram(path) : routeFeat(path);
+  }
   const head = ev.target.closest('.app-head, .sec-head');
   if (head) head.parentElement.classList.toggle('collapsed');
 });
@@ -272,15 +284,14 @@ async function openDiagram(path) {
   if (path === st.cur) return;
   await releaseNow();
   st.cur = path;
+  if (!SOLO) Tabs.note('flow', path);
   st.pendingXml = null;
   st.loaded = false;
   selCells = [];
   renderNodeBar();
   $('empty').hidden = true;
   Split.show('flow');
-  if (!SOLO) MatrixPane.followFlow(path);
   saveState('');
-  document.querySelectorAll('.file').forEach((f) => f.classList.toggle('active', f.dataset.path === path));
   renderCurrentBar();
   ensureEditor();
   if (st.ready) await pushFromDisk(true);
@@ -346,10 +357,11 @@ async function checkLock() {
   } else if (st.readOnly) await leaveReadOnly();
 }
 
-/** 进入只读：遮罩挡住编辑器交互（轮询由常驻锁巡检负责）。 */
+/** 进入只读：编辑器禁用编辑但仍可缩放、滚动查看，画布上方显示提示条（轮询由常驻锁巡检负责）。 */
 async function enterReadOnly(l) {
   l = l || await invoke('lock_status', { path: st.cur });
   st.readOnly = true;
+  if (st.ready) post({ action: 'fc-readonly', on: true });
   $('readonly-mask').hidden = false;
   $('mask-detail').textContent = l ? `pid ${l.pid}，开始于 ${new Date(l.since * 1000).toLocaleTimeString()}` : '';
   renderCurrentBar();
@@ -358,6 +370,7 @@ async function enterReadOnly(l) {
 /** 退出只读：重新载入磁盘最新内容。 */
 async function leaveReadOnly() {
   st.readOnly = false;
+  if (st.ready) post({ action: 'fc-readonly', on: false });
   $('readonly-mask').hidden = true;
   renderCurrentBar();
   if (st.ready && st.cur) await pushFromDisk(false);
@@ -402,6 +415,7 @@ window.addEventListener('message', (ev) => {
       st.ready = true;
       post({ action: 'fc-theme', dark: isDark() });
       post({ action: 'fc-ids', show: showIds() });
+      post({ action: 'fc-readonly', on: st.readOnly });
       syncMenuFeats();
       if (st.cur) pushFromDisk(true);
       break;
@@ -470,7 +484,7 @@ function openNodeFeat(cell) {
     const elsewhere = st.apps.filter((a) => a !== app).flatMap((a) => a.feats.filter((f) => missing.includes(f.id))
       .map((f) => ({ ...f, foreign: true, owner: a.app })));
     pickFeat([...feats, ...elsewhere], cell, `本 APP（${app.app}）找不到：${missing.join('、')}。可解除缺失档案的关联；其他 APP 的同号档案仅供查看，不会建立跨 APP 关联。`, missing);
-  } else if (feats.length === 1) routeFeat(feats[0].path, cell.id);
+  } else if (feats.length === 1) openLinked('feat', feats[0].path, cell.id);
   else if (feats.length > 1) pickFeat(feats, cell);
 }
 
@@ -486,7 +500,7 @@ function pickFeat(feats, cell, notice = '', missing = []) {
   const close = (path) => {
     document.removeEventListener('keydown', onKey, true);
     wrap.remove();
-    if (path) routeFeat(path, feats.find((f) => f.path === path).foreign ? undefined : cell.id);
+    if (path) openLinked('feat', path, feats.find((f) => f.path === path).foreign ? undefined : cell.id);
   };
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   document.addEventListener('keydown', onKey, true);
@@ -633,12 +647,10 @@ $('node-find').addEventListener('keydown', (ev) => {
   } catch (error) { saveState(error.message, true); }
 });
 
-/** 按当前 Feat 刷新高亮（仅同 APP）、状态栏与树中选中项。 */
+/** 按当前 Feat 刷新图中节点高亮（仅同 APP）与状态栏；侧栏选中由主动打开操作维护。 */
 function applyFeat() {
   if (st.ready && st.cur) post({ action: 'fc-highlight', tag: sameApp() ? curFeat.id : '' });
   renderNodeBar();
-  document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === curFeat.path));
-  if (!SOLO) MatrixPane.follow(curFeat.path);
 }
 
 /**
@@ -646,6 +658,7 @@ function applyFeat() {
  * （独立窗口发 ui-route 给主窗口；主窗口在流程图已弹出时转给弹出窗口）。
  */
 async function routeDiagram(path, node, options = {}) {
+  Sidebar.select(path);
   if (ownsFlow()) {
     if (flowNavigating) return;
     const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
@@ -656,7 +669,8 @@ async function routeDiagram(path, node, options = {}) {
       // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
       while (st.saving || st.pendingXml != null) await new Promise((resolve) => setTimeout(resolve, 20));
       await invoke('read_diagram', { path }); // 读取失败时保留当前图与回退栈。
-      if (from && changed && !options.back) flowBack.push(from);
+      // 切页签打开的图不进回退栈（回退栈在切页签时清空，只记同一页签内的跳转）。
+      if (from && changed && !options.back && !options.tab) flowBack.push(from);
       if (options.back) flowBack.pop();
       if (path !== st.cur || !st.loaded) {
         st.pendingSelect = node || '';
@@ -676,13 +690,25 @@ async function routeDiagram(path, node, options = {}) {
   else await invoke('open_popout', { kind: 'flow', path, node: node || null });
 }
 
+/** 右上角挂载标记：根据本机偏好另开页签，普通打开与侧栏点击保持原行为。 */
+function openLinked(kind, path, node) {
+  if (Settings.linksNewTab()) {
+    if (SOLO) return emit('ui-route', { kind, path, node: node || '', newTab: true });
+    return Tabs.openNew(kind, path, { node });
+  }
+  return kind === 'flow' ? routeDiagram(path, node, { fromNode: selCells[0]?.id }) : routeFeat(path, node);
+}
+
 /** 按当前图解析链接；目标不存在时留在原图，错误显示在保存状态栏。 */
 async function followFlowLink(link, cell) {
   if (!st.cur || flowNavigating) return;
   const source = st.cur;
   try {
     const target = await invoke('resolve_flow_link', { source, link });
-    if (st.cur === source) await routeDiagram(target.path, target.node, { fromNode: cell });
+    if (st.cur === source) {
+      if (Settings.linksNewTab()) await openLinked('flow', target.path, target.node);
+      else await routeDiagram(target.path, target.node, { fromNode: cell });
+    }
   } catch (error) { saveState('图链接无法打开：' + error, true); }
 }
 
@@ -703,6 +729,7 @@ let featRoute = Promise.resolve();
 
 /** 打开 Feat 档案并可选定位节点引用或源文件行号（line，1 起；0 为不定位）：路由规则同 routeDiagram。 */
 async function routeFeat(path, node, line = 0) {
+  Sidebar.select(path);
   if (ownsFeat()) {
     featRoute = featRoute.catch(() => {}).then(() => FeatPane.open(path, { node, line }));
     return featRoute;
@@ -711,11 +738,42 @@ async function routeFeat(path, node, line = 0) {
   else await invoke('open_popout', { kind: 'feat', path, node: node || null, line: line || null });
 }
 
+/** 页签接口（tabs.js）：在主窗口打开 / 关闭页签里的图与档案；已弹到独立窗口的一类照常转给独立窗口。
+ *  切页签时清空图导航回退栈，回退只在同一页签内有效。 */
+const tabApi = {
+  async openFlow(path, node = '') {
+    while (flowNavigating) await new Promise((resolve) => setTimeout(resolve, 20));
+    flowBack.length = 0;
+    await routeDiagram(path, node, { tab: true });
+  },
+  openFeat: (path, node, line = 0) => routeFeat(path, node, line),
+  async closeFlow() {
+    flowBack.length = 0;
+    if (st.cur) await closeFlow();
+  },
+  /** 排在 Feat 打开队列之后关闭，避免和正在载入的档案交错。 */
+  closeFeat() {
+    featRoute = featRoute.catch(() => {}).then(() => FeatPane.curPath() && FeatPane.close());
+    return featRoute;
+  },
+  /** 文件是否还在汇总里（恢复页签时剔除已删除或移出项目的文件）。 */
+  exists: (kind, path) => !!appOf(path)?.[kind === 'flow' ? 'files' : 'feats'].some((x) => x.path === path),
+  /** 页签显示名：图取文件名，Feat 取标题（无标题用编号）；汇总里找不到时退回文件名。 */
+  label(kind, path) {
+    const list = appOf(path)?.[kind === 'flow' ? 'files' : 'feats'] || [];
+    const f = list.find((x) => x.path === path);
+    const file = path.split(/[\\/]/).pop();
+    if (kind === 'flow') return (f ? f.name : file).replace(/\.drawio$/i, '');
+    return f ? f.title || f.id : file.replace(/\.md$/i, '');
+  },
+};
+
 /** 供 FeatPane 调用的流程图侧接口。 */
 window.FlowLink = {
   /** 当前 Feat 变化（打开 / 关闭）：本窗口立即生效并广播给其他窗口。 */
   setFeat(id, path) {
     curFeat = { id: id || '', path: path || '' };
+    if (!SOLO) Tabs.note('feat', curFeat.path);
     applyFeat();
     emit('ui-cur-feat', curFeat);
   },
@@ -724,12 +782,6 @@ window.FlowLink = {
   curFile: () => lastSel.file || st.cur,
   appOf,
   refresh: () => refresh(false),
-  /** 全部 APP 汇总（推进矩阵的 APP 列表与节点计数）。 */
-  apps: () => st.apps,
-  /** 打开 Feat 档案并定位到源文件行（推进矩阵调用）。 */
-  openFeat: (path, line) => routeFeat(path, '', line),
-  /** Feat 档案是否可见：本窗口的 Feat 栏开着，或已弹到独立窗口。 */
-  featVisible: () => !$('feat-pane').hidden || popped.feat,
 };
 window.FlowSel = () => lastSel.cells;
 
@@ -752,17 +804,27 @@ if (!SOLO) {
   });
   /** 主窗口：独立窗口请求打开某类文件时由主窗口路由。 */
   listen('ui-route', (ev) => {
-    const { kind, path, node, line } = ev.payload;
+    const { kind, path, node, line, newTab } = ev.payload;
+    if (newTab) return Tabs.openNew(kind, path, { node, line });
     if (kind === 'flow') routeDiagram(path, node);
     else routeFeat(path, node, line || 0);
   });
-  /** 弹出窗口关闭：该类文件恢复在主窗口打开。 */
+  /** 独立窗口请求回到主窗口：先记下文件与位置，等该窗口保存、释放锁并关闭后再打开（见 popout-closed）。 */
+  listen('ui-dock', (ev) => { docking[ev.payload.kind] = ev.payload; });
+  /** 弹出窗口关闭：该类文件恢复在主窗口打开，并记住打开方式；主窗口退出时关闭的不改记忆。
+   *  若是「回到主窗口」触发的关闭，接着在主窗口打开同一文件。 */
   listen('popout-closed', (ev) => {
     const kind = ev.payload.kind;
     popped[kind] = false;
+    if (!closing) localStorage.removeItem(POP_KEY[kind]);
     if (closingPopouts[kind]) { closingPopouts[kind](); delete closingPopouts[kind]; }
     if (kind === 'flow') { lastSel = { file: null, cells: [] }; $('empty').textContent = EMPTY_TEXT; }
     if (kind === 'feat' && curFeat.path && $('feat-pane').hidden) FlowLink.setFeat('', '');
+    const dock = docking[kind];
+    delete docking[kind];
+    if (!dock || closing || !dock.path) return;
+    if (kind === 'flow') routeDiagram(dock.path, dock.node || '');
+    else routeFeat(dock.path, '', dock.line || 0);
   });
 } else {
   /** 独立窗口：主窗口把新文件转过来。 */
@@ -781,11 +843,23 @@ async function popOut(kind) {
   if (kind === 'flow') await closeFlow('流程图已在独立窗口中打开');
   else await FeatPane.close();
   popped[kind] = true;
-  try { await invoke('open_popout', { kind, path, node: null }); }
+  try { await invoke('open_popout', { kind, path, node: null }); localStorage.setItem(POP_KEY[kind], '1'); }
   catch (e) { popped[kind] = false; sideMsg(String(e)); }
 }
 $('btn-flow-pop').onclick = () => popOut('flow');
 $('btn-feat-pop').onclick = () => popOut('feat');
+$('btn-flow-tab').onclick = () => Tabs.split('flow', { node: selCells[0]?.id });
+$('btn-feat-tab').onclick = () => Tabs.split('feat', { line: FeatPane.topLine() });
+
+/** 独立窗口：回到主窗口。告知主窗口当前文件与位置（图取选中节点，档案取视口顶部行），
+ *  再走正常关闭流程（保存并释放锁）；主窗口收到 popout-closed 后打开。 */
+async function dockBack() {
+  const path = SOLO === 'flow' ? st.cur : FeatPane.curPath();
+  await emit('ui-dock', { kind: SOLO, path: path || '', node: SOLO === 'flow' ? selCells[0]?.id || '' : '', line: SOLO === 'feat' ? FeatPane.topLine() : 0 });
+  currentWindow.close();
+}
+$('btn-flow-dock').onclick = dockBack;
+$('btn-feat-dock').onclick = dockBack;
 
 // ---------------- 文件变化 ----------------
 
@@ -927,11 +1001,14 @@ const EMPTY_TEXT = '从左侧选择一张流程图或一个 Feat';
 async function closeFlow(msg) {
   await releaseNow();
   st.cur = null;
+  if (!SOLO) Tabs.note('flow', '');
+  // 图还在载入时关闭：结束这次导航，否则后续打开图（含切页签）会一直等载入完成。
+  flowNavigating = false;
   st.loaded = false;
   selCells = [];
   $('empty').textContent = msg || EMPTY_TEXT;
   $('empty').hidden = false;
-  if (Split.isOpen('feat') || Split.isOpen('mx')) Split.hide('flow');
+  if (Split.isOpen('feat')) Split.hide('flow');
   renderTree();
   renderCurrentBar();
   renderNodeBar();
@@ -1065,6 +1142,8 @@ currentWindow.onCloseRequested(async (event) => {
     await emit('ui-close-popouts');
     await Promise.all(wait);
   }
+  // 退出时关栏不改页签记录，下次启动照样恢复。
+  if (!SOLO) Tabs.freeze();
   // 只在本窗口确实开着档案时关闭，避免流程图窗口关闭时把其他窗口的当前 Feat 广播清空
   if (FeatPane.curPath()) await FeatPane.close();
   await releaseNow();
@@ -1090,6 +1169,9 @@ window.addEventListener('DOMContentLoaded', async () => {
       else routeFeat(path, node, Number(PARAMS.get('line')) || 0);
     });
   } else {
-    refresh(false).then(() => MatrixPane.init());
+    // 上次流程图在独立窗口打开：本次仍弹出，主窗口提示原因。
+    if (popped.flow) $('empty').textContent = '流程图在独立窗口中打开（独立窗口里点「回到主窗口」可改回）';
+    // 汇总到手后再恢复页签：页签名称取自汇总。
+    refresh(false).then(() => Tabs.init(tabApi));
   }
 }, { once: true });

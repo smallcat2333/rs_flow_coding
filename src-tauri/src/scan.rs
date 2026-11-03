@@ -65,8 +65,24 @@ pub struct Config {
     pub roots: Vec<String>,
     #[serde(default)]
     pub flow_dirs: Vec<String>,
+    /// 从目录列表移除的 APP / 分组；重扫时仍排除，磁盘文件保留。
+    #[serde(default)]
+    pub excluded_dirs: Vec<String>,
     #[serde(default)]
     pub sidebar: SidebarPrefs,
+}
+
+/// 路径边界匹配，避免移除 app_a 时连带排除 app_ab。
+pub fn within(path: &Path, directory: &Path) -> bool {
+    let path = crate::paths::key(path);
+    let directory = crate::paths::key(directory).trim_end_matches('\\').to_string();
+    path == directory || path.starts_with(&(directory + "\\"))
+}
+
+impl Config {
+    pub fn excludes(&self, path: &Path) -> bool {
+        self.excluded_dirs.iter().any(|dir| within(path, Path::new(dir)))
+    }
 }
 
 /// 读取配置；文件不存在返回空配置，内容损坏报错。
@@ -201,6 +217,20 @@ mod tests {
         assert_eq!(restored.layout, "flat");
         assert_eq!(restored.collapsed, ["app"]);
         assert!(restored.include_archived);
+    }
+
+    #[test]
+    fn directory_exclusions_are_boundary_aware_and_persisted() {
+        let mut cfg: Config = serde_json::from_str(r#"{"roots":[]}"#).unwrap();
+        assert!(cfg.excluded_dirs.is_empty());
+        cfg.excluded_dirs = vec!["C:\\project\\group_a\\app_x".into()];
+        assert!(cfg.excludes(Path::new("c:/project/group_a/app_x/docs/flow")));
+        assert!(!cfg.excludes(Path::new("C:/project/group_a/app_xy/docs/flow")));
+        cfg.excluded_dirs = vec!["C:/project/group_a/".into()];
+        assert!(cfg.excludes(Path::new("C:/project/group_a/app_x/docs/flow")));
+        assert!(!cfg.excludes(Path::new("C:/project/group_ab/app_x/docs/flow")));
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(restored.excluded_dirs, cfg.excluded_dirs);
     }
 
     #[test]

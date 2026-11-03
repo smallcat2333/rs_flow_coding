@@ -136,7 +136,7 @@ fn cached_dirs(cfg: &scan::Config) -> Vec<scan::FlowDir> {
     cfg.flow_dirs
         .iter()
         .map(PathBuf::from)
-        .filter(|p| p.parent().is_some_and(Path::is_dir))
+        .filter(|p| p.parent().is_some_and(Path::is_dir) && !cfg.excludes(p))
         .filter_map(|flow| {
             let app_dir = flow.parent()?.parent()?.to_path_buf();
             let (group, app) = scan::app_of(&app_dir);
@@ -249,15 +249,32 @@ fn get_config() -> Result<scan::Config, String> {
 /// 设置项目根目录列表（规范化后保存）；不存在的目录报错。
 #[tauri::command]
 fn set_roots(roots: Vec<String>) -> Result<scan::Config, String> {
-    let roots = roots
+    let roots: Vec<String> = roots
         .iter()
         .filter(|r| !r.trim().is_empty())
         .map(|r| paths::norm(Path::new(r.trim())).map(|p| p.to_string_lossy().into_owned()))
         .collect::<Result<_, _>>()?;
     scan::update_config(|cfg| {
+        cfg.excluded_dirs.retain(|d| !roots.iter().any(|r| paths::key(Path::new(d)) == paths::key(Path::new(r))));
         cfg.roots = roots;
         cfg.flow_dirs.retain(|f| cfg.roots.iter().any(|r| paths::key(Path::new(f)).starts_with(&paths::key(Path::new(r)))));
     })
+}
+
+/// 仅从本机扫描列表移除目录；不删除项目文件。
+#[tauri::command]
+fn remove_directory(path: String) -> Result<(), String> {
+    let directory = paths::norm(Path::new(&path))?;
+    if !directory.is_dir() { return Err("请选择目录".into()); }
+    scan::update_config(|cfg| {
+        if !cfg.excludes(&directory) {
+            cfg.excluded_dirs.retain(|d| !scan::within(Path::new(d), &directory));
+            cfg.excluded_dirs.push(directory.to_string_lossy().into_owned());
+        }
+        let excluded = cfg.excluded_dirs.clone();
+        cfg.flow_dirs.retain(|f| !excluded.iter().any(|d| scan::within(Path::new(f), Path::new(d))));
+    })?;
+    Ok(())
 }
 
 /// 汇总全部 APP。`full=true` 时遍历项目根重新发现 flow 目录并更新缓存；否则用缓存目录（启动快）。
@@ -268,8 +285,10 @@ async fn summary(app: tauri::AppHandle, full: bool) -> Result<Vec<AppEntry>, Str
         let cfg = scan::load_config()?;
         if full || cfg.flow_dirs.is_empty() {
             let dirs: Vec<scan::FlowDir> = cfg.roots.iter().flat_map(|r| scan::scan_root(Path::new(r))).collect();
-            scan::update_config(|latest| latest.flow_dirs = dirs.iter().map(|d| d.flow_dir.clone()).collect())?;
-            Ok(dirs)
+            let latest = scan::update_config(|latest| {
+                latest.flow_dirs = dirs.iter().filter(|d| !latest.excludes(Path::new(&d.app_dir))).map(|d| d.flow_dir.clone()).collect();
+            })?;
+            Ok(dirs.into_iter().filter(|d| !latest.excludes(Path::new(&d.app_dir))).collect())
         } else {
             Ok(cached_dirs(&cfg))
         }
@@ -496,7 +515,7 @@ pub fn run() {
         }))
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
         .invoke_handler(tauri::generate_handler![
-            get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
+            get_config, set_roots, remove_directory, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
             read_md, save_md, tagged_nodes, feat_progress, create_feat, open_popout, resolve_flow_link,
             rename::rename_entry,

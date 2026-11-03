@@ -1,0 +1,28 @@
+<mxfile host="rs_flow_coding">
+  <diagram id="notes-page" name="挂载注释">
+    <mxGraphModel grid="1" gridSize="10" page="0" pageWidth="1000" pageHeight="800">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="n1" value="接收新消息" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="160" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2" value="检查是否重复" style="rhombus;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="520" y="150" width="220" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="新消息" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="n1" target="n2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="note1" value="&lt;b&gt;身份来源&lt;/b&gt;&lt;br&gt;身份只取自事件，执行前重新检查授权。" style="shape=note;fcNote=1;whiteSpace=wrap;html=1;align=left;spacing=8;fillColor=#fff2cc;" vertex="1" parent="n1">
+          <mxGeometry x="1" y="0" width="300" height="120" relative="1" as="geometry"><mxPoint x="16" y="24" as="offset"/></mxGeometry>
+        </mxCell>
+        <mxCell id="note2" value="重复投递不重复判断、不重复推理。" style="shape=note;fcNote=1;whiteSpace=wrap;html=1;align=left;spacing=8;fillColor=#fff2cc;" vertex="1" parent="e1">
+          <mxGeometry x="0" y="24" width="300" height="120" relative="1" as="geometry"><mxPoint x="0" y="0" as="offset"/></mxGeometry>
+        </mxCell>
+        <mxCell id="note3" value="&lt;b&gt;待挂载说明&lt;/b&gt;&lt;br&gt;右键此便签，选择挂载到节点或连线。" style="shape=note;whiteSpace=wrap;html=1;align=left;spacing=8;fillColor=#fff2cc;" vertex="1" parent="1">
+          <mxGeometry x="160" y="360" width="300" height="120" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
