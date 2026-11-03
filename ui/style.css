@@ -155,7 +155,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .archived-entry, .archived-entry .file-name, .archived-entry .feat-meta { color: var(--muted); }
 .archive-section { margin-top: 4px; border-top: 1px solid var(--border2); }
 .archive-toggle { display: flex; justify-content: space-between; width: 100%; padding: 5px 6px; border: 0; background: transparent; color: var(--fg2); font-size: 12px; }
-.archive-year { font-size: 11px; color: var(--fg2); padding: 4px 6px 2px; }
+.archive-year { display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; padding: 4px 6px 2px; border: 0; border-radius: 0; background: transparent; color: var(--fg2); font-size: 11px; text-align: left; }
+button.archive-year { cursor: pointer; }
+button.archive-year:hover { background: var(--hover); }
 .archive-body { padding-left: 6px; }
 .show-more { display: block; margin: 4px 6px; font-size: 12px; color: var(--accent); border: 0; background: transparent; }
 .entry-actions { position: fixed; z-index: 25; min-width: 145px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 4px 14px var(--shadow); }

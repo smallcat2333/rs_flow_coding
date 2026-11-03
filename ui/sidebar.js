@@ -58,10 +58,10 @@ window.Sidebar = (() => {
     render(apps, currentFlow, currentFeat);
   }
 
-  /** 全部展开/收纳只更新折叠偏好；收纳只收 APP 与分区，已折叠的分组保持折叠；清除搜索的强制展开，分页仍按每批20项显示。 */
+  /** 全部展开/收纳只更新折叠偏好；收纳只收 APP 与分区，已折叠的分组和月份行保持折叠；全部展开时月份也展开。清除搜索的强制展开，分页仍按每批20项显示。 */
   function setAllExpanded(expanded) {
     const keys = apps.flatMap((a) => [a.flow_dir, a.flow_dir + '#flow', a.flow_dir + '#feat']);
-    const groups = prefs.collapsed.filter((k) => k.startsWith(GROUP_PREFIX));
+    const groups = prefs.collapsed.filter((k) => k.startsWith(GROUP_PREFIX) || k.includes('#archive#'));
     prefs.collapsed = expanded ? [] : [...groups, ...keys];
     prefs.expanded_archives = expanded ? apps.flatMap((a) => [a.flow_dir + '#flow#archive', a.flow_dir + '#feat#archive']) : [];
     persist();
@@ -253,7 +253,14 @@ window.Sidebar = (() => {
         if (!groups.has(bucket)) groups.set(bucket, []);
         groups.get(bucket).push(f);
       }
-      content = [...groups.keys()].sort().reverse().map((bucket) => `<div class="archive-year">${esc(bucket)}</div>${page(groups.get(bucket), key + '#' + bucket, row)}`).join('');
+      content = [...groups.keys()].sort().reverse().map((bucket) => {
+        const items = groups.get(bucket);
+        const bucketKey = key + '#' + bucket;
+        // 只有 Feat 的月份行带数量并可折叠；Chart 的年份行保持原样。搜索时强制展开，避免匹配项被藏住。
+        if (!/^\d{4}-\d{2}$/.test(bucket)) return `<div class="archive-year">${esc(bucket)}</div>${page(items, bucketKey, row)}`;
+        const open = !!search || !prefs.collapsed.includes(bucketKey);
+        return `<button type="button" class="archive-year" data-bucket="${esc(bucketKey)}" aria-expanded="${open}"><span>${open ? '▾' : '▸'} ${esc(bucket)}</span><span>${items.length}</span></button>${open ? page(items, bucketKey, row) : ''}`;
+      }).join('');
     }
     return `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(key)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} ${label}</span><span>${list.length}</span></button>${expanded ? `<div class="archive-body">${content}</div>` : ''}</div>`;
   }
@@ -726,10 +733,12 @@ window.Sidebar = (() => {
     }, true);
     $('tree').addEventListener('click', (e) => {
       const more = e.target.closest('[data-more]');
+      const bucket = e.target.closest('[data-bucket]');
       const archived = e.target.closest('[data-archive]');
       const head = e.target.closest('.app-head, .sec-head, .group');
       const row = e.target.closest('.file, .feat');
       if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
+      else if (bucket) { e.stopImmediatePropagation(); toggle(bucket.dataset.bucket, false); }
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
       else if (head && !e.target.closest('.app-new, .feat-new')) {
         e.stopImmediatePropagation();
