@@ -140,6 +140,7 @@ window.FeatPane = (() => {
   function applyTocVisible(show) {
     $('md-body').classList.toggle('no-toc', !show);
     $('btn-toc').classList.toggle('on', show);
+    $('btn-toc').setAttribute('aria-pressed', String(show));
   }
   $('btn-toc').onclick = () => {
     const show = $('md-body').classList.contains('no-toc');
@@ -253,15 +254,15 @@ window.FeatPane = (() => {
 
   /**
    * 复制当前 Feat 档案的绝对路径，供粘贴给 Agent 继续处理。
-   * 扫描结果里的路径已是绝对路径；未打开档案时按钮禁用。成功时按钮短暂显示「已复制」。
+   * 扫描结果里的路径已是绝对路径；未打开档案时按钮禁用。成功提示不替换按钮图标。
    */
   function copyFeatPath() {
     if (!st.path) return;
     const btn = $('btn-copy-feat-path');
     navigator.clipboard.writeText(st.path).then(() => {
-      btn.textContent = '已复制';
+      btn.title = '已复制档案绝对路径';
       setState('已复制档案绝对路径');
-      setTimeout(() => { btn.textContent = '复制路径'; }, 1200);
+      setTimeout(() => { btn.title = '复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理'; }, 1200);
     }, (error) => setState('复制失败：' + error, true));
   }
   $('btn-copy-feat-path').onclick = copyFeatPath;
@@ -273,6 +274,8 @@ window.FeatPane = (() => {
     if (!app) { box.innerHTML = ''; return; }
     const nodes = await invoke('tagged_nodes', { flowDir: app.flow_dir, tag: st.id });
     $('feat-node-count').textContent = $('fs-node-count').textContent = nodes.length;
+    $('btn-feat-nodes').title = `关联节点 · ${nodes.length}（显示 / 隐藏）`;
+    $('btn-feat-nodes').setAttribute('aria-label', `关联节点 ${nodes.length}`);
     if (!nodes.length) {
       box.innerHTML = `<div class="empty mini">还没有节点挂 ${esc(st.id)} 标签。打开流程图选中节点，点底部状态栏「挂到 ${esc(st.id)}」。</div>`;
       return;

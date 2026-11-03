@@ -53,8 +53,9 @@ window.Tabs = (() => {
     const bar = $('tabbar');
     bar.innerHTML = tabs.map((t, i) => {
       const parts = [t.flow && part('flow', t.flow), t.feat && part('feat', t.feat)].filter(Boolean);
-      const title = [t.flow, t.feat].filter(Boolean).join('\n') || '空白页签：在左侧点图或 Feat 填入';
-      return `<div class="tab ${i === active ? 'active' : ''}" data-tab="${i}">
+      const unseen = Sidebar.isUnseen(t.flow) || Sidebar.isUnseen(t.feat);
+      const title = ([t.flow, t.feat].filter(Boolean).join('\n') || '空白页签：在左侧点图或 Feat 填入') + (unseen ? '\n有未查看更新' : '');
+      return `<div class="tab ${i === active ? 'active' : ''} ${unseen ? 'unseen' : ''}" data-tab="${i}">
         <button class="tab-main" role="tab" aria-selected="${i === active}" data-i="${i}" title="${esc(title)}">${parts.join('<span class="tab-join">+</span>') || '<span class="tab-empty">新页签</span>'}</button>
         <button class="tab-close" data-close="${i}" title="关闭页签（中键单击页签也可关闭）" aria-label="关闭页签">×</button></div>`;
     }).join('') + '<button id="tab-new" title="新建空白页签" aria-label="新建空白页签">＋</button>';
@@ -102,6 +103,16 @@ window.Tabs = (() => {
     if (i < 0) return false;
     if (i !== active) await activate(i);
     return true;
+  }
+
+  /** 按 APP 路径判断目标是否跨项目；切页签载入期间不重定向，避免递归新建。 */
+  function isOtherProject(path) {
+    if (!api || busy || frozen) return false;
+    const project = api.project(path);
+    return !!project && Object.values(tabs[active]).some((p) => {
+      const other = p && api.project(p);
+      return other && other !== project;
+    });
   }
 
   /** 在当前页签右侧打开目标；已有页签直接复用，可定位节点引用或正文行。 */
@@ -240,6 +251,7 @@ window.Tabs = (() => {
     init,
     note,
     reveal,
+    isOtherProject,
     openNew,
     split,
     render,

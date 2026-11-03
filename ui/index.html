@@ -70,12 +70,14 @@
           <input id="node-find" type="search" placeholder="定位节点：ID 或 图名.drawio#ID" title="输入节点 ID，或粘贴含「图名.drawio#ID」的文字，回车定位" aria-label="定位节点" disabled>
           <button id="btn-ids" title="显示 / 隐藏节点左上角的 ID 小卡">ID</button>
           <button id="btn-history" disabled>历史对比</button>
-          <button id="btn-copy-flow-path" title="复制当前流程图的绝对路径，可发给 Agent 继续处理" disabled>复制路径</button>
-          <button id="btn-flow-full" class="icon-button" title="全屏显示流程图（Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
-          <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
-          <button id="btn-flow-pop" class="no-solo" title="在独立窗口打开流程图" disabled>⧉</button>
-          <button id="btn-flow-tab" class="icon-button no-solo" title="拆分流程图到独立页签" aria-label="流程图在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
-          <button id="btn-flow-close" class="no-solo" title="关闭流程图栏">×</button>
+          <div class="pane-tools" role="group" aria-label="流程图工具">
+          <button id="btn-copy-flow-path" class="pane-tool" title="复制当前流程图的绝对路径，可发给 Agent 继续处理" aria-label="复制流程图路径" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 16h6"/></svg></button>
+          <button id="btn-flow-full" class="pane-tool" title="全屏显示流程图（Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+          <button class="pane-float pane-tool no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M9 3h12v12"/></svg></button>
+          <button id="btn-flow-pop" class="pane-tool no-solo" title="在独立窗口打开流程图" aria-label="在独立窗口打开流程图" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="13" height="13" rx="1"/><rect x="8" y="3" width="13" height="13" rx="1"/></svg></button>
+          <button id="btn-flow-tab" class="pane-tool no-solo" title="拆分流程图到独立页签" aria-label="流程图在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
+          <button id="btn-flow-close" class="pane-tool no-solo" title="关闭流程图栏" aria-label="关闭流程图栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+          </div>
           <button id="btn-flow-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这张图">回到主窗口</button>
         </div>
         <!-- 只读提示条：Agent 持锁时显示在画布上方，不遮挡画布，仍可缩放、滚动查看 -->
@@ -106,14 +108,16 @@
           <span id="md-state"></span>
           <span class="spacer"></span>
           <button id="btn-ref" title="把流程图中选中的节点插入为引用（图名#节点id）">插入节点引用</button>
-          <button id="btn-toc" title="显示 / 隐藏标题大纲">大纲</button>
-          <button id="btn-feat-nodes" title="显示 / 隐藏关联节点" aria-controls="fs-nodes" aria-expanded="true">关联节点 · <b id="feat-node-count">0</b></button>
-          <button id="btn-feat-prog" title="显示 / 隐藏本 Feat 的推进树" aria-controls="fs-prog" aria-expanded="true">推进</button>
-          <button id="btn-copy-feat-path" title="复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理" disabled>复制路径</button>
-          <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
-          <button id="btn-feat-pop" class="no-solo" title="在独立窗口打开 Feat">⧉</button>
-          <button id="btn-feat-tab" class="icon-button no-solo" title="拆分 Feat 到独立页签" aria-label="Feat 在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
-          <button id="btn-feat-close" class="no-solo" title="关闭 Feat 栏">×</button>
+          <button id="btn-toc" class="pane-tool" title="显示 / 隐藏标题大纲" aria-label="大纲" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11M4 5h1M4 12h1M4 19h1"/></svg></button>
+          <button id="btn-feat-nodes" class="pane-tool" title="显示 / 隐藏关联节点" aria-label="关联节点" aria-controls="fs-nodes" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="6" rx="1"/><path d="M12 8v5M5 13h14M5 13v3M19 13v3"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/></svg><span id="feat-node-count" hidden>0</span></button>
+          <button id="btn-feat-prog" class="pane-tool" title="显示 / 隐藏本 Feat 的推进树" aria-label="推进" aria-controls="fs-prog" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M5 6h5M5 12h5M5 18h5m3-13 2 2 4-4M13 12h6M13 18h6"/></svg></button>
+          <div class="pane-tools" role="group" aria-label="Feat 工具">
+          <button id="btn-copy-feat-path" class="pane-tool" title="复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理" aria-label="复制 Feat 路径" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 16h6"/></svg></button>
+          <button class="pane-float pane-tool no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M9 3h12v12"/></svg></button>
+          <button id="btn-feat-pop" class="pane-tool no-solo" title="在独立窗口打开 Feat" aria-label="在独立窗口打开 Feat"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="13" height="13" rx="1"/><rect x="8" y="3" width="13" height="13" rx="1"/></svg></button>
+          <button id="btn-feat-tab" class="pane-tool no-solo" title="拆分 Feat 到独立页签" aria-label="Feat 在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
+          <button id="btn-feat-close" class="pane-tool no-solo" title="关闭 Feat 栏" aria-label="关闭 Feat 栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+          </div>
           <button id="btn-feat-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这个档案（保持阅读位置）">回到主窗口</button>
         </div>
         <!-- 只读提示条：Agent 持锁时显示在正文上方，不遮挡正文，仍可滚动、选中复制 -->
@@ -197,6 +201,7 @@
         </section>
         <section data-settings-panel="links" aria-label="链接与页签" hidden>
           <h3>链接与页签</h3>
+          <div class="settings-well"><label class="settings-check"><input id="settings-projects-new-tab" type="checkbox" checked>不同项目在独立页签打开</label><p>默认开启。打开的 Chart 或 Feat 与当前页签不属于同一 APP 时，新建页签；已打开的条目切到已有页签。同一项目仍可在当前页签并排显示。</p></div>
           <div class="settings-well"><label class="settings-check"><input id="settings-links-new-tab" type="checkbox">链接在独立页签打开</label><p>默认关闭。开启后，点击节点右上角的 Feat 书签或图间链接标记，在新页签打开目标并定位，保留来源页签。</p></div>
         </section>
         <section data-settings-panel="updates" aria-label="内容更新" hidden>
@@ -307,7 +312,7 @@
             </tbody>
           </table>
           <p><strong>注意：</strong>标签按档案「状态」开头的文字归纳，不会因为说明里出现「验证通过」「待验收」就自动切换阶段。例如「开发已接入，程序 / FAB 验证通过，待 LR 协议及现场定位验收」仍显示「开发中」。</p>
-          <p>节点颜色与数量表示关联流程图的实现情况；「可关闭」仅表示关联节点全部已实现，不代表任务、测试和人工验收全部完成。关闭 Feat 前仍需核对档案与验收结果，并通过关闭流程正式收口。</p>
+          <p>Feat 状态标签统一显示在第一行末尾，只使用上表阶段；不显示节点颜色统计块或「可关闭」标签。第二行显示编号、任务进度、节点数及编辑锁提示。关闭 Feat 前仍需核对档案与验收结果，并通过关闭流程正式收口。</p>
         </section>
         <section id="guide-link">
           <h3>图间链接</h3>

@@ -151,7 +151,6 @@ async function refresh(full = false) {
 /** 重绘侧栏与顶部合计；生命周期、收纳和本机偏好由 Sidebar 统一维护。 */
 function renderTree() {
   Sidebar.render(st.apps, st.cur, curFeat.path);
-  if (!SOLO) Tabs.render();
 }
 
 /** 当前图在汇总中的条目。 */
@@ -286,6 +285,7 @@ async function openDiagram(path) {
   await releaseNow();
   st.cur = path;
   if (!SOLO) Tabs.note('flow', path);
+  renderTree();
   st.pendingXml = null;
   st.loaded = false;
   selCells = [];
@@ -605,15 +605,15 @@ $('btn-copy-ref').onclick = () => copyRefs(selCells.map((c) => c.id));
 
 /**
  * 复制当前流程图的绝对路径，供粘贴给 Agent 继续处理这张图。
- * 扫描结果里的路径已是绝对路径；未打开图时按钮禁用。成功时按钮短暂显示「已复制」。
+ * 扫描结果里的路径已是绝对路径；未打开图时按钮禁用。成功提示不替换按钮图标。
  */
 function copyFlowPath() {
   if (!st.cur) return;
   const btn = $('btn-copy-flow-path');
   navigator.clipboard.writeText(st.cur).then(() => {
-    btn.textContent = '已复制';
+    btn.title = '已复制流程图绝对路径';
     saveState('已复制流程图绝对路径');
-    setTimeout(() => { btn.textContent = '复制路径'; }, 1200);
+    setTimeout(() => { btn.title = '复制当前流程图的绝对路径，可发给 Agent 继续处理'; }, 1200);
   }, (error) => saveState('复制失败：' + error, true));
 }
 $('btn-copy-flow-path').onclick = copyFlowPath;
@@ -666,6 +666,7 @@ $('node-find').addEventListener('keydown', (ev) => {
 /** 按当前 Feat 刷新图中节点高亮（仅同 APP）与状态栏；侧栏选中由主动打开操作维护。 */
 function applyFeat() {
   if (st.ready && st.cur) post({ action: 'fc-highlight', tag: sameApp() ? curFeat.id : '' });
+  renderTree();
   renderNodeBar();
 }
 
@@ -674,6 +675,7 @@ function applyFeat() {
  * （独立窗口发 ui-route 给主窗口；主窗口在流程图已弹出时转给弹出窗口）。
  */
 async function routeDiagram(path, node, options = {}) {
+  if (!SOLO && Settings.projectsNewTab() && Tabs.isOtherProject(path)) return Tabs.openNew('flow', path, { node });
   Sidebar.select(path);
   if (ownsFlow()) {
     if (flowNavigating) return;
@@ -745,6 +747,7 @@ let featRoute = Promise.resolve();
 
 /** 打开 Feat 档案并可选定位节点引用或源文件行号（line，1 起；0 为不定位）：路由规则同 routeDiagram。 */
 async function routeFeat(path, node, line = 0) {
+  if (!SOLO && Settings.projectsNewTab() && Tabs.isOtherProject(path)) return Tabs.openNew('feat', path, { node, line });
   Sidebar.select(path);
   if (ownsFeat()) {
     featRoute = featRoute.catch(() => {}).then(() => FeatPane.open(path, { node, line }));
@@ -757,6 +760,8 @@ async function routeFeat(path, node, line = 0) {
 /** 页签接口（tabs.js）：在主窗口打开 / 关闭页签里的图与档案；已弹到独立窗口的一类照常转给独立窗口。
  *  切页签时清空图导航回退栈，回退只在同一页签内有效。 */
 const tabApi = {
+  /** 同一 APP 使用同一个规范化目录键，同名 APP 或不同分组不混淆。 */
+  project: (path) => (appOf(path)?.flow_dir || '').replace(/\\/g, '/').toLowerCase(),
   async openFlow(path, node = '') {
     while (flowNavigating) await new Promise((resolve) => setTimeout(resolve, 20));
     flowBack.length = 0;

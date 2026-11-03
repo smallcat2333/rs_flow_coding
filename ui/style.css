@@ -129,7 +129,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .feat-state.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .feat-state.done { background: var(--ok-bg); color: var(--ok-fg); }
 .feat-state.muted { color: var(--muted); }
-.feat-line > .closable, .feat-line > .badges { flex-shrink: 0; }
+.feat-line > .feat-state { margin-left: auto; }
 .feat-meta { display: flex; gap: 8px; color: var(--muted); font-size: 11px; padding-left: 1px; overflow: hidden; white-space: nowrap; }
 .closable { font-size: 11px; padding: 0 5px; border-radius: 3px; background: var(--ok-bg); color: var(--ok-fg); }
 .file { padding: 4px 6px; border-radius: 5px; cursor: pointer; }
@@ -197,6 +197,8 @@ body.tab-dragging iframe { pointer-events: none; }
 .tab.drop-before { box-shadow: -2px 0 0 var(--accent); }
 .tab.drop-after { box-shadow: 2px 0 0 var(--accent); }
 .tab.active { background: var(--bg); border-color: var(--border); color: var(--fg); }
+/* 与侧栏共用未查看更新底色，组合页签任一文件未查看即标绿，悬停仍保留提示。 */
+.tab.unseen, .tab.unseen:hover { background: var(--unseen); }
 .tab.active::before { content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px; border-radius: 6px 6px 0 0; background: var(--accent); }
 .tab-main { flex: 1; display: flex; align-items: center; gap: 5px; min-width: 0; height: 100%; padding: 0 4px 0 10px; border: 0; background: transparent !important; color: inherit; white-space: nowrap; overflow: hidden; }
 .tab-part { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -233,6 +235,12 @@ body.pane-dragging .splitter { background: var(--accent); }
 .pane-float { display: inline-flex; align-items: center; padding: 3px 7px; }
 .pane-float svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; }
 .pane-float.on { color: var(--accent); border-color: var(--accent-bd); background: var(--sel); }
+/* 栏内工具按钮统一尺寸与描边，开关沿用选中色；关闭叉号用七成不透明红色。 */
+.pane-tools { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.pane-tool { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 6px; flex-shrink: 0; }
+.pane-tool svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.pane-tool.on { color: var(--accent); border-color: var(--accent-bd); background: var(--sel); }
+#btn-flow-close, #btn-feat-close { color: color-mix(in srgb, var(--danger) 70%, transparent); }
 /* 布局菜单：沿用搜索框的悬浮样式。 */
 #layout-menu { position: absolute; z-index: 16; top: calc(100% - 2px); left: 10px; width: min(260px, calc(100% - 20px)); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 6px 18px var(--shadow); }
 .lm-title { font-size: 12px; color: var(--fg2); }
@@ -300,7 +308,12 @@ body:not(.solo) .solo-only { display: none !important; }
 #md-editor .cm-gutters { display: none; }
 #md-editor .cm-activeLine { background: transparent; }
 #md-editor .cm-line { padding: 0; overflow-wrap: anywhere; }
-#md-editor .md-source { font-family: Consolas, "Microsoft YaHei UI", monospace; background: var(--bg2); }
+/* 源码行保持透明，让下层 CodeMirror 选区可见；聚焦与失焦均保留复制范围提示。 */
+#md-editor .md-source { font-family: Consolas, "Microsoft YaHei UI", monospace; background: transparent; }
+#md-editor .cm-selectionBackground { background: #b8d7fa; }
+#md-editor .cm-focused .cm-selectionBackground { background: #9fc9fa; }
+:root[data-theme="dark"] #md-editor .cm-selectionBackground { background: #294768; }
+:root[data-theme="dark"] #md-editor .cm-focused .cm-selectionBackground { background: #315d8b; }
 #md-editor .md-heading-1 { font-size: 24px; font-weight: 650; }
 #md-editor .md-heading-2 { font-size: 20px; font-weight: 600; }
 #md-editor .md-heading-3 { font-size: 17px; font-weight: 600; }

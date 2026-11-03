@@ -11,6 +11,8 @@ window.Settings = (() => {
   const keepFeatPosition = () => localStorage.getItem('fc-keep-feat-position') !== '0';
   /** 链接另开页签默认关闭，各窗口共享本机偏好。 */
   const linksNewTab = () => localStorage.getItem('fc-links-new-tab') === '1';
+  /** 不同 APP 默认分开页签，避免把不相关的图和档案并排组合。 */
+  const projectsNewTab = () => localStorage.getItem('fc-projects-new-tab') !== '0';
 
   /** 字节显示使用二进制单位，零明确显示为 0 B。 */
   function bytes(value) {
@@ -121,6 +123,7 @@ window.Settings = (() => {
     $('settings-keep-flow-view').checked = keepFlowView();
     $('settings-keep-feat-position').checked = keepFeatPosition();
     $('settings-links-new-tab').checked = linksNewTab();
+    $('settings-projects-new-tab').checked = projectsNewTab();
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -158,6 +161,10 @@ window.Settings = (() => {
         $('settings-msg').textContent = '内容更新设置已保存';
       };
     }
+    $('settings-projects-new-tab').onchange = (e) => {
+      localStorage.setItem('fc-projects-new-tab', e.currentTarget.checked ? '1' : '0');
+      $('settings-msg').textContent = '跨项目打开方式已保存';
+    };
     $('settings-links-new-tab').onchange = (e) => {
       localStorage.setItem('fc-links-new-tab', e.currentTarget.checked ? '1' : '0');
       $('settings-msg').textContent = '链接打开方式已保存';
@@ -191,5 +198,5 @@ window.Settings = (() => {
     });
   }
 
-  return { init, keepFlowView, keepFeatPosition, linksNewTab };
+  return { init, keepFlowView, keepFeatPosition, linksNewTab, projectsNewTab };
 })();

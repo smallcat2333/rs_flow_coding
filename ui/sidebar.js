@@ -166,9 +166,13 @@ window.Sidebar = (() => {
     return lock ? `<span class="lock-dot">${lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
   }
 
-  /** 按主动打开的路径更新整个侧栏的唯一选中项；不关闭另一类文档，不触发重绘。 */
+  /** 按主动打开的路径更新唯一选中项并清除未查看提示；只在标记变化时重绘侧栏和页签。 */
   function select(path) {
     selectedPath = path;
+    if (!SOLO && markSeen(path)) {
+      persist();
+      render(apps, currentFlow, currentFeat);
+    }
     $('tree').querySelectorAll('.file, .feat').forEach((row) => {
       row.classList.toggle('active', (row.dataset.path || row.dataset.feat) === selectedPath);
     });
@@ -179,7 +183,7 @@ window.Sidebar = (() => {
     if (selectedPath === path) select('');
   }
 
-  /** 条目行公共类名：唯一选中、收纳灰显、更新未查看淡蓝底。 */
+  /** 查询路径是否有未查看更新，侧栏行与顶部页签共用同一状态。 */
   function isUnseen(path) {
     return prefs.unseen.includes(norm(path));
   }
@@ -201,30 +205,29 @@ window.Sidebar = (() => {
   function featState(status) {
     const value = String(status || '').trim().replace(/^\*+/, '').trim();
     const rules = [
-      [/^已废弃/, '已废弃', 'muted'],
-      [/^已关闭/, '已关闭', 'done'],
+      [/^(已废弃|放弃需求)/, '已废弃', 'muted'],
+      [/^(已关闭|已正式收口)/, '已关闭', 'done'],
       [/^(已暂停|暂停|暂缓)/, '已暂停', 'warn'],
       [/^(待验收|待人工确认|待用户确认)/, '待验收', 'warn'],
       [/^(测试完成|已测试)/, '待验收', 'warn'],
-      [/^测试/, '测试中', 'test'],
-      [/^开发完成/, '待测试', 'test'],
-      [/^开发/, '开发中', 'dev'],
-      [/^(UI|界面设计)/i, 'UI设计', 'design'],
-      [/^需求/, '需求中', 'req'],
-      [/^探讨/, '探讨中', 'req'],
+      [/^(待测试|开发完成)/, '待测试', 'test'],
+      [/^(正在测试|测试)/, '测试中', 'test'],
+      [/^(正在开发|部分接入|开发)/, '开发中', 'dev'],
+      [/^(UI|界面设计|设计界面)/i, 'UI设计', 'design'],
+      [/^(整理需求|需求)/, '需求中', 'req'],
+      [/^(讨论方案|探讨)/, '探讨中', 'req'],
     ];
     const match = rules.find(([pattern]) => pattern.test(value));
     return match ? { label: match[1], tone: match[2] } : { label: '待明确', tone: 'muted' };
   }
 
-  /** Feat 行：名称旁固定显示简短阶段，第二行保留档案原文及进度。 */
+  /** Feat 第一行末尾只显示词表中的阶段标签；第二行保留编号、进度、节点数与编辑锁提示。 */
   function featRow(f, app) {
     const flat = app !== undefined;
     const state = featState(f.status);
     return `<div class="feat ${flat ? 'flat-feat' : ''} ${rowClass(f, f.archived)}" data-feat="${esc(f.path)}" data-id="${esc(f.id)}" tabindex="0" title="${esc(f.path)}">
-      <div class="feat-line">${flat ? svg('row-icon', ICON_FEAT) : ''}<span class="file-name">${esc(f.title || f.id)}</span><span class="feat-state ${state.tone}" title="${esc(f.status || '档案未注明状态')}">${state.label}</span>${flat ? `<span class="row-app">${esc(app)}</span>` : ''}
-        ${!f.archived ? f.closable ? '<span class="closable" title="关联节点全部已实现">可关闭</span>' : badges(f.counts) : ''}</div>
-      <div class="feat-meta"><span class="entry-detail"><span>${esc(f.id)}</span><span>${esc(f.status)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></span>${lockTag(f.lock)}</div></div>`;
+      <div class="feat-line">${flat ? svg('row-icon', ICON_FEAT) : ''}<span class="file-name">${esc(f.title || f.id)}</span>${flat ? `<span class="row-app">${esc(app)}</span>` : ''}<span class="feat-state ${state.tone}" title="${esc(f.status || '档案未注明状态')}">${state.label}</span></div>
+      <div class="feat-meta"><span class="entry-detail"><span>${esc(f.id)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></span>${lockTag(f.lock)}</div></div>`;
   }
 
   /** 每组最多先显示 20 项；继续加载不改变文件状态。搜索时也分批，避免大历史一次撑满树。 */
@@ -462,6 +465,7 @@ window.Sidebar = (() => {
     }
     syncToggleAll();
     syncLayout();
+    if (!SOLO) Tabs.render();
   }
 
   /** 关闭右键菜单并把焦点还给对应条目，避免滚动列表。 */
@@ -792,5 +796,5 @@ window.Sidebar = (() => {
   /** APP 显示名：有别名用别名，否则目录名（推进矩阵的 APP 下拉复用）。 */
   const appName = (app) => prefs.app_aliases[app.flow_dir] || app.app;
 
-  return { init, render, select, deselect, prune, setAutoTop, autoTop: () => prefs.auto_top, appName };
+  return { init, render, select, deselect, prune, isUnseen, setAutoTop, autoTop: () => prefs.auto_top, appName };
 })();

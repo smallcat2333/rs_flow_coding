@@ -75,9 +75,8 @@
       '.fc-note-content{overflow-wrap:anywhere;max-height:300px;overflow:auto;white-space:normal}' +
       '.fc-note-content[contenteditable=true]{min-height:100px;outline:1px solid #b7791f;padding:8px;box-sizing:border-box}' +
       '.fc-note-content:focus-visible,.fc-notes button:focus-visible{outline:2px solid #b7791f;outline-offset:2px}' +
-      '.fc-note-actions,.fc-notes-footer{display:flex;gap:6px;flex-wrap:wrap;padding-top:10px}' +
-      '.fc-notes-footer{border-top:1px solid light-dark(#d0d7de,#505050);margin-top:8px;flex-shrink:0}' +
-      '.fc-note-actions .geBtn,.fc-notes-footer .geBtn{margin:0}' +
+      '.fc-note-actions{display:flex;gap:6px;flex-wrap:wrap;padding-top:10px}' +
+      '.fc-note-actions .geBtn{margin:0}' +
       '.fc-note-pick{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:10000;max-width:calc(100% - 32px);box-sizing:border-box;padding:10px 14px;border:1px solid #b7791f;border-radius:6px;background:light-dark(#fff8e8,#332b1c);color:light-dark(#55370a,#ffe0a0);font:13px/1.5 Arial,"Microsoft YaHei",sans-serif;pointer-events:none}';
     document.head.appendChild(css);
 
@@ -191,8 +190,15 @@
       var title = document.createElement('h2');
       title.textContent = (model.isEdge(target) ? '连线注释' : '节点注释') + ' · ' + target.id;
       header.appendChild(title);
+      if (editable(target)) {
+        var add = button('+', function () { addNote(target); });
+        add.setAttribute('aria-label', '添加注释');
+        add.title = '添加注释';
+        header.appendChild(add);
+      }
       var close = button('×', closePanel);
       close.setAttribute('aria-label', '关闭注释');
+      close.title = '关闭注释（Esc）';
       header.appendChild(close);
       // 只拖标题空白/文字，按钮仍保持正常点击；捕获指针防止拖出卡片后中断。
       header.addEventListener('pointerdown', function (ev) {
@@ -276,11 +282,6 @@
         list.appendChild(card);
         if (note === editing) focusEditor = edit;
       });
-      var footer = document.createElement('div');
-      footer.className = 'fc-notes-footer';
-      if (editable(target)) footer.appendChild(button('添加注释', function () { addNote(target); }));
-      footer.appendChild(button('关闭', closePanel));
-      root.appendChild(footer);
       var bounds = root.getBoundingClientRect();
       placePanel(bounds.left, bounds.top);
       if (focusEditor) focusEditor();
@@ -392,6 +393,7 @@
     graph.refresh();
     refresh();
     return { refresh: refresh, attach: attach, detach: detach, open: open, add: addNote, pick: pick,
+      close: closePanel, isOpen: function () { return !!panelRoot; },
       cancelPick: cancelPick, isPicking: function () { return !!pending; }, isAttached: attached, notesOf: notesOf, marks: marks };
   };
 })();
