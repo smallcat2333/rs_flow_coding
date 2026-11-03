@@ -9,16 +9,22 @@
 
 #feat-board {
   --fb-ok: var(--ok-fg); --fb-err: var(--danger); --fb-warn: var(--warn-fg); --fb-info: var(--accent); --fb-muted: var(--muted);
-  flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--bg2); padding: 0 0 32px; line-height: 1.55;
+  flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--bg2); line-height: 1.55;
 }
 #feat-board:focus { outline: none; }
 #feat-board .spacer { flex: 1; }
 #feat-board svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
-/* 档案头 */
-.fb-hero { padding: 14px 20px 10px; background: var(--bg); border-bottom: 1px solid var(--border2); }
-.fb-hero-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.fb-status { padding: 2px 12px; border-radius: 12px; font-weight: 650; font-size: 13px; border: 1px solid transparent; }
+/* 左侧导航 + 右侧内容：导航外层撑满高度，内层吸顶 */
+.fb-shell { display: flex; min-height: 100%; }
+.fb-main { flex: 1; min-width: 0; padding-bottom: 32px; }
+.fb-rail { flex: 0 0 184px; background: var(--bg); border-right: 1px solid var(--border); }
+.fb-rail-in { position: sticky; top: 0; padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+.fb-rail-head { display: flex; align-items: center; gap: 4px; }
+.fb-meta { display: flex; flex-direction: column; gap: 1px; padding: 0 4px 8px; border-bottom: 1px solid var(--border2); }
+
+/* 档案头状态徽标 */
+.fb-status { min-width: 0; flex: 0 1 auto; padding: 2px 12px; border-radius: 12px; font-weight: 650; font-size: 13px; border: 1px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-status.s-talk, .fb-status.s-req { background: color-mix(in srgb, var(--fb-info) 12%, transparent); color: var(--fb-info); border-color: color-mix(in srgb, var(--fb-info) 35%, transparent); }
 .fb-status.s-dev { background: var(--sel); color: var(--fb-info); border-color: var(--accent-bd); }
 .fb-status.s-test { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); }
@@ -27,7 +33,7 @@
 .fb-status.s-unknown { border-style: dashed; }
 .fb-meta-item { color: var(--fg2); font-size: 12px; }
 .fb-meta-item i { font-style: normal; color: var(--muted); margin-right: 4px; }
-.fb-nexts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.fb-nexts { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px 0; }
 .fb-next { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg2); }
 .fb-next-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fb-info); flex-shrink: 0; }
 .fb-next.ok .fb-next-dot { background: var(--fb-ok); }
@@ -48,27 +54,30 @@
 .fb-src, .fb-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; padding: 0; border-color: transparent; background: transparent; flex-shrink: 0; opacity: .55; }
 .fb-src:hover, .fb-icon:hover { opacity: 1; border-color: var(--border); }
 
-/* 阶段页签：做成推进轴，当前阶段带实心点 */
-.fb-tabs { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 0 2px; padding: 0 12px; background: var(--bg); border-bottom: 1px solid var(--border); }
-.fb-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 10px 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--fg2); white-space: nowrap; }
-.fb-tab:hover:not(:disabled) { background: var(--hover); }
-.fb-tab.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
-.fb-tab-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--bg); }
-.fb-tab.past .fb-tab-dot { border-color: var(--fb-ok); background: var(--fb-ok); }
-.fb-tab.current .fb-tab-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-.fb-tab.future { color: var(--muted); }
+/* 竖向阶段轴：点 + 连线，已过为绿、当前为蓝带光圈，选中行底色高亮 */
+.fb-stages { display: flex; flex-direction: column; gap: 2px; }
+.fb-stage { position: relative; display: grid; grid-template-columns: 12px 1fr; column-gap: 10px; align-items: center; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--fg2); text-align: left; }
+.fb-stage:hover:not(:disabled) { background: var(--hover); }
+.fb-stage.on { background: var(--sel); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+.fb-stage:not(:last-child)::after { content: ""; position: absolute; left: 13px; top: 22px; bottom: -10px; width: 2px; background: var(--border2); }
+.fb-stage.past:not(:last-child)::after { background: color-mix(in srgb, var(--fb-ok) 55%, transparent); }
+.fb-stage-dot { grid-row: span 2; align-self: start; margin-top: 4px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border); background: var(--bg); position: relative; z-index: 1; }
+.fb-stage.past .fb-stage-dot { border-color: var(--fb-ok); background: var(--fb-ok); }
+.fb-stage.current .fb-stage-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.fb-stage-name { display: flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
+.fb-stage.future .fb-stage-name { color: var(--muted); font-weight: 400; }
+.fb-stage-sum { grid-column: 2; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-badge { padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 17px; background: var(--bg2); color: var(--fg2); border: 1px solid var(--border2); font-variant-numeric: tabular-nums; font-weight: 400; white-space: nowrap; flex-shrink: 0; }
 .fb-badge.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); }
 .fb-badge.err { background: color-mix(in srgb, var(--fb-err) 12%, transparent); color: var(--fb-err); border-color: color-mix(in srgb, var(--fb-err) 40%, transparent); }
 
 /* 页面与卡片 */
-.fb-page { display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; max-width: 1100px; }
+.fb-page { display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; }
 .fb-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px 14px; min-width: 0; }
 .fb-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .fb-card-head h3 { margin: 0; font-size: 14px; font-weight: 650; display: flex; align-items: baseline; gap: 8px; }
 .fb-no { color: var(--muted); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
 .fb-sub { margin: 14px 0 8px; font-size: 13px; color: var(--fg2); }
-.fb-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
 .fb-prose { overflow-wrap: anywhere; }
 .fb-prose > .fb-md > :first-child { margin-top: 0; }
 .fb-prose > .fb-md > :last-child { margin-bottom: 0; }
@@ -238,9 +247,17 @@
 /* Agent 持锁：写入控件已禁用，整体略淡 */
 #feat-board.readonly .fb-verdict, #feat-board.readonly .fb-check, #feat-board.readonly .fb-note { opacity: .55; }
 
-/* 窄栏：字段与备注不再缩进 */
+/* 窄栏：导航改为顶部横排（不显示摘要与连线），字段与备注不再缩进 */
 @container feat (max-width: 560px) {
-  .fb-page, .fb-hero { padding-left: 12px; padding-right: 12px; }
+  .fb-shell { flex-direction: column; }
+  .fb-rail { flex: none; border-right: 0; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+  .fb-rail-in { position: static; padding: 8px 12px; gap: 6px; }
+  .fb-meta { display: none; }
+  .fb-stages { flex-direction: row; flex-wrap: wrap; }
+  .fb-stage { width: auto; grid-template-columns: 10px auto; column-gap: 6px; padding: 4px 8px; }
+  .fb-stage::after, .fb-stage-sum { display: none; }
+  .fb-stage-dot { grid-row: auto; margin-top: 0; width: 8px; height: 8px; }
+  .fb-page, .fb-nexts { padding-left: 12px; padding-right: 12px; }
   .fb-acc-fields, .fb-note { margin-left: 0; padding-left: 0; }
   .fb-note { padding-left: 9px; }
   .fb-acc-head { flex-wrap: wrap; }

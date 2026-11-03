@@ -1,4 +1,4 @@
-// Feat 控件页：把档案按章节解析成专用控件（档案头 + 下一步 + 阶段页签 + 各章节卡片），与文档视图共用同一个 CodeMirror 文本。
+// Feat 控件页：把档案按章节解析成专用控件（左侧档案头状态 + 竖向阶段导航，右侧下一步 + 各章节卡片），与文档视图共用同一个 CodeMirror 文本。
 // 控件只改对应原文片段（§1.3 勾选框、§4.2 结果 / 备注单元格、§4.3 复测段），经 FeatPane 提供的 edit() 进入编辑器，
 // 保存、加锁、撤销与磁盘同步沿用文档视图；档案头状态、§3.1 状态等由 skill 写入的字段只读，给出可复制的 skill 命令。
 // 判定词与 progress.rs 同口径：结果列以「通过 / PASS」「不通过 / 失败 / FAIL」开头，T 状态以路线图状态词开头，
@@ -374,35 +374,47 @@ window.FeatBoard = (() => {
     return out;
   }
 
-  /** 档案头：状态徽标、应用 / 创建 / 关闭，下方为下一步建议。 */
-  function hero(d) {
-    const cls = (STATUS_CLS.find(([w]) => d.status.startsWith(w)) || [, 'unknown'])[1];
-    const meta = [['应用', d.app], ['创建', d.created], ['关闭', d.closed]].filter(([, v]) => v)
-      .map(([k, v]) => `<span class="fb-meta-item"><i>${k}</i>${esc(v)}</span>`).join('');
+  /** 内容区顶部：下一步建议（无建议时不显示）。 */
+  function nexts(d) {
     const steps = nextSteps(d).map((x) => `<div class="fb-next ${x.tone}"><span class="fb-next-dot" aria-hidden="true"></span><span class="fb-next-text">${esc(x.text)}</span>${x.command ? cmd(x.command) : ''}</div>`).join('');
-    return `<header class="fb-hero">
-      <div class="fb-hero-row"><span class="fb-status s-${cls}" data-line="${d.statusN}">${esc(d.status || '无状态')}</span>${meta}<span class="spacer"></span>${d.statusN ? src(d.statusN) : ''}</div>
-      ${steps ? `<div class="fb-nexts" aria-label="下一步">${steps}</div>` : ''}
-    </header>`;
+    return steps ? `<div class="fb-nexts" aria-label="下一步">${steps}</div>` : '';
   }
 
-  /** 阶段页签：当前阶段带圆点，已过 / 未到区分样式；角标为各阶段关键计数，有问题时标红点。 */
-  function tabsBar(d) {
+  /**
+   * 左侧阶段导航：顶部为档案头状态徽标与应用 / 创建 / 关闭，下方为竖向阶段轴（点 + 连线，已过为绿、当前为蓝）。
+   * 每个阶段一行名称 + 角标、一行摘要；点击切换右侧页面。角标在待确认时标黄，有不通过或未闭环问题时标红。
+   */
+  function rail(d) {
     const x = d.stats, cur = STAGES.findIndex((s) => s.k === d.stage);
-    const badge = {
-      0: x.talks ? [`${x.talks} 待确认`, 'warn'] : [d.talks.length ? String(d.talks.length) : '', ''],
-      1: [x.checks.total ? `${x.checks.done}/${x.checks.total}` : '', ''],
-      2: [String(tables(d, body(d, '2.2'))[0]?.rows.length || ''), ''],
-      3: [x.tasks.total ? `${x.tasks.done}/${x.tasks.total}` : '', x.tasks.waiting ? 'warn' : ''],
-      4: [x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', x.manual.fail || x.auto.fail || x.issues.open ? 'err' : ''],
-      5: [meaningful(d.h2['5']?.body) ? '✓' : '', ''],
+    const cls = (STATUS_CLS.find(([w]) => d.status.startsWith(w)) || [, 'unknown'])[1];
+    const controls = tables(d, body(d, '2.2'))[0]?.rows.length || 0;
+    const issues = x.manual.fail + x.auto.fail + x.issues.open;
+    /** 各阶段：[角标, 角标色, 摘要]。 */
+    const info = {
+      0: [x.talks ? `${x.talks} 待确认` : '', 'warn', d.talks.length ? `记录 ${d.talks.length} 条` : '无记录'],
+      1: [x.checks.total ? `${x.checks.done}/${x.checks.total}` : '', '', x.checks.total ? '验收标准' : '验收未写'],
+      2: [controls ? String(controls) : '', '', controls ? '控件' : meaningful(body(d, '2.1')) ? '已有总纲' : '未开始'],
+      3: [x.tasks.total ? `${x.tasks.done}/${x.tasks.total}` : '', x.tasks.waiting ? 'warn' : '', x.tasks.total ? (x.tasks.waiting ? `待确认 ${x.tasks.waiting}` : '任务完成') : '未拆任务'],
+      4: [x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', issues ? 'err' : x.manual.filled < x.manual.total ? 'warn' : '',
+        x.manual.total + x.auto.total ? [x.manual.total ? '人工确认' : '程序自测', x.manual.fail + x.auto.fail ? `NG ${x.manual.fail + x.auto.fail}` : '', x.issues.open ? `问题 ${x.issues.open}` : ''].filter(Boolean).join(' · ') : '未开始'],
+      5: [meaningful(d.h2['5']?.body) ? '✓' : '', '', meaningful(d.h2['5']?.body) ? '已生成' : '未生成'],
     };
-    return `<nav class="fb-tabs" role="tablist" aria-label="Feat 阶段">${STAGES.filter((s) => s.k !== '0' || d.h2['0']).map((s) => {
-      const i = STAGES.indexOf(s), [b, tone] = badge[s.k];
+    const meta = [['应用', d.app], ['创建', d.created], ['关闭', d.closed]].filter(([, v]) => v)
+      .map(([k, v]) => `<div class="fb-meta-item"><i>${k}</i>${esc(v)}</div>`).join('');
+    const stages = STAGES.filter((s) => s.k !== '0' || d.h2['0']).map((s) => {
+      const i = STAGES.indexOf(s), [b, tone, sum] = info[s.k];
       const pos = i < cur ? 'past' : i === cur ? 'current' : 'future';
-      return `<button class="fb-tab ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
-        <span class="fb-tab-dot" aria-hidden="true"></span><span>${s.name}</span>${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</button>`;
-    }).join('')}</nav>`;
+      return `<button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
+        <span class="fb-stage-dot" aria-hidden="true"></span>
+        <span class="fb-stage-name">${s.name}${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</span>
+        <span class="fb-stage-sum">${esc(sum)}</span></button>`;
+    }).join('');
+    // 外层撑满高度画背景与分隔线，内层吸顶：内容区滚动时导航保持可见。
+    return `<nav class="fb-rail" aria-label="Feat 阶段"><div class="fb-rail-in">
+      <div class="fb-rail-head"><span class="fb-status s-${cls}" data-line="${d.statusN}" title="${esc(d.status)}">${esc(d.status || '无状态')}</span>${d.statusN ? src(d.statusN) : ''}</div>
+      ${meta ? `<div class="fb-meta">${meta}</div>` : ''}
+      <div class="fb-stages" role="tablist" aria-orientation="vertical">${stages}</div>
+    </div></nav>`;
   }
 
   // ---------------- 各阶段页 ----------------
@@ -440,13 +452,14 @@ window.FeatBoard = (() => {
     return chips.length ? `<div class="fb-flows">${chips.join('')}</div>` : '';
   }
 
-  /** 需求页（§1）：背景 / 目标卡、验收清单（可勾选）、初步路线与影响的流程图。 */
+  /** 需求页（§1）：背景、目标卡（上下排列，内容常含长表格）、验收清单（可勾选）、初步路线与影响的流程图。 */
   function page1(d) {
     const x = d.stats.checks;
     const list = d.checks.length ? `<ul class="fb-checks">${d.checks.map((c, i) => `<li class="${c.done ? 'done' : ''}" data-line="${c.n}">
       <button class="fb-check" role="checkbox" aria-checked="${c.done}" data-key="chk-${i}" ${act(() => edit(c.pos, c.pos + 1, c.mark, c.done ? ' ' : 'x'))} title="${c.done ? '取消勾选' : '勾选'}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8 3 3 5-6"/></svg></button>
       ${cell(c.text)}</li>`).join('')}</ul>` : empty('还没有验收标准', 'smallcat-feat-1-new');
-    return `<div class="fb-grid2">${card(d, '1.1', '背景', mdBody(d, body(d, '1.1'), 'smallcat-feat-1-new'))}${card(d, '1.2', '目标', mdBody(d, body(d, '1.2'), 'smallcat-feat-1-new'))}</div>
+    return `${card(d, '1.1', '背景', mdBody(d, body(d, '1.1'), 'smallcat-feat-1-new'))}
+      ${card(d, '1.2', '目标', mdBody(d, body(d, '1.2'), 'smallcat-feat-1-new'))}
       ${card(d, '1.3', '验收标准', list, x.total ? ring(x.done, x.total) : '')}
       ${card(d, '1.4', '初步路线', flowChips(d) + mdBody(d, body(d, '1.4'), 'smallcat-feat-1-new'))}`;
   }
@@ -626,7 +639,7 @@ window.FeatBoard = (() => {
     const scroll = fresh ? 0 : box.scrollTop;
     acts = [];
     mds = [];
-    box.innerHTML = `${hero(d)}${tabsBar(d)}<div class="fb-page tab-${st.tab}" role="tabpanel">${PAGES[st.tab](d)}</div>`;
+    box.innerHTML = `<div class="fb-shell">${rail(d)}<div class="fb-main">${nexts(d)}<div class="fb-page tab-${st.tab}" role="tabpanel">${PAGES[st.tab](d)}</div></div></div>`;
     box.querySelectorAll('[data-md]').forEach((el) => {
       const { text, inline } = mds[el.dataset.md];
       const frag = LiveMarkdown.render(text);
