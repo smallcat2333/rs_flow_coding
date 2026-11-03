@@ -37,7 +37,20 @@
 .guide-sw { display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 1px solid #8c959f; border-radius: 3px; vertical-align: -1px; box-sizing: border-box; }
 /* 视频页：画面居中按 16:9 适配，下方一行说明。 */
 #guide-video { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px 24px; background: var(--bg2); }
-#guide-video video { display: block; width: 100%; max-height: calc(100% - 40px); aspect-ratio: 16 / 9; border-radius: 6px; background: #0d1117; }
+#guide-video video { display: block; width: 100%; min-height: 0; flex: 0 1 auto; max-height: calc(100% - 90px); aspect-ratio: 16 / 9; border-radius: 6px; background: #0d1117; }
+/* 视频下方一行：左侧按时长分段的章节条（点击跳转、当前章显示进度），右侧倍速单选。 */
+.guide-video-bar { display: flex; align-items: center; gap: 12px; width: 100%; flex-shrink: 0; }
+.guide-chapters { display: flex; flex: 1; min-width: 0; gap: 2px; }
+.guide-chapters button { --p: 0; position: relative; flex-basis: 0; min-width: 0; height: 28px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg2); font-size: 11px; overflow: hidden; }
+.guide-chapters button::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); background: var(--sel); }
+.guide-chapters button span { position: relative; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guide-chapters button:hover { color: var(--fg); border-color: var(--accent); }
+.guide-chapters button.current { color: var(--fg); border-color: var(--accent); font-weight: 600; }
+.guide-speed { display: flex; flex-shrink: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.guide-speed button { height: 26px; padding: 0 8px; border: 0; border-radius: 0; background: var(--bg); color: var(--fg2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.guide-speed button + button { border-left: 1px solid var(--border); }
+.guide-speed button:hover { color: var(--fg); }
+.guide-speed button[aria-pressed="true"] { background: var(--accent); color: #fff; }
 #guide-video p { margin: 0; font-size: 12px; color: var(--fg2); }
 @media (max-width: 680px) {
   #guide-doc nav { display: none; }
