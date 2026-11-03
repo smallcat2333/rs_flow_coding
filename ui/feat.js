@@ -50,6 +50,7 @@ window.FeatPane = (() => {
     lockSlot.of([EditorState.readOnly.of(st.readOnly), EditorView.editable.of(!st.readOnly)]),
     themeSlot.of(dark ? oneDark : []),
     EditorView.updateListener.of((u) => {
+      if (u.docChanged) FeatBoard.changed();
       if (!u.docChanged || st.applying) return;
       scheduleToc();
       if (st.readOnly) return;
@@ -67,6 +68,7 @@ window.FeatPane = (() => {
   function resetDoc(text) {
     view.setState(EditorState.create({ doc: text, extensions: extensions() }));
     renderToc();
+    FeatBoard.changed();
   }
 
   /** 主题切换（app.js 派发 fc-theme）：只换编辑器主题，内容与撤销历史不变。 */
@@ -219,6 +221,7 @@ window.FeatPane = (() => {
     view.dispatch({ effects: lockSlot.reconfigure([EditorState.readOnly.of(true), EditorView.editable.of(false)]) });
     $('md-mask').hidden = false;
     renderBar();
+    FeatBoard.changed();
   }
 
   /** 退出只读并同步磁盘。 */
@@ -228,6 +231,7 @@ window.FeatPane = (() => {
     $('md-mask').hidden = true;
     await reload();
     renderBar();
+    FeatBoard.changed();
   }
 
   /** 从磁盘重新载入当前档案；fresh=true 时（打开新档案）同时清空撤销历史。 */
@@ -272,6 +276,8 @@ window.FeatPane = (() => {
     const app = FlowLink.appOf(st.path);
     if (!app) { box.innerHTML = ''; return; }
     const nodes = await invoke('tagged_nodes', { flowDir: app.flow_dir, tag: st.id });
+    lastNodes = nodes;
+    FeatBoard.changed();
     $('feat-node-count').textContent = $('fs-node-count').textContent = nodes.length;
     $('btn-feat-nodes').title = `关联节点 · ${nodes.length}（显示 / 隐藏）`;
     $('btn-feat-nodes').setAttribute('aria-label', `关联节点 ${nodes.length}`);
@@ -302,15 +308,68 @@ window.FeatPane = (() => {
     const item = document.querySelector(`.nn[data-id="${CSS.escape(nodeId)}"]`);
     if (item) { item.classList.add('active'); item.scrollIntoView({ block: 'nearest' }); }
     if (!m) { setState(`档案中未引用该节点（#${nodeId}）`); return; }
+    if (boardMode()) { FeatBoard.revealLine(view.state.doc.lineAt(m.index).number); return; }
     view.dispatch({ selection: { anchor: m.index, head: m.index + m[0].length }, scrollIntoView: true });
   }
 
-  /** 定位到源文件第 line 行（1 起，推进树点阶段 / T / 子 T 时传入），行首置于视口顶部。 */
-  function revealLine(line) {
+  /** 文档视图中定位到源文件第 line 行（1 起），行首置于视口顶部。 */
+  function revealDocLine(line) {
     const pos = view.state.doc.line(Math.min(line, view.state.doc.lines)).from;
     view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 8 }) });
     syncTocFromEditor();
   }
+
+  /** 定位到第 line 行（推进树点阶段 / T / 子 T、从别处跳来时传入）：控件页定位到对应卡片，文档视图滚到该行。 */
+  function revealLine(line) {
+    if (boardMode()) FeatBoard.revealLine(line);
+    else revealDocLine(line);
+  }
+
+  // ---------------- 视图：控件页 / 文档 ----------------
+
+  /** 挂了本 Feat 标签的节点（renderNodes 拉取），供控件页 §1.4 显示节点颜色。 */
+  let lastNodes = [];
+  /** 当前视图：board 控件页（默认）/ doc 文档；记入 localStorage。 */
+  let featView = localStorage.getItem('fc-feat-view') === 'doc' ? 'doc' : 'board';
+  const boardMode = () => featView === 'board';
+
+  /** 切换视图：控件页隐藏正文与大纲（编辑器保留，仍是唯一文本来源），文档专用按钮随之隐藏。 */
+  function applyView(mode) {
+    featView = mode;
+    localStorage.setItem('fc-feat-view', mode);
+    $('md-body').hidden = mode === 'board';
+    $('feat-board').hidden = mode !== 'board';
+    $('btn-ref').hidden = $('btn-toc').hidden = mode === 'board';
+    document.querySelectorAll('#feat-view [data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === mode)));
+    if (mode === 'board') FeatBoard.shown();
+    else { view.requestMeasure(); syncTocFromEditor(); }
+  }
+  $('feat-view').onclick = (e) => {
+    const b = e.target.closest('[data-view]');
+    if (b && b.dataset.view !== featView) applyView(b.dataset.view);
+  };
+
+  /** 打开同 APP 的流程图：id 非空时定位节点，否则只打开图。 */
+  function openFlowByName(name, id) {
+    const app = FlowLink.appOf(st.path);
+    const file = app && app.files.find((f) => f.name === name);
+    if (file) FlowLink.reveal(file.path, id || undefined);
+    else setState(`本 APP 没有流程图 ${name}`, true);
+  }
+
+  FeatBoard.init({
+    text: () => view.state.doc.toString(),
+    /** 控件页的修改进撤销历史并照常触发防抖保存（经 updateListener）。 */
+    edit: (change) => view.dispatch({ changes: change, userEvent: 'input.board' }),
+    readOnly: () => st.readOnly,
+    path: () => st.path,
+    id: () => st.id,
+    nodes: () => lastNodes,
+    openFlow: openFlowByName,
+    showDoc: (line) => { applyView('doc'); revealDocLine(line); view.focus(); },
+    notify: setState,
+  });
+  applyView(featView);
 
   /** 打开档案；opts.node 为从节点跳来时的节点 id，opts.line 为要定位的源文件行号。同一档案只做定位。 */
   async function open(path, opts = {}) {
@@ -360,6 +419,7 @@ window.FeatPane = (() => {
     Sidebar.deselect(st.path);
     st.path = null;
     st.id = '';
+    FeatBoard.changed();
     FeatProgress.show('');
     Split.hide('feat');
     FlowLink.setFeat('', '');

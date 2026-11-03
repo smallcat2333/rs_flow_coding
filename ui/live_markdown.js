@@ -151,5 +151,15 @@ window.LiveMarkdown = (() => {
     })];
   }
 
-  return { extension };
+  /**
+   * 控件页（feat_board.js）复用同一套渲染与过滤：输入 Markdown 文本，返回已清理的 DOM 片段，
+   * 节点引用 `<图>.drawio#<id>` 已转为 .node-ref 链接；勾选框按只读显示，由调用方决定是否接管。
+   */
+  function render(md) {
+    const out = fragment(marked.parse(md, { gfm: true }));
+    out.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.disabled = true; });
+    return out;
+  }
+
+  return { extension, render };
 })();
