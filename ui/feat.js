@@ -1,4 +1,4 @@
-// Feat 档案编辑栏：CodeMirror 6 源码编辑 + marked 预览，实时保存、加锁（与流程图同口径），
+// Feat 档案编辑栏：CodeMirror 6 就地实时预览，实时保存、加锁（与流程图同口径），
 // 并与流程图联动：打开 Feat 时高亮挂了该编号标签的节点，列出关联节点可点击定位；
 // 从节点打开 Feat 时滚动到档案中提及该节点 id 的位置。
 // 依赖：ui/vendor/vendor.js（window.Vendor）、app.js 暴露的 window.FlowLink / window.Split。
@@ -7,7 +7,7 @@
 window.FeatPane = (() => {
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
-  const { EditorView, EditorState, Transaction, Compartment, basicSetup, keymap, indentWithTab, undo, redo, markdown, oneDark, marked } = window.Vendor;
+  const { EditorView, EditorState, Transaction, Compartment, basicSetup, keymap, indentWithTab, undo, redo, markdown, oneDark } = window.Vendor;
   const $ = (id) => document.getElementById(id);
 
   /** 停止输入多久后保存（毫秒）；停止编辑多久后释放锁。 */
@@ -25,7 +25,6 @@ window.FeatPane = (() => {
     idleTimer: 0,
     saving: false,
     applying: false,  // 正在把磁盘内容写入编辑器（不触发保存）
-    mode: 'split',    // edit / split / preview
   };
 
   /** HTML 转义。 */
@@ -33,22 +32,24 @@ window.FeatPane = (() => {
 
   /** 编辑器主题槽：深色用 oneDark，浅色为空；切换主题时 reconfigure，不重建状态。 */
   const themeSlot = new Compartment();
+  const lockSlot = new Compartment();
   let dark = document.documentElement.dataset.theme === 'dark';
 
   /**
    * 编辑器扩展（函数形式：重建状态时带上当前主题）。basicSetup 自带撤销历史（Ctrl+Z 撤销、Ctrl+Y 重做）；
-   * 内容变化时刷新预览与大纲并防抖保存；滚动时同步大纲选中项。
+   * 内容变化时刷新就地排版与大纲并防抖保存；滚动时同步大纲选中项。
    */
   const extensions = () => [
     basicSetup,
     keymap.of([indentWithTab]),
     markdown(),
+    LiveMarkdown.extension(revealRef),
+    EditorView.contentAttributes.of({ 'aria-label': 'Feat 正文，点击内容直接编辑' }),
     EditorView.lineWrapping,
-    EditorState.readOnly.of(false),
+    lockSlot.of([EditorState.readOnly.of(st.readOnly), EditorView.editable.of(!st.readOnly)]),
     themeSlot.of(dark ? oneDark : []),
     EditorView.updateListener.of((u) => {
       if (!u.docChanged || st.applying) return;
-      renderPreview();
       scheduleToc();
       if (st.readOnly) return;
       clearTimeout(st.saveTimer);
@@ -64,7 +65,6 @@ window.FeatPane = (() => {
   /** 换档案时重建编辑器状态：撤销历史清空，不能撤销到上一个档案或空白内容。 */
   function resetDoc(text) {
     view.setState(EditorState.create({ doc: text, extensions: extensions() }));
-    renderPreview();
     renderToc();
   }
 
@@ -101,7 +101,7 @@ window.FeatPane = (() => {
     $('md-toc').innerHTML = toc.length
       ? toc.map((h, i) => `<div class="toc-item l${h.level}" data-i="${i}" title="${esc(h.text)}">${esc(h.text)}</div>`).join('')
       : '<div class="empty mini">没有标题</div>';
-    syncTocFromPreview();
+    syncTocFromEditor();
   }
 
   /** 标记大纲选中项并保持可见。 */
@@ -111,43 +111,29 @@ window.FeatPane = (() => {
     if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
   }
 
-  /** 预览滚动：取顶部之上最后一个标题。 */
-  function syncTocFromPreview() {
-    if (st.mode === 'edit') return;
-    const pv = $('md-preview');
-    const hs = pv.querySelectorAll('h1, h2, h3, h4');
-    const top = pv.getBoundingClientRect().top + 8;
-    let cur = 0;
-    hs.forEach((h, i) => { if (h.getBoundingClientRect().top <= top) cur = i; });
-    if (hs.length) markToc(cur);
-  }
-
-  /** 源码滚动（只在源码模式下跟随，分屏时以预览为准）：取视口顶行之上最后一个标题。 */
+  /** 正文滚动时，以实际视口位置同步大纲（包含渲染块的高度）。 */
   function syncTocFromEditor() {
-    if (st.mode !== 'edit' || !toc.length) return;
-    const topLine = view.state.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number;
+    if (!toc.length) return;
+    const top = view.documentTop + view.scrollDOM.scrollTop;
     let cur = 0;
-    toc.forEach((h, i) => { if (h.line <= topLine) cur = i; });
+    toc.forEach((h, i) => {
+      if (h.line > view.state.doc.lines) return;
+      const pos = view.state.doc.line(h.line).from;
+      const block = view.lineBlockAt(pos);
+      if (view.documentTop + block.top <= top + 12) cur = i;
+    });
     markToc(cur);
   }
 
-  /** 点大纲：源码滚到该行，预览滚到对应标题。 */
+  /** 大纲直接定位到同一份正文，移开焦点后仍显示排版效果。 */
   $('md-toc').onclick = (e) => {
     const it = e.target.closest('.toc-item');
     if (!it) return;
     const i = Number(it.dataset.i);
-    const h = toc[i];
-    if (st.mode !== 'preview') {
-      const pos = view.state.doc.line(h.line).from;
-      view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start' }) });
-    }
-    if (st.mode !== 'edit') {
-      const el = $('md-preview').querySelectorAll('h1, h2, h3, h4')[i];
-      if (el) el.scrollIntoView({ block: 'start' });
-    }
+    const pos = view.state.doc.line(toc[i].line).from;
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start' }) });
     markToc(i);
   };
-  $('md-preview').addEventListener('scroll', syncTocFromPreview);
 
   /** 大纲显示开关，记入 localStorage（默认显示）。 */
   function applyTocVisible(show) {
@@ -168,27 +154,26 @@ window.FeatPane = (() => {
     el.classList.toggle('error', !!isError);
   }
 
-  /** 用磁盘内容替换编辑器（保留光标大致位置）；外部同步不进撤销历史，Ctrl+Z 不会撤掉 Agent 的改动。 */
+  /** 同步当前档案：只替换变化片段，让滚动快照和光标随文字映射；外部改动不进撤销历史。 */
   function applyText(text) {
-    if (text === view.state.doc.toString()) return;
+    const previous = view.state.doc.toString();
+    if (text === previous) return;
+    let from = 0, to = previous.length, end = text.length;
+    while (from < to && from < end && previous[from] === text[from]) from++;
+    while (to > from && end > from && previous[to - 1] === text[end - 1]) { to--; end--; }
+    const changes = view.state.changes({ from, to, insert: text.slice(from, end) });
+    const keep = Settings.keepFeatPosition();
+    const scroll = keep ? view.scrollSnapshot().map(changes) : EditorView.scrollIntoView(0, { y: 'start', x: 'start', yMargin: 0, xMargin: 0 });
     st.applying = true;
-    const pos = Math.min(view.state.selection.main.head, text.length);
+    const pos = keep ? changes.mapPos(view.state.selection.main.head) : 0;
     view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: text },
+      changes,
       selection: { anchor: pos },
+      effects: scroll,
       annotations: Transaction.addToHistory.of(false),
     });
     st.applying = false;
-    renderPreview();
     renderToc();
-  }
-
-  /** 渲染预览：marked 转 HTML；`<图名>#<节点id>` 形式的引用渲染成可点击链接。 */
-  function renderPreview() {
-    if (st.mode === 'edit') return;
-    const html = marked.parse(view.state.doc.toString(), { gfm: true, breaks: false });
-    $('md-preview').innerHTML = html.replace(/([\w一-龥-]+\.drawio)#([\w-]+)/g,
-      (m, f, id) => `<a href="#" class="node-ref" data-file="${esc(f)}" data-id="${esc(id)}">${esc(m)}</a>`);
   }
 
   /** 保存：加用户锁 + 原子写盘；Agent 持锁时转只读并丢弃本次改动（随后同步磁盘）。 */
@@ -229,7 +214,7 @@ window.FeatPane = (() => {
   /** 只读：Agent 持锁时禁止编辑。 */
   async function enterReadOnly() {
     st.readOnly = true;
-    view.contentDOM.setAttribute('contenteditable', 'false');
+    view.dispatch({ effects: lockSlot.reconfigure([EditorState.readOnly.of(true), EditorView.editable.of(false)]) });
     $('md-mask').hidden = false;
     renderBar();
   }
@@ -237,7 +222,7 @@ window.FeatPane = (() => {
   /** 退出只读并同步磁盘。 */
   async function leaveReadOnly() {
     st.readOnly = false;
-    view.contentDOM.setAttribute('contenteditable', 'true');
+    view.dispatch({ effects: lockSlot.reconfigure([EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
     $('md-mask').hidden = true;
     await reload();
     renderBar();
@@ -280,12 +265,12 @@ window.FeatPane = (() => {
     box.innerHTML = Object.entries(byFile).map(([file, list]) => `
       <div class="nf"><div class="nf-name">${esc(file.split(/[\\/]/).pop().replace(/\.drawio$/i, ''))}</div>
       ${list.map((n) => `<div class="nn" data-file="${esc(file)}" data-id="${esc(n.id)}">
-        <span class="sw s-${n.status}"></span><span class="nn-label">${esc(n.label || n.id)}</span>
-        <span class="nn-tags">${n.tags.filter((t) => t !== st.id).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span></div>`).join('')}
+        <span class="sw s-${n.status}"></span><div class="nn-content"><span class="nn-id">${esc(n.id)}</span><span class="nn-label">${esc(n.label || n.id)}</span>
+        <span class="nn-tags">${n.tags.filter((t) => t !== st.id).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</span></div></div>`).join('')}
       </div>`).join('');
   }
 
-  /** 在档案中查找节点 id 首次出现的位置并滚动选中（源码与预览都定位）。 */
+  /** 在档案中查找节点 id 首次出现的位置并滚动选中（同一份正文内定位）。 */
   function revealNode(nodeId) {
     const text = view.state.doc.toString();
     const re = new RegExp(`#${nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`);
@@ -295,12 +280,18 @@ window.FeatPane = (() => {
     if (item) { item.classList.add('active'); item.scrollIntoView({ block: 'nearest' }); }
     if (!m) { setState(`档案中未引用该节点（#${nodeId}）`); return; }
     view.dispatch({ selection: { anchor: m.index, head: m.index + m[0].length }, scrollIntoView: true });
-    const a = [...document.querySelectorAll('#md-preview .node-ref')].find((x) => x.dataset.id === nodeId);
-    if (a) { a.scrollIntoView({ block: 'center' }); a.classList.add('flash'); setTimeout(() => a.classList.remove('flash'), 1500); }
   }
 
-  /** 打开档案；opts.node 为从节点跳来时的节点 id。同一档案只做定位。 */
+  /** 定位到源文件第 line 行（1 起，推进矩阵点阶段 / T 时传入），行首置于视口顶部。 */
+  function revealLine(line) {
+    const pos = view.state.doc.line(Math.min(line, view.state.doc.lines)).from;
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 8 }) });
+    syncTocFromEditor();
+  }
+
+  /** 打开档案；opts.node 为从节点跳来时的节点 id，opts.line 为要定位的源文件行号。同一档案只做定位。 */
   async function open(path, opts = {}) {
+    Split.show('feat');
     if (path !== st.path) {
       await flush();
       await release();
@@ -308,12 +299,9 @@ window.FeatPane = (() => {
       st.id = (path.split(/[\\/]/).pop().match(/^(Feat_\d+_\d+)/) || [, path.split(/[\\/]/).pop().replace(/\.md$/i, '')])[1];
       st.readOnly = false;
       $('md-mask').hidden = true;
-      view.contentDOM.setAttribute('contenteditable', 'true');
+      view.dispatch({ effects: lockSlot.reconfigure([EditorState.readOnly.of(false), EditorView.editable.of(true)]) });
       setState('');
       await reload(true);
-      Split.show('feat');
-      // 首次打开时栏宽不足 760px 分屏太挤，默认只看预览；之后保持用户选择
-      if (!st.modeChosen) setMode($('feat-pane').getBoundingClientRect().width < 760 ? 'preview' : 'split');
       document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === path));
       await checkLock();
       renderBar();
@@ -321,11 +309,25 @@ window.FeatPane = (() => {
     }
     await renderNodes();
     if (opts.node) revealNode(opts.node);
+    else if (opts.line) revealLine(opts.line);
   }
 
   /** 关闭前把待保存内容立即写盘。 */
   async function flush() {
     if (st.saveTimer) { clearTimeout(st.saveTimer); st.saveTimer = 0; if (!st.readOnly && st.path) await save(); }
+  }
+
+  /** 重命名前等待保存完成并释放锁；写盘失败或编辑仍未落盘时拒绝继续。 */
+  async function settle() {
+    while (st.saving) await new Promise((resolve) => setTimeout(resolve, 20));
+    await flush();
+    while (st.saving) await new Promise((resolve) => setTimeout(resolve, 20));
+    if (st.path) {
+      const disk = await invoke('read_md', { path: st.path });
+      // CodeMirror 内部统一 LF；Windows 磁盘的 CRLF 不代表未保存改动。
+      if (disk.text.replace(/\r\n?/g, '\n') !== view.state.doc.toString()) throw new Error('档案尚未保存，请先处理保存错误再重命名');
+      await release();
+    }
   }
 
   /** 关闭 Feat 栏。 */
@@ -335,8 +337,11 @@ window.FeatPane = (() => {
     st.path = null;
     st.id = '';
     Split.hide('feat');
-    FlowLink.setFeat('', '');
-    document.querySelectorAll('.feat.active').forEach((e) => e.classList.remove('active'));
+    // 矩阵仍在查看该 Feat 时，关闭正文只收起文档，保留矩阵选中项和流程图高亮。
+    if (!Split.isOpen('mx')) {
+      FlowLink.setFeat('', '');
+      document.querySelectorAll('.feat.active').forEach((e) => e.classList.remove('active'));
+    }
   }
 
   /** 锁巡检：Agent 加锁转只读，释放后恢复。 */
@@ -360,30 +365,80 @@ window.FeatPane = (() => {
   /** 流程图变化可能改变节点标签与颜色：刷新关联节点列表。 */
   listen('flow-changed', () => { if (st.path) setTimeout(renderNodes, 500); });
 
-  /** 视图模式切换。 */
-  function setMode(mode) {
-    st.mode = mode;
-    $('md-body').dataset.mode = mode;
-    document.querySelectorAll('#md-modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
-    renderPreview();
+  const nodesBody = $('feat-body');
+  const nodesToggle = $('btn-feat-nodes');
+  const nodesResize = $('feat-nodes-resize');
+  let nodesExpanded = localStorage.getItem('fc-feat-nodes-open') !== 'false';
+  let narrowNodesOpen = false;
+  let nodesNarrow = false;
+  let nodesWidth = Number(localStorage.getItem('fc-feat-nodes-width')) || 280;
+
+  function updateNodesSide() {
+    const open = nodesNarrow ? narrowNodesOpen : nodesExpanded;
+    nodesBody.classList.toggle('nodes-open', open);
+    nodesBody.classList.toggle('nodes-narrow', nodesNarrow);
+    nodesToggle.classList.toggle('on', open);
+    nodesToggle.setAttribute('aria-expanded', String(open));
+    $('feat-side').inert = !open;
   }
 
-  $('md-modes').onclick = (e) => { const b = e.target.closest('button'); if (b) { st.modeChosen = true; setMode(b.dataset.mode); } };
-  $('fs-head').onclick = () => $('feat-side').classList.toggle('collapsed');
+  function setNodesWidth(width) {
+    nodesWidth = Math.round(Math.max(220, Math.min(480, width)));
+    nodesBody.style.setProperty('--feat-nodes-width', nodesWidth + 'px');
+    nodesResize.setAttribute('aria-valuenow', String(nodesWidth));
+  }
+  setNodesWidth(nodesWidth);
+  new ResizeObserver(([entry]) => {
+    if (!entry.contentRect.width) return;
+    const narrow = entry.contentRect.width < 760;
+    if (narrow !== nodesNarrow) narrowNodesOpen = false;
+    nodesNarrow = narrow;
+    updateNodesSide();
+  }).observe(nodesBody);
+  updateNodesSide();
+
+  nodesToggle.onclick = () => {
+    if (nodesNarrow) narrowNodesOpen = !narrowNodesOpen;
+    else {
+      nodesExpanded = !nodesExpanded;
+      localStorage.setItem('fc-feat-nodes-open', String(nodesExpanded));
+    }
+    updateNodesSide();
+  };
+  $('fs-head').onclick = () => { nodesToggle.click(); nodesToggle.focus(); };
+  nodesResize.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX, startWidth = nodesWidth;
+    nodesResize.setPointerCapture(e.pointerId);
+    nodesResize.onpointermove = (ev) => setNodesWidth(startWidth + startX - ev.clientX);
+    nodesResize.onpointerup = nodesResize.onpointercancel = () => {
+      nodesResize.onpointermove = null;
+      localStorage.setItem('fc-feat-nodes-width', String(nodesWidth));
+    };
+  };
+  nodesResize.onkeydown = (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    setNodesWidth(e.key === 'Home' ? 220 : e.key === 'End' ? 480 : nodesWidth + (e.key === 'ArrowLeft' ? 10 : -10));
+    localStorage.setItem('fc-feat-nodes-width', String(nodesWidth));
+  };
+  nodesResize.ondblclick = () => {
+    setNodesWidth(280);
+    localStorage.setItem('fc-feat-nodes-width', '280');
+  };
   $('btn-feat-close').onclick = close;
   $('feat-nodes').onclick = (e) => {
     const n = e.target.closest('.nn');
     if (n) FlowLink.reveal(n.dataset.file, n.dataset.id);
   };
-  $('md-preview').onclick = (e) => {
-    const a = e.target.closest('.node-ref');
-    if (!a) return;
-    e.preventDefault();
+  /** 就地预览中的节点引用保留流程图跳转。 */
+  function revealRef(name, id) {
     const app = FlowLink.appOf(st.path);
-    const file = app && app.files.find((f) => f.name === a.dataset.file);
-    if (file) FlowLink.reveal(file.path, a.dataset.id);
-    else setState(`本 APP 没有流程图 ${a.dataset.file}`, true);
-  };
+    const file = app && app.files.find((f) => f.name === name);
+    if (file) FlowLink.reveal(file.path, id);
+    else setState(`本 APP 没有流程图 ${name}`, true);
+  }
   $('btn-ref').onclick = () => {
     // 把当前选中节点插入为引用 `<图名>#<id>`
     const cell = window.FlowSel && window.FlowSel()[0];
@@ -394,7 +449,7 @@ window.FeatPane = (() => {
     view.focus();
   };
   /**
-   * 编辑器外的撤销 / 重做：最后点击的是 Feat 栏（预览模式、关联节点列表等焦点不在编辑器）时，
+   * 编辑器外的撤销 / 重做：最后点击的是 Feat 栏（大纲、关联节点列表等焦点不在编辑器）时，
    * Ctrl+Z 撤销、Ctrl+Y 重做仍作用于档案；焦点在编辑器内由 CodeMirror 自己处理。
    * Agent 持锁只读时不响应；点过流程图或侧栏后不拦截，避免误改档案。
    */
@@ -410,7 +465,6 @@ window.FeatPane = (() => {
     if (!cmd(view)) setState(cmd === undo ? '没有可撤销的改动' : '没有可重做的改动');
   });
   window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.path }); });
-  setMode('split');
 
   return {
     open,
@@ -418,5 +472,6 @@ window.FeatPane = (() => {
     curPath: () => st.path,
     curId: () => st.id,
     flush,
+    settle,
   };
 })();

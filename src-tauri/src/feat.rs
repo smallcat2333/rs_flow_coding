@@ -165,39 +165,10 @@ pub fn with_status(text: &str, status: &str, date: &str) -> Result<String, Strin
     Ok(result)
 }
 
-/// 统计 §3.1 路线图：小节标题以 `### 3.1` 开头，到下一个 `##`/`###` 为止；
-/// 跳过表头与分隔行，状态列为末列，「完成」「取消」计为已完成。
+/// 统计 §3.1 路线图：与推进矩阵同一口径（progress::parse），返回 (完成数, 总数)，总数不含暂缓、取消。
 fn roadmap_progress(text: &str) -> (usize, usize) {
-    let mut in_sec = false;
-    let (mut done, mut total) = (0, 0);
-    let mut header_seen = false;
-    for line in text.lines() {
-        let l = line.trim();
-        if l.starts_with("### 3.1") {
-            in_sec = true;
-            continue;
-        }
-        if in_sec && (l.starts_with("## ") || l.starts_with("### ")) {
-            break;
-        }
-        if !in_sec || !l.starts_with('|') {
-            continue;
-        }
-        if !header_seen {
-            header_seen = true;
-            continue;
-        }
-        if l.trim_matches(['|', '-', ' ', ':']).is_empty() {
-            continue;
-        }
-        let cells: Vec<&str> = l.trim_matches('|').split('|').map(str::trim).collect();
-        let Some(st) = cells.last() else { continue };
-        total += 1;
-        if st.contains("完成") || st.contains("取消") {
-            done += 1;
-        }
-    }
-    (done, total)
+    let dev = crate::progress::parse(text, "").dev;
+    (dev.done, dev.total)
 }
 
 /// 汇总一个 APP 的 Feat：读档案摘要，并从该 APP 全部流程图节点中按标签计数。
@@ -262,7 +233,7 @@ mod tests {
         let (t, s, d, n) = parse_md(MD, "Feat_260910_1");
         assert_eq!(t, "通用检查流程");
         assert_eq!(s, "开发中");
-        assert_eq!((d, n), (2, 3));
+        assert_eq!((d, n), (1, 2), "取消不计入总数");
         let (_, s2, _, n2) = parse_md("# X\n- 状态：已完成\n", "X");
         assert_eq!((s2.as_str(), n2), ("已完成", 0));
     }

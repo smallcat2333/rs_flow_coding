@@ -12,7 +12,7 @@
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
   const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
-  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
+  const config = { roots: ['(mock)'], flow_dirs: [], sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], layout: 'tree', ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
@@ -60,13 +60,99 @@
     mine.forEach((n) => c[n.status]++);
     return {
       path: p, id, title, status, archived: /^(已关闭|已废弃)/.test(status), closed_at: ((text.match(/关闭[：:]\s*(\S+)/) || [])[1] || ''), counts: c, node_total: mine.length, lock: lockOf(p),
-      tasks_total: rows.length, tasks_done: rows.filter((r) => /完成|取消/.test(r.split('|').slice(-2)[0])).length,
+      tasks_total: rows.filter((r) => !/^\s*(暂缓|取消)/.test(r.split('|').slice(-2)[0])).length,
+      tasks_done: rows.filter((r) => /^\s*完成/.test(r.split('|').slice(-2)[0])).length,
       closable: mine.length > 0 && c.none === mine.length,
     };
   }
 
+  /** 推进进度：Rust progress::parse 的预览用移植（口径以 Rust 单测为准）。 */
+  function progress(p) {
+    const text = mds[p];
+    const e = featEntry(p);
+    const lines = text.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' ')).split('\n');
+    const region = (head, stopH3) => {
+      const s = lines.findIndex((l) => l.trimStart().startsWith(head));
+      if (s < 0) return [0, []];
+      const body = [];
+      for (let i = s + 1; i < lines.length; i++) {
+        const t = lines[i].trimStart();
+        if (t.startsWith('## ') || (stopH3 && t.startsWith('### '))) break;
+        body.push([i + 1, lines[i]]);
+      }
+      return [s + 1, body];
+    };
+    const rows = (body) => {
+      const out = []; let inT = false;
+      for (const [n, l] of body) {
+        const t = l.trim();
+        if (!t.startsWith('|')) { inT = false; continue; }
+        if (!inT) { inT = true; continue; }
+        if (!t.replace(/[|\-\s:]/g, '')) continue;
+        out.push([n, t.replace(/^\||\|$/g, '').split('|').map((c) => c.trim())]);
+      }
+      return out;
+    };
+    const state = (s) => (s = s.trim().replace(/^\*+/, ''), [['待用户确认', 'waiting'], ['待开发', 'todo'], ['进行中', 'doing'], ['完成', 'done'], ['暂缓', 'paused'], ['取消', 'cancelled']].find(([w]) => s.startsWith(w))?.[1] || 'unknown');
+    const mean = (body) => body.filter(([, l]) => l.trim() && !l.trim().startsWith('<')).length;
+    const req = { done: 0, total: 0, line: region('## 1.')[0] };
+    for (const [, l] of region('### 1.3', true)[1]) {
+      const m = l.match(/^\s*[-*]\s*\[( |x|X)\]\s*(.*)$/);
+      if (m && m[2] && !m[2].startsWith('<')) { req.total++; if (m[1] !== ' ') req.done++; }
+    }
+    const ui = { has: mean(region('### 2.1', true)[1]) > 0, controls: rows(region('### 2.2', true)[1]).length, logs: region('### 2.4', true)[1].filter(([, l]) => l.trimStart().startsWith('- ')).length, line: region('## 2.')[0] };
+    const tasks = rows(region('### 3.1', true)[1]).filter(([, c]) => /^T\d+$/.test(c[0])).map(([n, c]) => ({
+      id: c[0], title: c[1] || '', deps: c.length >= 5 ? c[2] : '', status: c[c.length - 1], state: state(c[c.length - 1]), line: n,
+      record_line: 0, first_date: '', last_date: '', records: 0, dup: false, subs: [] }));
+    tasks.forEach((t) => { t.dup = tasks.filter((x) => x.id === t.id).length > 1; });
+    const rec = region('### 3.2', false)[1];
+    for (const [n, l] of rec) {
+      const m = l.match(/^\s*### (\d{4}-\d{2}-\d{2})(.*)$/);
+      if (!m) continue;
+      const ids = [...m[2].matchAll(/\[([^\]]*)\]/g)].flatMap((x) => x[1].split(/[,，/ ]/).map((s) => s.trim()));
+      for (const t of tasks.filter((t) => ids.includes(t.id))) {
+        if (!t.record_line) t.record_line = n;
+        if (!t.first_date || m[1] < t.first_date) t.first_date = m[1];
+        if (m[1] > t.last_date) t.last_date = m[1];
+        t.records++;
+      }
+    }
+    for (const [n, c] of rows(rec)) {
+      if (!/^T\d+\.\d+$/.test(c[0])) continue;
+      const t = tasks.find((x) => x.id === c[0].split('.')[0]);
+      if (!t) continue;
+      const sub = { id: c[0], title: c[2] || '', status: c[c.length - 1], state: state(c[c.length - 1]), line: n };
+      const i = t.subs.findIndex((s) => s.id === sub.id);
+      if (i >= 0) t.subs[i] = sub; else t.subs.push(sub);
+    }
+    const dev = { todo: 0, doing: 0, waiting: 0, done: 0, paused: 0, cancelled: 0, unknown: 0, total: 0, line: region('## 3.')[0] };
+    tasks.forEach((t) => dev[t.state]++);
+    dev.total = tasks.length - dev.paused - dev.cancelled;
+    const tally = (head) => {
+      const body = region(head, true)[1];
+      const hdr = body.find(([, l]) => l.trim().startsWith('|'));
+      const col = hdr ? hdr[1].trim().replace(/^\||\|$/g, '').split('|').findIndex((c) => c.includes('结果')) : -1;
+      const rs = rows(body);
+      let pass = 0, fail = 0;
+      for (const [, c] of rs) { const v = (c[col] || '').trim(); if (/^(不通过|失败|FAIL)/i.test(v)) fail++; else if (/^(通过|PASS)/i.test(v)) pass++; }
+      return [pass, fail, rs.length];
+    };
+    const [ap, af, at] = tally('### 4.1'), [mp, mf, mt] = tally('### 4.2');
+    const issues = region('### 4.3', true)[1].filter(([, l]) => l.trimStart().startsWith('- '));
+    const test = { auto_pass: ap, auto_fail: af, auto_total: at, manual_pass: mp, manual_fail: mf, manual_total: mt,
+      issues_open: issues.filter(([, l]) => !/复测[：:]通过/.test(l)).length, issues_total: issues.length, line: region('## 4.')[0] };
+    const [cl, cb] = region('## 5.');
+    const close = { release: mean(cb) > 0, line: cl };
+    const s = e.status;
+    const inferred = at + mt ? 'test' : tasks.length ? 'dev' : ui.has ? 'ui' : 'req';
+    const stage = /^(探讨中|需求整理中)/.test(s) ? (ui.has ? 'ui' : 'req') : /^开发中/.test(s) ? 'dev' : /^测试中/.test(s) ? 'test' : /^已关闭/.test(s) ? 'close' : inferred;
+    const flag = /^已暂停/.test(s) ? 'paused' : /^已废弃/.test(s) ? 'dropped' : '';
+    return { path: p, id: e.id, title: e.title, status: s, archived: e.archived, closed_at: e.closed_at, stage, flag, req, ui, dev, test, close, tasks };
+  }
+
   const api = {
     async get_config() { return config; },
+    async feat_progress() { return Object.keys(mds).sort().reverse().map(progress); },
     async set_roots({ roots }) { config.roots = roots; return config; },
     async save_sidebar({ sidebar }) { config.sidebar = sidebar; localStorage.setItem('fc-mock-sidebar', JSON.stringify(sidebar)); },
     async set_chart_enabled({ path, enabled }) {
@@ -113,7 +199,47 @@
       const empty = (app) => ({ group: 'group_tools', app, root: '', flow_dir: `/mock/group_tools/${app}/docs/flow`, feat_dir: `/mock/group_tools/${app}/docs/feat`, files: [], feats: [], counts: counts('') });
       return [{ group: 'group_sever', app: 'rs_bot_sever', root: '', flow_dir: '/mock/flow', feat_dir: '/mock/feat', files: list, feats, counts: total }, empty('app_demo_a'), empty('app_demo_b')];
     },
-    async read_diagram({ path }) { return { path, xml: files[path], hash: hash(files[path]) }; },
+    /** 浏览器预览中模拟同目录重命名；真实锁、引用和历史一致性由 Rust 测试覆盖。 */
+    async rename_entry({ path, name }) {
+      if (agentLock || userLocks.has(path)) throw 'LOCKED:文件正在编辑';
+      const flow = path.endsWith('.drawio');
+      const base = flow ? name + '.drawio' : path.split('/').pop().match(/^(Feat_\d+_\d+)/)[1] + '_' + name + '.md';
+      const target = path.slice(0, path.lastIndexOf('/') + 1) + base;
+      if (files[target] || mds[target]) throw '目标文件已存在';
+      const changed = [];
+      if (flow) {
+        files[target] = files[path]; delete files[path];
+        snaps.filter((s) => s.path === path).forEach((s) => s.path = target);
+        if (chartStates[path]) { chartStates[target] = chartStates[path]; delete chartStates[path]; }
+        for (const md of Object.keys(mds)) {
+          const text = mds[md].split(path.split('/').pop() + '#').join(base + '#');
+          if (text !== mds[md]) { mds[md] = text; changed.push(md); emit('md-changed', { path: md, hash: hash(text), source: 'user' }); }
+        }
+      } else {
+        const id = base.match(/^(Feat_\d+_\d+)/)[1];
+        mds[target] = mds[path].replace(/^# .*$/m, '# ' + id + ' ' + name); delete mds[path];
+      }
+      emit('catalog-changed', {});
+      return { path: target, changed_feats: changed };
+    },
+    /** 模拟 Rust 的本地图链接解析；真实路径与 XML 校验由 Rust 单测覆盖。 */
+    async resolve_flow_link({ source, link }) {
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(link)) throw '不是本地图链接';
+      const url = new URL(link.replace(/\\/g, '/'), 'http://mock.local' + source);
+      const path = decodeURIComponent(url.pathname);
+      const node = decodeURIComponent(url.hash.slice(1));
+      if (!/\.drawio$/i.test(path)) throw '目标不是 .drawio';
+      if (!Object.hasOwn(files, path)) throw '目标不存在：' + path;
+      const doc = new DOMParser().parseFromString(files[path], 'text/xml');
+      if (doc.querySelector('parsererror')) throw '目标 XML 损坏';
+      if (node && ![...doc.querySelectorAll('mxCell[vertex="1"]')].some((cell) =>
+        (cell.parentElement.matches('object, UserObject') ? cell.parentElement : cell).getAttribute('id') === node)) throw '目标节点不存在：' + node;
+      return { path, node };
+    },
+    async read_diagram({ path }) {
+      if (!Object.hasOwn(files, path)) throw '文件不存在：' + path;
+      return { path, xml: files[path], hash: hash(files[path]) };
+    },
     async save_diagram({ path, xml }) {
       if (agentLock) throw 'LOCKED:agent 正在编辑（pid 1）';
       userLocks.add(path);
@@ -143,6 +269,7 @@
       if (agentLock) throw 'LOCKED:agent 正在编辑（pid 1）';
       userLocks.add(path);
       mds[path] = text;
+      emit('md-changed', { path, hash: hash(text), source: 'user' });
       return hash(text);
     },
     async tagged_nodes({ tag }) { return allNodes().filter((n) => n.tags.includes(tag)); },
@@ -152,14 +279,14 @@
       return p;
     },
     /** 弹出窗口：用 window.open 模拟（各窗口的模拟数据互相独立，只验证界面与窗口间路由）。 */
-    async open_popout({ kind, path, node }) {
+    async open_popout({ kind, path, node, line = 0 }) {
       const name = 'pop-' + kind;
       if (popWins[name] && !popWins[name].closed) {
         popWins[name].focus();
-        bc.postMessage({ name: 'popout-open', payload: { kind, path, node } });
+        bc.postMessage({ name: 'popout-open', payload: { kind, path, node, line } });
         return;
       }
-      popWins[name] = window.open(`/index.html?solo=${kind}&path=${encodeURIComponent(path)}&node=${encodeURIComponent(node || '')}`, name, 'width=1100,height=820');
+      popWins[name] = window.open(`/index.html?solo=${kind}&path=${encodeURIComponent(path)}&node=${encodeURIComponent(node || '')}&line=${line}`, name, 'width=1100,height=820');
     },
   };
 
@@ -168,6 +295,7 @@
   const bc = new BroadcastChannel('fc-mock');
   bc.onmessage = (e) => emit(e.data.name, e.data.payload);
   const solo = new URLSearchParams(location.search).get('solo');
+  let mockFullscreen = false;
   if (solo) window.addEventListener('pagehide', () => bc.postMessage({ name: 'popout-closed', payload: { kind: solo } }));
 
   window.__TAURI__ = {
@@ -176,7 +304,15 @@
       listen: async (name, f) => { (listeners[name] = listeners[name] || []).push(f); return () => {}; },
       emit: async (name, payload) => { emit(name, payload); bc.postMessage({ name, payload }); },
     },
-    window: { getCurrentWindow: () => ({ onCloseRequested: async () => () => {} }) },
+    window: {
+      getCurrentWindow: () => ({
+        onCloseRequested: async () => () => {},
+        setFullscreen: async (on) => { mockFullscreen = !!on; },
+        isFullscreen: async () => mockFullscreen,
+        destroy: async () => {},
+        close: async () => {},
+      }),
+    },
   };
 
   window.__mock = {

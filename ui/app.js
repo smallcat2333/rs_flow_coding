@@ -44,7 +44,10 @@ const SUPPRESS_MS = 1200;
 const $ = (id) => document.getElementById(id);
 const editor = $('editor');
 
-/** 运行状态。 */
+/** 图导航回退栈只保留在本窗口，记录来源图和节点，不写进项目文件。 */
+const flowBack = [];
+let flowNavigating = false;
+
 const st = {
   apps: [],
   cur: null,          // 当前图路径
@@ -57,6 +60,7 @@ const st = {
   readOnly: false,
   suppressUntil: 0,   // 此时刻前的 autosave 视为回显
   loaded: false,      // 当前图已在编辑器中载入完成
+  restoreView: false, // 同一张图同步完成后，按设置恢复视图或自适应。
   pendingSelect: '',  // 图载入完成后要选中的节点 id
   histSel: [],        // 历史面板勾选的快照 id
   histRows: [],
@@ -89,8 +93,11 @@ function renderStatusStats(counts) {
   }).join('');
 }
 
-/** 侧栏底部错误提示；空串清除。 */
-function sideMsg(msg) { $('side-msg').textContent = msg || ''; }
+/** 侧栏底部提示：成功操作显示绿色，错误保留红色；空串清除。 */
+function sideMsg(msg, success = false) {
+  $('side-msg').textContent = msg || '';
+  $('side-msg').classList.toggle('success', success);
+}
 
 /** 顶栏保存状态提示。 */
 function saveState(text, isError) {
@@ -130,6 +137,7 @@ async function refresh(full = false) {
   }
   renderTree();
   renderCurrentBar();
+  if (!SOLO) MatrixPane.refreshed();
   return true;
 }
 
@@ -149,12 +157,17 @@ function appOf(path) {
   return st.apps.find((a) => a.files.some((f) => f.path === path) || a.feats.some((f) => f.path === path)) || null;
 }
 
-/** 锁状态变化后同步左侧树中该图的锁标签（锁释放不触发文件变化通知，需主动刷新）。 */
+/** 同步图或 Feat 的锁标签；解锁和锁超时不触发文件变更，必须读取实时锁而非沿用汇总快照。 */
 async function syncTreeLock(path) {
   if (!path) return;
   const lock = await invoke('lock_status', { path });
-  for (const a of st.apps) for (const f of a.files) if (f.path === path) f.lock = lock;
-  renderTree();
+  let changed = false;
+  for (const a of st.apps) for (const f of [...a.files, ...a.feats]) {
+    if (f.path !== path) continue;
+    changed ||= (f.lock?.owner || '') !== (lock?.owner || '');
+    f.lock = lock;
+  }
+  if (changed) renderTree();
 }
 
 /** 顶栏：当前 APP、图名、状态分布、锁。 */
@@ -163,7 +176,10 @@ function renderCurrentBar() {
   $('cur-app').textContent = e ? `${e.app.group ? e.app.group + ' / ' : ''}${e.app.app}` : '';
   $('cur-name').textContent = e ? e.file.name.replace(/\.drawio$/i, '') : (st.cur ? st.cur : '未打开流程图');
   $('cur-counts').innerHTML = e ? badges(e.file.counts) : '';
+  $('btn-flow-back').disabled = !st.cur || !flowBack.length || flowNavigating;
   $('btn-history').disabled = !st.cur;
+  $('btn-flow-full').disabled = !st.cur;
+  $('node-find').disabled = !st.cur;
   $('btn-flow-pop').disabled = !st.cur;
   const feat = appOf(curFeat.path)?.feats.find((f) => f.path === curFeat.path);
   $('feat-status').textContent = feat ? feat.status : '';
@@ -171,6 +187,14 @@ function renderCurrentBar() {
   if (st.readOnly) { badge.className = 'agent'; badge.textContent = 'Agent 持锁'; }
   else if (st.holding) { badge.className = 'user'; badge.textContent = '你持锁'; }
   else { badge.className = ''; badge.textContent = ''; }
+  syncMenuFeats();
+}
+
+/** 把当前图所属 APP 的未收纳 Feat 下发给编辑器，供右键「挂到 Feat」列出；编辑器未就绪时跳过，init 时补发。 */
+function syncMenuFeats() {
+  if (!st.ready) return;
+  const feats = (curEntry()?.app.feats || []).filter((f) => !f.archived).map((f) => ({ id: f.id, title: f.title }));
+  post({ action: 'fc-feats', feats });
 }
 
 $('tree').addEventListener('click', async (ev) => {
@@ -223,14 +247,24 @@ function ensureEditor() {
   editor.src = `drawio/index.html?${q}`;
 }
 
-/** 把磁盘内容推给编辑器：首次用 load（开启实时保存 + diffSync），之后用 merge 保留视图。
- *  推送引起的那次 autosave 是编辑器回显，不是用户改动，在 SUPPRESS_MS 内忽略，避免把外部改动写回并抢锁。 */
-async function pushFromDisk(first) {
+/** 把磁盘内容推给编辑器：首次 load，更新时 merge；同步前暂存视图，完成后按设置恢复。
+ *  合并失败重载时复用同一次视图快照；推送的 autosave 回显在 SUPPRESS_MS 内忽略。 */
+async function pushFromDisk(first, retry = false) {
   const d = await invoke('read_diagram', { path: st.cur });
   st.curHash = d.hash;
   st.suppressUntil = Date.now() + SUPPRESS_MS;
-  if (first) post({ action: 'load', xml: d.xml, autosave: 1, diffSync: true, title: d.path });
+  st.restoreView = !first;
+  if (!first && !retry) post({ action: 'fc-viewport-save' });
+  if (first || retry) post({ action: 'load', xml: d.xml, autosave: 1, diffSync: true, title: d.path.split(/[\\/]/).pop() });
   else post({ action: 'merge', xml: d.xml });
+  post({ action: 'fc-path', path: d.path });
+}
+
+/** 同一张图更新完成后应用视图偏好；首次打开和主动节点定位沿用原行为。 */
+function finishViewUpdate() {
+  if (!st.restoreView) return;
+  st.restoreView = false;
+  post({ action: 'fc-viewport-apply', keep: Settings.keepFlowView() });
 }
 
 /** 打开一张图：先释放上一张的锁，再加载。 */
@@ -244,6 +278,7 @@ async function openDiagram(path) {
   renderNodeBar();
   $('empty').hidden = true;
   Split.show('flow');
+  if (!SOLO) MatrixPane.followFlow(path);
   saveState('');
   document.querySelectorAll('.file').forEach((f) => f.classList.toggle('active', f.dataset.path === path));
   renderCurrentBar();
@@ -328,8 +363,20 @@ async function leaveReadOnly() {
   if (st.ready && st.cur) await pushFromDisk(false);
 }
 
-/** 常驻锁巡检：未持锁时定时查当前图锁，Agent 加锁后立即转只读，释放后恢复。 */
-setInterval(() => { if (st.cur && !st.holding) checkLock().catch(() => {}); }, LOCK_POLL_MS);
+/** 巡检当前图只读状态，并刷新当前 Feat 与侧栏已标锁的条目；覆盖解锁、超时以及切走文件后的残留标签。 */
+let checkingTreeLocks = false;
+setInterval(async () => {
+  if (checkingTreeLocks) return;
+  checkingTreeLocks = true;
+  try {
+    if (st.cur && !st.holding) await checkLock();
+    const paths = new Set(st.apps.flatMap((a) => [...a.files, ...a.feats]).filter((f) => f.lock).map((f) => f.path));
+    const featPath = FeatPane.curPath();
+    if (featPath) paths.add(featPath);
+    await Promise.all([...paths].map(syncTreeLock));
+  } catch (e) { console.error('锁状态巡检失败', e); }
+  finally { checkingTreeLocks = false; }
+}, LOCK_POLL_MS);
 
 window.addEventListener('message', (ev) => {
   if (ev.source !== editor.contentWindow || typeof ev.data !== 'string') return;
@@ -354,6 +401,8 @@ window.addEventListener('message', (ev) => {
     case 'init':
       st.ready = true;
       post({ action: 'fc-theme', dark: isDark() });
+      post({ action: 'fc-ids', show: showIds() });
+      syncMenuFeats();
       if (st.cur) pushFromDisk(true);
       break;
     case 'fc-select':
@@ -362,10 +411,29 @@ window.addEventListener('message', (ev) => {
     case 'fc-open-feat':
       if (m.cell) openNodeFeat(m.cell);
       break;
+    case 'fc-open-flow':
+      if (m.source === st.cur) followFlowLink(m.link, m.cell);
+      break;
+    case 'fc-copied':
+      saveState(m.error ? '复制失败：' + m.error : `已复制 ${m.count} 条节点引用`, !!m.error);
+      break;
+    case 'fc-tagged':
+      setTimeout(() => refresh(false), 1500);
+      break;
+    case 'fc-select-miss':
+      saveState(`当前图没有节点 ${m.id}`, true);
+      break;
+    case 'fc-escape':
+      if (flowFull) setFlowFull(false);
+      else if (SOLO) currentWindow.close();
+      break;
     case 'load':
       // 图载入完成：按当前 Feat 重新高亮，执行等待中的节点定位
       st.loaded = true;
+      flowNavigating = false;
+      renderCurrentBar();
       applyFeat();
+      finishViewUpdate();
       if (st.pendingSelect) { post({ action: 'fc-select-cell', id: st.pendingSelect }); st.pendingSelect = ''; }
       break;
     case 'autosave':
@@ -373,7 +441,8 @@ window.addEventListener('message', (ev) => {
       if (m.xml != null) onAutosave(m.xml);
       break;
     case 'merge':
-      if (m.error) pushFromDisk(true);  // 合并失败退回整页重载
+      if (m.error) pushFromDisk(false, true); // 合并失败整页重载，仍按设置恢复原视图。
+      else finishViewUpdate();
       break;
   }
 });
@@ -396,32 +465,45 @@ function openNodeFeat(cell) {
   const app = appOf(st.cur);
   if (!app) return;
   const feats = app.feats.filter((f) => cell.tags.includes(f.id));
-  if (feats.length === 1) routeFeat(feats[0].path, cell.id);
+  const missing = cell.tags.filter((id) => /^Feat_\d+_\d+$/.test(id) && !app.feats.some((f) => f.id === id));
+  if (missing.length) {
+    const elsewhere = st.apps.filter((a) => a !== app).flatMap((a) => a.feats.filter((f) => missing.includes(f.id))
+      .map((f) => ({ ...f, foreign: true, owner: a.app })));
+    pickFeat([...feats, ...elsewhere], cell, `本 APP（${app.app}）找不到：${missing.join('、')}。可解除缺失档案的关联；其他 APP 的同号档案仅供查看，不会建立跨 APP 关联。`, missing);
+  } else if (feats.length === 1) routeFeat(feats[0].path, cell.id);
   else if (feats.length > 1) pickFeat(feats, cell);
 }
 
-/** 多 Feat 时弹出选择列表；Esc、点空白处或「取消」关闭。 */
-function pickFeat(feats, cell) {
+/** 弹出节点的 Feat 列表；missing 中的缺失编号可逐个解除，只读时禁用；Esc、点空白或取消关闭。 */
+function pickFeat(feats, cell, notice = '', missing = []) {
   const wrap = document.createElement('div');
   wrap.id = 'roots-dlg';
-  wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」关联了 ${feats.length} 个 Feat</b>
-    <div class="pick">${feats.map((f) => `<button data-p="${esc(f.path)}"><b>${esc(f.id)}</b> ${esc(f.title)}<small>${esc(f.status)}</small></button>`).join('')}</div>
+  wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」关联的 Feat</b>${notice ? `<p class="hint">${esc(notice)}</p>` : ''}
+    <div class="pick">${feats.map((f) => `<button data-p="${esc(f.path)}"><b>${esc(f.id)}</b> ${esc(f.title)}<small>${esc(f.owner || '')} ${esc(f.status)}</small></button>`).join('')}
+      ${missing.map((id) => `<button data-unlink="${esc(id)}"${st.readOnly ? ' disabled title="流程图只读，暂不能解除关联"' : ''}><b>${esc(id)}</b><small>解除关联</small></button>`).join('')}</div>
     <div class="dlg-btns"><button data-x="1">取消（Esc）</button></div></div>`;
   document.body.appendChild(wrap);
   const close = (path) => {
     document.removeEventListener('keydown', onKey, true);
     wrap.remove();
-    if (path) routeFeat(path, cell.id);
+    if (path) routeFeat(path, feats.find((f) => f.path === path).foreign ? undefined : cell.id);
   };
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   document.addEventListener('keydown', onKey, true);
   wrap.onclick = (ev) => {
     const b = ev.target.closest('button');
     if (!b && ev.target !== wrap) return;
+    if (b?.dataset.unlink) {
+      if (st.readOnly) return;
+      close();
+      post({ action: 'fc-tag', tag: b.dataset.unlink, add: false });
+      setTimeout(() => refresh(false), 1500);
+      return;
+    }
     close(b && b.dataset.p);
   };
-  // 焦点原在 draw.io iframe 内，按键到不了本页；移到第一个选项上，Esc 才能生效
-  wrap.querySelector('.pick button').focus();
+  // 焦点原在 draw.io iframe 内，按键到不了本页；移到首个可用选项上，Esc 才能生效
+  (wrap.querySelector('.pick button:not(:disabled)') || wrap.querySelector('[data-x]')).focus();
 }
 
 /** 当前流程图与当前 Feat 是否属于同一 APP（Feat 编号只在 APP 内唯一，只允许同 APP 挂接与高亮）。 */
@@ -435,13 +517,19 @@ function renderNodeBar() {
   const fid = curFeat.id;
   const btn = $('btn-tag');
   btn.hidden = true;
+  $('btn-copy-ref').hidden = !st.cur || !selCells.length;
   if (!st.cur || !selCells.length) {
     $('node-info').textContent = st.cur ? '未选中节点' : '未打开流程图';
     return;
   }
   const tags = [...new Set(selCells.flatMap((c) => c.tags))];
-  let info = `选中 ${selCells.length} 个节点` +
+  const ids = selCells.slice(0, 3).map((c) => `<code class="node-id">${esc(c.id)}</code>`).join('') +
+    (selCells.length > 3 ? '…' : '');
+  let info = `选中 ${selCells.length} 个节点 · ID ${ids}` +
     (tags.length ? '：' + tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('') : '：未挂标签');
+  const app = appOf(st.cur);
+  const missing = tags.filter((id) => /^Feat_\d+_\d+$/.test(id) && app && !app.feats.some((f) => f.id === id));
+  if (missing.length) info += `<span class="hint">　本 APP 缺少档案：${esc(missing.join('、'))}；点击书签查看</span>`;
   if (fid && !st.readOnly) {
     const allHave = selCells.every((c) => c.tags.includes(fid));
     const anyHave = selCells.some((c) => c.tags.includes(fid));
@@ -460,36 +548,147 @@ function renderNodeBar() {
     }
   }
   $('node-info').innerHTML = info;
+  $('node-info').title = $('node-info').textContent;
 }
+
+/**
+ * 复制节点引用「图名.drawio#ID」，多个每行一个；与 Feat 档案节点引用格式一致，可直接发给 Agent。
+ * 底部栏按钮使用；成功时按钮短暂显示「已复制」，状态栏同时提示条数。
+ * 右键菜单的同名操作在编辑器 iframe 内写剪贴板（焦点在那边），结果经 fc-copied 回报。
+ */
+function copyRefs(ids) {
+  if (!st.cur || !ids.length) return;
+  const name = st.cur.split(/[\\/]/).pop();
+  const btn = $('btn-copy-ref');
+  navigator.clipboard.writeText(ids.map((id) => `${name}#${id}`).join('\n')).then(() => {
+    btn.textContent = '已复制';
+    saveState(`已复制 ${ids.length} 条节点引用`);
+    setTimeout(() => { btn.textContent = '复制引用'; }, 1200);
+  }, (error) => saveState('复制失败：' + error, true));
+}
+$('btn-copy-ref').onclick = () => copyRefs(selCells.map((c) => c.id));
+
+/**
+ * 解析定位输入：取文字中第一个「图名.drawio#ID」（可带目录），否则把整段视为当前图的节点 ID（可带前导 #）。
+ * 返回 {file, id}，file 为空表示当前图；无法识别返回 null。
+ */
+function parseNodeRef(text) {
+  const t = text.trim();
+  const m = t.match(/([^\s"'`<>()（）[\]【】「」]+?\.drawio)(?:#([^\s"'`<>()（）[\]【】「」,，。;；]+))?/i);
+  if (m) return { file: m[1], id: m[2] || '' };
+  const id = t.replace(/^#/, '');
+  return id && !/\s/.test(id) ? { file: '', id } : null;
+}
+
+/**
+ * 按图名找流程图：当前 APP 优先，其次全部 APP 中唯一同名；带目录时按路径尾部匹配。
+ * 粘贴的中文句子里图名前常紧贴其他文字（如「见01_启动.drawio」），精确匹配不到时退回按图名结尾匹配，取最长图名。
+ */
+function findFlowByName(file) {
+  const want = file.replace(/\\/g, '/').toLowerCase();
+  const norm = (f) => f.path.replace(/\\/g, '/').toLowerCase();
+  const exact = (f) => { const p = norm(f); return p === want || p.endsWith('/' + want); };
+  const loose = (f) => want.endsWith(norm(f).split('/').pop());
+  for (const hit of [exact, loose]) {
+    const pick = (list) => list.sort((a, b) => norm(b).split('/').pop().length - norm(a).split('/').pop().length);
+    const own = pick(appOf(st.cur)?.files.filter(hit) || []);
+    if (own.length) return own[0].path;
+    const all = pick(st.apps.flatMap((a) => a.files.filter(hit)));
+    if (all.length === 1) return all[0].path;
+    if (all.length > 1) throw new Error(`多个 APP 都有 ${file}，请带上目录`);
+  }
+  throw new Error(`找不到流程图 ${file}`);
+}
+
+/** 定位框回车：跳到目标图（可跨图，进入返回栈）并选中节点；找不到时在顶栏提示。 */
+$('node-find').addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' || ev.isComposing || !st.cur) return;
+  ev.preventDefault();
+  const ref = parseNodeRef(ev.target.value);
+  if (!ref) { saveState('请输入节点 ID 或「图名.drawio#ID」', true); return; }
+  try {
+    const path = ref.file ? findFlowByName(ref.file) : st.cur;
+    saveState('');
+    routeDiagram(path, ref.id);
+  } catch (error) { saveState(error.message, true); }
+});
 
 /** 按当前 Feat 刷新高亮（仅同 APP）、状态栏与树中选中项。 */
 function applyFeat() {
   if (st.ready && st.cur) post({ action: 'fc-highlight', tag: sameApp() ? curFeat.id : '' });
   renderNodeBar();
   document.querySelectorAll('.feat').forEach((e) => e.classList.toggle('active', e.dataset.feat === curFeat.path));
+  if (!SOLO) MatrixPane.follow(curFeat.path);
 }
 
 /**
  * 打开流程图并可选定位节点：本窗口负责流程图栏时本地打开；否则交给主窗口路由
  * （独立窗口发 ui-route 给主窗口；主窗口在流程图已弹出时转给弹出窗口）。
  */
-async function routeDiagram(path, node) {
+async function routeDiagram(path, node, options = {}) {
   if (ownsFlow()) {
-    if (path !== st.cur || !st.loaded) {
-      st.pendingSelect = node || '';
-      await openDiagram(path);
-    } else if (node) post({ action: 'fc-select-cell', id: node });
+    if (flowNavigating) return;
+    const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
+    const changed = path !== st.cur || (!!node && node !== selCells[0]?.id);
+    flowNavigating = true;
+    renderCurrentBar();
+    try {
+      // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
+      while (st.saving || st.pendingXml != null) await new Promise((resolve) => setTimeout(resolve, 20));
+      await invoke('read_diagram', { path }); // 读取失败时保留当前图与回退栈。
+      if (from && changed && !options.back) flowBack.push(from);
+      if (options.back) flowBack.pop();
+      if (path !== st.cur || !st.loaded) {
+        st.pendingSelect = node || '';
+        await openDiagram(path);
+      } else {
+        if (node) post({ action: 'fc-select-cell', id: node });
+        flowNavigating = false;
+      }
+    } catch (error) {
+      flowNavigating = false;
+      saveState('打开流程图失败：' + error, true);
+    }
+    renderCurrentBar();
     return;
   }
   if (SOLO) emit('ui-route', { kind: 'flow', path, node: node || '' });
   else await invoke('open_popout', { kind: 'flow', path, node: node || null });
 }
 
-/** 打开 Feat 档案并可选定位节点引用：路由规则同 routeDiagram。 */
-async function routeFeat(path, node) {
-  if (ownsFeat()) return FeatPane.open(path, { node });
-  if (SOLO) emit('ui-route', { kind: 'feat', path, node: node || '' });
-  else await invoke('open_popout', { kind: 'feat', path, node: node || null });
+/** 按当前图解析链接；目标不存在时留在原图，错误显示在保存状态栏。 */
+async function followFlowLink(link, cell) {
+  if (!st.cur || flowNavigating) return;
+  const source = st.cur;
+  try {
+    const target = await invoke('resolve_flow_link', { source, link });
+    if (st.cur === source) await routeDiagram(target.path, target.node, { fromNode: cell });
+  } catch (error) { saveState('图链接无法打开：' + error, true); }
+}
+
+/** 回到来源图并定位原节点；失败时保留栈，方便修正链接或恢复文件后重试。 */
+$('btn-flow-back').onclick = () => {
+  const previous = flowBack[flowBack.length - 1];
+  if (previous) routeDiagram(previous.path, previous.node, { back: true });
+};
+
+/** 改名后同步本窗口的回退栈，防止返回旧文件名。 */
+listen('rename-finished', ({ payload: p }) => {
+  if (p.error) return;
+  for (const item of flowBack) if (item.path === p.oldPath) item.path = p.path;
+});
+
+// 快速连续选 Feat 时串行完成保存与载入，防止前一份异步读取覆盖后一份文档。
+let featRoute = Promise.resolve();
+
+/** 打开 Feat 档案并可选定位节点引用或源文件行号（line，1 起；0 为不定位）：路由规则同 routeDiagram。 */
+async function routeFeat(path, node, line = 0) {
+  if (ownsFeat()) {
+    featRoute = featRoute.catch(() => {}).then(() => FeatPane.open(path, { node, line }));
+    return featRoute;
+  }
+  if (SOLO) emit('ui-route', { kind: 'feat', path, node: node || '', line });
+  else await invoke('open_popout', { kind: 'feat', path, node: node || null, line: line || null });
 }
 
 /** 供 FeatPane 调用的流程图侧接口。 */
@@ -505,6 +704,12 @@ window.FlowLink = {
   curFile: () => lastSel.file || st.cur,
   appOf,
   refresh: () => refresh(false),
+  /** 全部 APP 汇总（推进矩阵的 APP 列表与节点计数）。 */
+  apps: () => st.apps,
+  /** 打开 Feat 档案并定位到源文件行（推进矩阵调用）。 */
+  openFeat: (path, line) => routeFeat(path, '', line),
+  /** Feat 档案是否可见：本窗口的 Feat 栏开着，或已弹到独立窗口。 */
+  featVisible: () => !$('feat-pane').hidden || popped.feat,
 };
 window.FlowSel = () => lastSel.cells;
 
@@ -527,9 +732,9 @@ if (!SOLO) {
   });
   /** 主窗口：独立窗口请求打开某类文件时由主窗口路由。 */
   listen('ui-route', (ev) => {
-    const { kind, path, node } = ev.payload;
+    const { kind, path, node, line } = ev.payload;
     if (kind === 'flow') routeDiagram(path, node);
-    else routeFeat(path, node);
+    else routeFeat(path, node, line || 0);
   });
   /** 弹出窗口关闭：该类文件恢复在主窗口打开。 */
   listen('popout-closed', (ev) => {
@@ -542,10 +747,10 @@ if (!SOLO) {
 } else {
   /** 独立窗口：主窗口把新文件转过来。 */
   listen('popout-open', (ev) => {
-    const { kind, path, node } = ev.payload;
+    const { kind, path, node, line } = ev.payload;
     if (kind !== SOLO) return;
     if (kind === 'flow') routeDiagram(path, node || '');
-    else routeFeat(path, node || '');
+    else routeFeat(path, node || '', line || 0);
   });
 }
 
@@ -694,42 +899,7 @@ listen('history-pruned', () => {
 
 // ---------------- 分栏 ----------------
 
-/** 主区分栏：流程图 / Feat 两栏，可拖动分隔；只打开一个时占满。 */
-window.Split = {
-  /** 显示某一栏（flow / feat）。 */
-  show(which) {
-    $(which === 'flow' ? 'flow-pane' : 'feat-pane').hidden = false;
-    this.layout();
-  },
-  /** 关闭某一栏。 */
-  hide(which) {
-    $(which === 'flow' ? 'flow-pane' : 'feat-pane').hidden = true;
-    this.layout();
-  },
-  /** 两栏都开时显示分隔条。 */
-  layout() {
-    $('splitter').hidden = $('flow-pane').hidden || $('feat-pane').hidden;
-  },
-};
-(() => {
-  const sp = $('splitter');
-  sp.addEventListener('pointerdown', (e) => {
-    sp.setPointerCapture(e.pointerId);
-    document.body.classList.add('dragging');
-    const box = $('panes').getBoundingClientRect();
-    const move = (ev) => {
-      const pct = Math.min(80, Math.max(20, ((ev.clientX - box.left) / box.width) * 100));
-      $('flow-pane').style.flex = `0 0 ${pct}%`;
-    };
-    const up = () => {
-      sp.removeEventListener('pointermove', move);
-      sp.removeEventListener('pointerup', up);
-      document.body.classList.remove('dragging');
-    };
-    sp.addEventListener('pointermove', move);
-    sp.addEventListener('pointerup', up);
-  });
-})();
+// 栏的显示、排布、固定 / 悬浮由 layout.js 的 window.Split 负责。
 /** 流程图栏空白时的提示。 */
 const EMPTY_TEXT = '从左侧选择一张流程图或一个 Feat';
 
@@ -741,7 +911,7 @@ async function closeFlow(msg) {
   selCells = [];
   $('empty').textContent = msg || EMPTY_TEXT;
   $('empty').hidden = false;
-  if (!$('feat-pane').hidden) Split.hide('flow');
+  if (Split.isOpen('feat') || Split.isOpen('mx')) Split.hide('flow');
   renderTree();
   renderCurrentBar();
   renderNodeBar();
@@ -795,6 +965,24 @@ function applyTheme() {
 darkQuery.addEventListener('change', applyTheme);
 window.addEventListener('storage', (e) => { if (e.key === 'fc-theme') applyTheme(); });
 
+// ---------------- 节点 ID 小卡 ----------------
+
+/** ID 小卡显示偏好：存 localStorage（默认显示，各窗口共享，storage 事件同步）。 */
+const showIds = () => localStorage.getItem('fc-show-ids') !== '0';
+/** 按偏好刷新开关按钮，并通知 draw.io 显示或移除小卡。 */
+function applyShowIds() {
+  const show = showIds();
+  $('btn-ids').classList.toggle('on', show);
+  $('btn-ids').setAttribute('aria-pressed', String(show));
+  if (st.ready) post({ action: 'fc-ids', show });
+}
+$('btn-ids').onclick = () => {
+  localStorage.setItem('fc-show-ids', showIds() ? '0' : '1');
+  applyShowIds();
+};
+window.addEventListener('storage', (e) => { if (e.key === 'fc-show-ids') applyShowIds(); });
+applyShowIds();
+
 // ---------------- 启动 ----------------
 
 renderStatusStats({});
@@ -807,7 +995,46 @@ applyTheme();
  */
 const currentWindow = window.__TAURI__.window.getCurrentWindow();
 let closing = false;
-if (SOLO) listen('ui-close-popouts', () => currentWindow.close());
+
+/** 流程图是否处于全屏。 */
+let flowFull = false;
+
+/**
+ * 全屏只展示流程图画布：系统全屏加桥接演示模式，隐藏编辑器与外层工具栏。
+ * 退出恢复窗口和编辑视图；窗口切换失败时保留原状态并显示错误。
+ */
+async function setFlowFull(on) {
+  if (on === flowFull) return;
+  try { await currentWindow.setFullscreen(on); }
+  catch (error) { saveState('切换全屏失败：' + error, true); return; }
+  flowFull = on;
+  document.body.classList.toggle('flow-full', on);
+  const btn = $('btn-flow-full');
+  btn.setAttribute('aria-pressed', String(on));
+  btn.title = on ? '退出全屏（Esc）' : '全屏显示流程图（Esc 退出）';
+  post({ action: 'fc-presentation', show: on });
+}
+$('btn-flow-full').onclick = () => setFlowFull(!flowFull);
+// 焦点在编辑器外时的 Esc：先退出全屏；有对话框时留给对话框自己处理。焦点在编辑器内由 fc-escape 转发。
+// 须注册在独立窗口「Esc 关窗」之前，同为捕获阶段时先执行并截住事件。
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.isComposing || !flowFull || document.getElementById('roots-dlg')) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  setFlowFull(false);
+}, true);
+
+if (SOLO) {
+  listen('ui-close-popouts', () => currentWindow.close());
+  // 多 Feat 选择框优先取消；其余 Esc 在编辑器快捷键之前关闭窗口，正常保存并释放锁。
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !event.isComposing && !document.querySelector('.pick')) {
+      event.preventDefault();
+      event.stopPropagation();
+      currentWindow.close();
+    }
+  }, true);
+}
 currentWindow.onCloseRequested(async (event) => {
   event.preventDefault();
   if (closing) return;
@@ -826,6 +1053,7 @@ currentWindow.onCloseRequested(async (event) => {
 
 // 所有外部脚本加载完再初始化，先恢复侧栏偏好，再读取项目列表。
 window.addEventListener('DOMContentLoaded', async () => {
+  Split.init();
   Settings.init();
   try { await Sidebar.init(() => refresh(false)); }
   catch (error) { sideMsg('读取侧栏设置失败：' + error); return; }
@@ -839,9 +1067,9 @@ window.addEventListener('DOMContentLoaded', async () => {
       const node = PARAMS.get('node') || '';
       if (!path) return;
       if (SOLO === 'flow') routeDiagram(path, node);
-      else routeFeat(path, node);
+      else routeFeat(path, node, Number(PARAMS.get('line')) || 0);
     });
   } else {
-    refresh(false);
+    refresh(false).then(() => MatrixPane.init());
   }
 }, { once: true });

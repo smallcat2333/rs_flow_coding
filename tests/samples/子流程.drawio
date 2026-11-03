@@ -1,0 +1,6 @@
+<mxfile host="rs_flow_coding"><diagram id="detail" name="子流程"><mxGraphModel grid="1" page="1" pageWidth="900" pageHeight="600"><root>
+  <mxCell id="0"/><mxCell id="1" parent="0"/>
+  <object id="load" label="读取数据&#10;Handler_Query.read" link="chat.drawio#n1"><mxCell vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;"><mxGeometry x="130" y="140" width="210" height="80" as="geometry"/></mxCell></object>
+  <object id="return" label="返回调用图" link="图间链接.drawio#query"><mxCell vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;"><mxGeometry x="440" y="140" width="210" height="80" as="geometry"/></mxCell></object>
+  <mxCell id="edge" edge="1" parent="1" source="load" target="return" style="endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>

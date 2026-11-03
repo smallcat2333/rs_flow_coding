@@ -6,6 +6,10 @@ window.Settings = (() => {
   const { invoke } = window.__TAURI__.core;
   let busy = false;
 
+  /** 内容更新偏好与主题一样保存在本机 localStorage，各窗口共享，未设置时默认开启。 */
+  const keepFlowView = () => localStorage.getItem('fc-keep-flow-view') !== '0';
+  const keepFeatPosition = () => localStorage.getItem('fc-keep-feat-position') !== '0';
+
   /** 字节显示使用二进制单位，零明确显示为 0 B。 */
   function bytes(value) {
     if (value < 1024) return `${value.toLocaleString()} B`;
@@ -112,6 +116,8 @@ window.Settings = (() => {
   async function open() {
     $('settings-theme').value = themeSetting();
     $('settings-auto-top').checked = Sidebar.autoTop();
+    $('settings-keep-flow-view').checked = keepFlowView();
+    $('settings-keep-feat-position').checked = keepFeatPosition();
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -143,6 +149,12 @@ window.Settings = (() => {
         return box.checked ? '已开启更新自动置顶' : '已关闭更新自动置顶，现有顺序保持不变';
       });
     };
+    for (const [id, key] of [['settings-keep-flow-view', 'fc-keep-flow-view'], ['settings-keep-feat-position', 'fc-keep-feat-position']]) {
+      $(id).onchange = (e) => {
+        localStorage.setItem(key, e.currentTarget.checked ? '1' : '0');
+        $('settings-msg').textContent = '内容更新设置已保存';
+      };
+    }
     $('settings-project-save').onclick = (e) => act(e.currentTarget, async () => {
       const roots = $('roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       const cfg = await invoke('set_roots', { roots });
@@ -172,5 +184,5 @@ window.Settings = (() => {
     });
   }
 
-  return { init };
+  return { init, keepFlowView, keepFeatPosition };
 })();

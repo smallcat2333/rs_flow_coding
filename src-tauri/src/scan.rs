@@ -34,6 +34,8 @@ pub struct SidebarPrefs {
     pub bumped: std::collections::BTreeMap<String, i64>,
     /// 更新后尚未点开的条目（规范化路径），侧栏以淡蓝底色提示。
     pub unseen: Vec<String>,
+    /// 侧栏排布：`tree` 为 分组 → APP → Chart/Feat，`flat` 为不分层直接列出 Chart 与 Feat。
+    pub layout: String,
 }
 
 impl Default for SidebarPrefs {
@@ -50,6 +52,7 @@ impl Default for SidebarPrefs {
             auto_top: true,
             bumped: Default::default(),
             unseen: Vec::new(),
+            layout: "tree".into(),
         }
     }
 }
@@ -184,6 +187,8 @@ mod tests {
         let mut prefs: SidebarPrefs = serde_json::from_str(r#"{"collapsed":["app"],"expanded_archives":[],"include_archived":true}"#).unwrap();
         assert!(prefs.app_aliases.is_empty());
         assert!(prefs.auto_top, "旧配置缺字段时自动置顶默认开启");
+        assert_eq!(prefs.layout, "tree", "旧配置缺字段时按分层排布");
+        prefs.layout = "flat".into();
         prefs.app_aliases.insert("/project/app_sever/docs/flow".into(), "服务端".into());
         prefs.group_aliases.insert("/project/group_sever".into(), "服务".into());
         prefs.group_order = vec!["/project/group_sever".into(), String::new()];
@@ -193,6 +198,7 @@ mod tests {
         assert_eq!(restored.group_aliases["/project/group_sever"], "服务");
         assert_eq!(restored.group_order, ["/project/group_sever", ""]);
         assert!(!restored.auto_top);
+        assert_eq!(restored.layout, "flat");
         assert_eq!(restored.collapsed, ["app"]);
         assert!(restored.include_archived);
     }

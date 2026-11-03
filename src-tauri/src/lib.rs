@@ -4,11 +4,14 @@
 pub mod db;
 pub mod feat;
 pub mod flow;
+pub mod links;
 pub mod lock;
 pub mod lifecycle;
 pub mod maintenance;
 pub mod paths;
+pub mod progress;
 pub mod scan;
+pub mod rename;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -400,6 +403,12 @@ fn tagged_nodes(flow_dir: String, tag: String) -> Result<Vec<feat::TaggedNode>, 
     Ok(feat::tagged(&feat::collect_nodes(&files), &tag))
 }
 
+/// 推进矩阵数据：解析该 APP 全部 Feat 档案的阶段、T 与子 T（`docs/flow` 同级的 `docs/feat`）。
+#[tauri::command]
+fn feat_progress(flow_dir: String) -> Vec<progress::Progress> {
+    progress::of_dir(&feat::feat_dir_of(Path::new(&flow_dir)))
+}
+
 /// 新建 Feat 档案：编号按今天日期 + 当天最大序号 +1，内容为最小骨架（完整模板由 /smallcat-feat-1-new 生成）。
 /// 返回新文件路径。标题不能含文件名非法字符。
 #[tauri::command]
@@ -429,12 +438,23 @@ fn create_feat(dir: String, title: String) -> Result<String, String> {
     Ok(f.to_string_lossy().into_owned())
 }
 
+/// 解析图间链接：前端在桥接层捕获 draw.io 节点链接点击后调用。
+/// 校验目标 .drawio 存在、且 `#` 指定的节点为目标图中的顶点（含泳道等导航目标）。
+/// 非本地链接（http/data/file 等 scheme）与非 .drawio 目标报错；返回路径与节点 id。
+#[tauri::command]
+fn resolve_flow_link(source: String, link: String) -> Result<links::ResolvedLink, String> {
+    let src = paths::norm(Path::new(&source))?;
+    links::resolve(&src, &link)
+}
+
 /// 把流程图栏或 Feat 栏弹到独立窗口（每种最多一个，标签 `pop-flow` / `pop-feat`）。
-/// 输入：kind = "flow" | "feat"；path = 要打开的文件；node = 打开后定位的节点 id（可空）。
+/// 输入：kind = "flow" | "feat"；path = 要打开的文件；node = 打开后定位的节点 id（可空）；
+/// line = Feat 档案打开后定位的源文件行号（可空，推进矩阵使用）。
 /// 窗口已存在：改标题、置前，并发 `popout-open` 事件让该窗口切换文件；不存在：以
 /// `index.html?solo=<kind>&path=..&node=..` 新建，前端按 solo 参数只显示这一栏。
+/// Windows 的 WebView2 创建必须离开同步 IPC 处理线程，否则事件循环死锁，窗口白屏且无法关闭。
 #[tauri::command]
-fn open_popout(app: tauri::AppHandle, kind: String, path: String, node: Option<String>) -> Result<(), String> {
+async fn open_popout(app: tauri::AppHandle, kind: String, path: String, node: Option<String>, line: Option<u32>) -> Result<(), String> {
     if kind != "flow" && kind != "feat" {
         return Err(format!("未知窗口类型: {kind}"));
     }
@@ -446,11 +466,11 @@ fn open_popout(app: tauri::AppHandle, kind: String, path: String, node: Option<S
         let _ = w.unminimize();
         let _ = w.set_focus();
         return app
-            .emit_to(&label, "popout-open", serde_json::json!({ "kind": kind, "path": path, "node": node }))
+            .emit_to(&label, "popout-open", serde_json::json!({ "kind": kind, "path": path, "node": node, "line": line }))
             .map_err(|e| e.to_string());
     }
     let enc = |s: &str| percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string();
-    let url = format!("index.html?solo={kind}&path={}&node={}", enc(&path), enc(node.as_deref().unwrap_or("")));
+    let url = format!("index.html?solo={kind}&path={}&node={}&line={}", enc(&path), enc(node.as_deref().unwrap_or("")), line.unwrap_or(0));
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
         .title(title)
         .inner_size(1100.0, 820.0)
@@ -478,7 +498,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
-            read_md, save_md, tagged_nodes, create_feat, open_popout,
+            read_md, save_md, tagged_nodes, feat_progress, create_feat, open_popout, resolve_flow_link,
+            rename::rename_entry,
             lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar,
             maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache
         ])

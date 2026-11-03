@@ -9,6 +9,7 @@
 //!   flowctl new <dir> <name>          新建空白 .drawio
 //!   flowctl feat <feat.md> [--status s]  列出同 APP 流程图中挂了该 Feat 编号标签的节点
 //!   flowctl check <feat.md>           Feat 关闭门槛：挂了该 Feat 的节点全部无色才退出码 0，否则 3
+//!   flowctl links <file|dir>...       校验图间链接（link="图.drawio[#节点id]"）：目标文件与节点都存在才退出码 0，有坏链接退出码 3
 //!
 //! 约定：Agent 修改流程图或 Feat 档案必须 `lock → 编辑 → unlock`；编辑超 10 分钟需重新 lock 刷新。
 //! 节点关联 Feat：在 `<object>` 上写 `tags="Feat_YYMMDD_N"`（可多个，空格分隔）。
@@ -16,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rs_flow_coding_lib::{db, feat, flow, lock, paths, scan, write_atomic};
+use rs_flow_coding_lib::{db, feat, flow, links, lock, paths, scan, write_atomic};
 
 /// 打印错误并返回退出码 1。
 fn fail(msg: impl std::fmt::Display) -> ExitCode {
@@ -167,6 +168,45 @@ fn cmd_check(args: &[String]) -> Result<ExitCode, String> {
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(3) })
 }
 
+/// links：校验图间链接。每张图收集 link 属性中的本地 .drawio 引用并逐个 resolve；
+/// 有坏链接退出码 3（供脚本判断），读文件/XML 失败按 broken 记录同样退出 3。
+fn cmd_links(args: &[String]) -> Result<ExitCode, String> {
+    if args.len() < 3 { return Err("缺少参数 <file|dir>".into()); }
+    let files = expand(&args[2..])?;
+    if files.is_empty() { return Err("links: 没有匹配的 .drawio 文件".into()); }
+    let mut total = 0usize;
+    let mut broken: Vec<links::BrokenLink> = Vec::new();
+    for f in files {
+        let xml = match std::fs::read_to_string(&f) {
+            Ok(x) => x,
+            Err(e) => {
+                broken.push(links::BrokenLink { file: f.to_string_lossy().into_owned(), node: String::new(), link: String::new(), error: format!("读取失败: {e}") });
+                continue;
+            }
+        };
+        let cells = match links::link_cells(&xml) {
+            Ok(c) => c,
+            Err(e) => {
+                broken.push(links::BrokenLink { file: f.to_string_lossy().into_owned(), node: String::new(), link: String::new(), error: e });
+                continue;
+            }
+        };
+        for c in cells {
+            total += 1;
+            if let Err(e) = links::resolve(&f, &c.link) {
+                broken.push(links::BrokenLink { file: f.to_string_lossy().into_owned(), node: c.id, link: c.link, error: e });
+            }
+        }
+    }
+    let ok = broken.is_empty();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({ "ok": ok, "total": total, "broken": broken }))
+            .unwrap()
+    );
+    Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(3) })
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let r = match args.get(1).map(String::as_str) {
@@ -183,7 +223,8 @@ fn main() -> ExitCode {
         Some("new") => cmd_new(&args),
         Some("feat") => cmd_feat(&args),
         Some("check") => cmd_check(&args),
-        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check> ...（详见源码顶部说明）".into()),
+        Some("links") => cmd_links(&args),
+        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check|links> ...（详见源码顶部说明）".into()),
     };
     r.unwrap_or_else(fail)
 }
