@@ -170,6 +170,16 @@ window.FeatBoard = (() => {
   /** 从文本取 T 编号（含子号），去重保序。 */
   const tids = (s) => [...new Set(String(s).match(/T\d+(?:\.\d+)?/g) || [])];
 
+  /** 依赖列取父 T 编号：支持「T1、T2」与区间「T1～T7」「T1-T3」；「生命周期契约」等说明文字只保留在原文中。 */
+  function depIds(s) {
+    const out = [];
+    for (const m of String(s).matchAll(/T(\d+)(?:\.\d+)?(?:\s*[~～\-–—至到]\s*T?(\d+))?/g)) {
+      const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+      for (let i = a; i <= Math.min(b, a + 50); i++) out.push('T' + i);
+    }
+    return [...new Set(out)];
+  }
+
   /** 「键：值」形式的记录条目（§0 决策 / 依据 / 待确认，§2.1 共识 / 否决 / 待定，§3.2 方案 / 结果）。 */
   function kvItems(lines) {
     return bullets(lines).map((b) => {
@@ -206,7 +216,8 @@ window.FeatBoard = (() => {
     d.tasks = road ? road.rows.filter((r) => /^T\d+$/.test(r.cells[0]?.text || '')).map((r) => {
       const c = (i) => r.cells[i]?.text || '';
       const raw = c(col(road.head, '状态', road.head.length - 1));
-      return { id: c(0), title: c(1), deps: tids(c(col(road.head, '依赖', 2))), par: tids(c(col(road.head, '并行', 3))), raw, state: taskState(raw), n: r.n };
+      const depRaw = c(col(road.head, '依赖', 2));
+      return { id: c(0), title: c(1), deps: depIds(depRaw), depRaw, par: tids(c(col(road.head, '并行', 3))), raw, state: taskState(raw), n: r.n };
     }) : [];
 
     d.devs = records(body(d, '3.2'), /^\d{4}-\d{2}-\d{2}/).map((r) => {
@@ -374,6 +385,17 @@ window.FeatBoard = (() => {
     return out;
   }
 
+  /**
+   * 阶段内的章节目录：§0 列 R 记录，§1–§4 列编号小节（去掉括号里的补充说明），§5 不列。
+   * 输出 [{ n: 标题行号（与卡片 data-line 一致）, title, filled: 是否有内容 }]。
+   */
+  function chapters(d, k) {
+    if (k === '0') return d.talks.map((r) => ({ n: r.n, title: r.title, filled: true }));
+    if (k === '5') return [];
+    return Object.values(d.sec).filter((s) => s.k.split('.')[0] === k).sort((a, b) => a.n - b.n)
+      .map((s) => ({ n: s.n, title: s.title.replace(/[（(].*$/, '').trim(), filled: meaningful(s.body) > 0 }));
+  }
+
   /** 内容区顶部：下一步建议（无建议时不显示）。 */
   function nexts(d) {
     const steps = nextSteps(d).map((x) => `<div class="fb-next ${x.tone}"><span class="fb-next-dot" aria-hidden="true"></span><span class="fb-next-text">${esc(x.text)}</span>${x.command ? cmd(x.command) : ''}</div>`).join('');
@@ -404,10 +426,16 @@ window.FeatBoard = (() => {
     const stages = STAGES.filter((s) => s.k !== '0' || d.h2['0']).map((s) => {
       const i = STAGES.indexOf(s), [b, tone, sum] = info[s.k];
       const pos = i < cur ? 'past' : i === cur ? 'current' : 'future';
-      return `<button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
+      // 开发阶段常驻 T 状态小标签（点击跳到路线图对应节点）；当前选中的阶段下列出章节，点击滚动到该卡片。
+      const chips = s.k === '3' && d.tasks.length ? `<div class="fb-tchips">${d.tasks.map((t) => `<button class="fb-tchip t-${t.state}" data-tjump="${esc(t.id)}" title="${esc(`${t.id} ${t.title}\n${TASK_NAME[t.state]}${t.raw && t.raw !== TASK_NAME[t.state] ? '：' + t.raw : ''}`)}">${esc(t.id)}</button>`).join('')}</div>` : '';
+      const toc = st.tab === s.k ? chapters(d, s.k) : [];
+      return `<div class="fb-stage-item ${pos}">
+        <button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
         <span class="fb-stage-dot" aria-hidden="true"></span>
         <span class="fb-stage-name">${s.name}${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</span>
-        <span class="fb-stage-sum">${esc(sum)}</span></button>`;
+        <span class="fb-stage-sum">${esc(sum)}</span></button>
+        ${chips}${toc.length ? `<ol class="fb-toc">${toc.map((c) => `<li><button class="${c.filled ? '' : 'blank'}" data-jump="${c.n}" title="${esc(c.title)}${c.filled ? '' : '（未填写）'}">${esc(c.title)}</button></li>`).join('')}</ol>` : ''}
+      </div>`;
     }).join('');
     // 外层撑满高度画背景与分隔线，内层吸顶：内容区滚动时导航保持可见。
     return `<nav class="fb-rail" aria-label="Feat 阶段"><div class="fb-rail-in">
@@ -486,19 +514,74 @@ window.FeatBoard = (() => {
       ${card(d, '2.5', '截图', meaningful(shots) ? `<div class="fb-prose">${md(shots.map((l) => l.t).join('\n'))}</div><p class="fb-hint">截图为本地文件，在文件夹中查看。</p>` : empty('开发 / 测试阶段补充截图', ''))}`;
   }
 
-  /** 开发页（§3）：路线图 T 卡（点卡片筛选记录，待用户确认给确认命令）、开发记录卡（可折叠，子任务状态行）。 */
+  /** 依赖图节点尺寸与间距（像素）。 */
+  const G = { w: 188, h: 52, gx: 56, gy: 12, pad: 10 };
+
+  /**
+   * §3.1 依赖关系图：按依赖深度分列（无依赖在最左，每列为前置最深一层 + 1），同列按前置所在行的平均位置排序以减少交叉；
+   * 节点为 T（编号 + 状态 + 任务名，超长省略，悬停看全文），连线从前置右侧连到后续左侧，前置已完成为绿、未完成为黄。
+   * 编号重复的行都画出，依赖连到该编号的最后一行；依赖到路线图里没有的编号不画线；成环时环内节点按深度 0 处理，不会死循环。
+   * 点击节点筛选 §3.2 记录，悬停高亮前置与后续。
+   */
+  function taskGraph(d) {
+    const list = d.tasks;
+    const at = new Map(list.map((t, i) => [t.id, i]));
+    const depth = [], visiting = new Set();
+    const deep = (i) => {
+      if (depth[i] != null) return depth[i];
+      if (visiting.has(i)) return 0;
+      visiting.add(i);
+      const ds = list[i].deps.map((p) => at.get(p)).filter((j) => j != null && j !== i);
+      depth[i] = ds.length ? 1 + Math.max(...ds.map(deep)) : 0;
+      visiting.delete(i);
+      return depth[i];
+    };
+    list.forEach((_, i) => deep(i));
+    const cols = [];
+    list.forEach((_, i) => (cols[depth[i]] = cols[depth[i]] || []).push(i));
+    const row = new Map();
+    cols.forEach((c, ci) => {
+      if (ci) {
+        const bary = (i) => { const rs = list[i].deps.map((p) => row.get(at.get(p))).filter((r) => r != null); return rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : Infinity; };
+        c.sort((a, b) => bary(a) - bary(b) || a - b);
+      }
+      c.forEach((i, r) => row.set(i, r));
+    });
+    const pos = (i) => ({ x: G.pad + depth[i] * (G.w + G.gx), y: G.pad + row.get(i) * (G.h + G.gy) });
+    const width = G.pad * 2 + cols.length * G.w + (cols.length - 1) * G.gx;
+    const height = G.pad * 2 + Math.max(...cols.map((c) => c.length)) * (G.h + G.gy) - G.gy;
+    const edges = [];
+    list.forEach((t, i) => t.deps.forEach((p) => {
+      const j = at.get(p);
+      if (j == null || j === i) return;
+      const a = pos(j), b = pos(i), x1 = a.x + G.w, y1 = a.y + G.h / 2, x2 = b.x - 2, y2 = b.y + G.h / 2;
+      const bend = Math.max(24, (x2 - x1) / 2);
+      const tone = list[j].state === 'done' ? 'done' : ['cancelled', 'paused', 'unknown'].includes(list[j].state) ? 'muted' : 'pending';
+      edges.push(`<path class="fb-edge ${tone}" data-from="${esc(p)}" data-to="${esc(t.id)}" marker-end="url(#fb-arrow-${tone})" d="M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}"/>`);
+    }));
+    const marker = (tone) => `<marker id="fb-arrow-${tone}" class="${tone}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker>`;
+    const nodes = list.map((t, i) => {
+      const { x, y } = pos(i);
+      const tip = [`${t.id} ${t.title}`, `状态：${t.raw || '未填'}`, t.depRaw && t.depRaw !== '-' ? `依赖：${t.depRaw}` : '无依赖', t.par.length ? `可并行：${t.par.join('、')}` : '', '点击只看该 T 的开发记录'].filter(Boolean).join('\n');
+      return `<button class="fb-node t-${t.state}${st.filterT === t.id ? ' on' : ''}" style="left:${x}px;top:${y}px;width:${G.w}px;height:${G.h}px" data-node="${esc(t.id)}" data-deps="${esc(t.deps.join(' '))}" data-line="${t.n}" data-key="task-${esc(t.id)}" title="${esc(tip)}" ${act(() => { st.filterT = st.filterT === t.id ? '' : t.id; render(); })}>
+        <span class="fb-node-head"><b>${esc(t.id)}</b><span class="fb-node-st">${TASK_NAME[t.state]}</span></span>
+        <span class="fb-node-title">${esc(t.title)}</span></button>`;
+    }).join('');
+    return `<div class="fb-graph"><div class="fb-graph-in" style="width:${width}px;height:${height}px">
+      <svg width="${width}" height="${height}" aria-hidden="true"><defs>${['done', 'pending', 'muted'].map(marker).join('')}</defs>${edges.join('')}</svg>${nodes}</div></div>
+      <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span><span class="fb-hint">悬停高亮前后依赖 · 点击筛选开发记录</span></div>`;
+  }
+
+  /** 开发页（§3）：路线图依赖关系图（点节点筛选记录，待用户确认的 T 另列确认命令）、开发记录卡（可折叠，子任务状态行）。 */
   function page3(d) {
-    const byId = new Map(d.tasks.map((t) => [t.id, t]));
     const x = d.stats.tasks;
     const counts = Object.entries(d.tasks.reduce((m, t) => ((m[t.state] = (m[t.state] || 0) + 1), m), {}))
       .map(([k, v]) => pill(k, `${TASK_NAME[k]} ${v}`)).join('');
-    const tasks = d.tasks.length ? `<div class="fb-tasks">${d.tasks.map((t) => `<article class="fb-task t-${t.state}${st.filterT === t.id ? ' on' : ''}" data-line="${t.n}" data-key="task-${t.id}" tabindex="0" ${act(() => { st.filterT = st.filterT === t.id ? '' : t.id; render(); })} title="点击只看 ${t.id} 的开发记录">
-      <span class="fb-tid">${esc(t.id)}</span>
-      <div class="fb-task-main"><div class="fb-task-title">${cell(t.title)}</div>
-        <div class="fb-task-rel">${t.deps.length ? `<span class="fb-rel-k">依赖</span>${t.deps.map((p) => `<span class="fb-dep t-${byId.get(p)?.state || 'unknown'}" title="${esc(p)}：${TASK_NAME[byId.get(p)?.state || 'unknown']}">${esc(p)}</span>`).join('')}` : ''}${t.par.length ? `<span class="fb-rel-k">可并行</span>${t.par.map((p) => `<span class="fb-par">${esc(p)}</span>`).join('')}` : ''}</div></div>
-      ${pill(t.state, TASK_NAME[t.state], t.raw)}
-      ${t.state === 'waiting' ? cmd(`/smallcat-feat-3-dev ${api.id()} ${t.id} 用户确认通过`) : ''}
-      ${src(t.n)}</article>`).join('')}</div>` : empty('还没有任务路线图', 'smallcat-feat-3-dev');
+    const waits = d.tasks.filter((t) => t.state === 'waiting');
+    const tasks = d.tasks.length ? taskGraph(d) +(waits.length ? `<div class="fb-waits">${waits.map((t) => `<div class="fb-wait" data-line="${t.n}">
+      <span class="fb-tid sm">${esc(t.id)}</span><span class="fb-wait-title">${esc(t.title)}</span>${pill('waiting', t.raw || '待用户确认', t.raw)}
+      ${cmd(`/smallcat-feat-3-dev ${api.id()} ${t.id} 用户确认通过`)}</div>`).join('')}</div>` : '')
+      : empty('还没有任务路线图', 'smallcat-feat-3-dev');
 
     const devs = [...d.devs].reverse().filter((r) => !st.filterT || r.ts.some((t) => t === st.filterT || t.startsWith(st.filterT + '.')) || r.subs.some((s) => s.id.startsWith(st.filterT + '.')));
     const newest = d.devs.length ? d.devs[d.devs.length - 1].n : 0;
@@ -639,6 +722,7 @@ window.FeatBoard = (() => {
     const scroll = fresh ? 0 : box.scrollTop;
     acts = [];
     mds = [];
+    hovered = null;
     box.innerHTML = `<div class="fb-shell">${rail(d)}<div class="fb-main">${nexts(d)}<div class="fb-page tab-${st.tab}" role="tabpanel">${PAGES[st.tab](d)}</div></div></div>`;
     box.querySelectorAll('[data-md]').forEach((el) => {
       const { text, inline } = mds[el.dataset.md];
@@ -675,6 +759,14 @@ window.FeatBoard = (() => {
     box.addEventListener('click', (e) => {
       const tab = e.target.closest('[data-tab]');
       if (tab) { st.tab = tab.dataset.tab; st.filterT = ''; render(); box.scrollTop = 0; return; }
+      const jump = e.target.closest('[data-jump]');
+      if (jump) { flashTo(box.querySelector(`.fb-page [data-line="${jump.dataset.jump}"]`), 'start'); return; }
+      const tj = e.target.closest('[data-tjump]');
+      if (tj) {
+        if (st.tab !== '3') { st.tab = '3'; st.filterT = ''; render(); }
+        flashTo(box.querySelector(`.fb-node[data-node="${CSS.escape(tj.dataset.tjump)}"]`), 'center');
+        return;
+      }
       const copyBtn = e.target.closest('[data-copy]');
       if (copyBtn) { e.stopPropagation(); copy(copyBtn); return; }
       const line = e.target.closest('.fb-src');
@@ -684,7 +776,6 @@ window.FeatBoard = (() => {
       if (e.target.closest('a[href]')) return;
       const el = e.target.closest('[data-act]');
       if (!el || el.matches('input:not([type="checkbox"])') || el.disabled) return;
-      if (el.matches('.fb-task') && e.target.closest('button, a')) return;
       acts[el.dataset.act]?.();
     });
     box.addEventListener('keydown', (e) => {
@@ -694,8 +785,6 @@ window.FeatBoard = (() => {
         else if (e.key === 'Escape') { e.preventDefault(); note.value = note.defaultValue; note.closest('.fb-acc').focus(); }
         return;
       }
-      const task = e.target.matches('.fb-task') && e.target;
-      if (task && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); acts[task.dataset.act]?.(); return; }
       const acc = e.target.matches('.fb-acc') && e.target;
       if (!acc || e.ctrlKey || e.altKey || e.metaKey) return;
       const k = e.key.toLowerCase();
@@ -717,6 +806,39 @@ window.FeatBoard = (() => {
     box.addEventListener('focusout', (e) => {
       if (e.target.matches('.fb-note') && st.holdRender) setTimeout(schedule, 0);
     });
+    box.addEventListener('pointerover', (e) => focusNode(e.target.closest('.fb-node')));
+    box.addEventListener('pointerleave', () => focusNode(null));
+  }
+
+  /** 滚动到元素并短暂高亮；el 为空时不动。 */
+  function flashTo(el, block) {
+    if (!el) return;
+    el.scrollIntoView({ block, inline: 'nearest' });
+    el.classList.remove('fb-flash');
+    void el.offsetWidth;
+    el.classList.add('fb-flash');
+    setTimeout(() => el.classList.remove('fb-flash'), 1400);
+  }
+
+  /** 当前悬停的依赖图节点：指针在同一节点内移动时不重复计算。 */
+  let hovered = null;
+
+  /** 依赖图悬停：高亮该 T、它的前置（hi-dep）与后续（hi-of）及相连的线，其余变淡；node 为空时清除。 */
+  function focusNode(node) {
+    if (node === hovered) return;
+    hovered = node;
+    const graph = node?.closest('.fb-graph') || $('feat-board').querySelector('.fb-graph');
+    if (!graph) return;
+    graph.querySelectorAll('.hi-self, .hi-dep, .hi-of, .hi').forEach((el) => el.classList.remove('hi-self', 'hi-dep', 'hi-of', 'hi'));
+    graph.classList.toggle('focus', !!node);
+    if (!node) return;
+    const id = node.dataset.node, deps = node.dataset.deps.split(' ').filter(Boolean);
+    node.classList.add('hi-self');
+    graph.querySelectorAll('.fb-node').forEach((n) => {
+      if (deps.includes(n.dataset.node)) n.classList.add('hi-dep');
+      if (n.dataset.deps.split(' ').includes(id)) n.classList.add('hi-of');
+    });
+    graph.querySelectorAll('.fb-edge').forEach((p) => { if (p.dataset.from === id || p.dataset.to === id) p.classList.add('hi'); });
   }
 
   /** 切到控件页后定位到源文件第 line 行所在章节与最近的卡片，并短暂高亮。 */

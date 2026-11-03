@@ -32,8 +32,17 @@ window.FeatProgress = (() => {
     toggled: new Set(),   // 用户改变过默认展开状态的 T（档案路径 + '#' + T 编号）
   };
 
-  /** 依赖列拆成 T 编号；「-」「无」视为没有依赖。 */
-  const depsOf = (t) => (t.deps || '').split(/[,，、/\s]+/).map((d) => d.trim()).filter((d) => d && d !== '-' && d !== '无');
+  /**
+   * 依赖列取 T 编号：支持「T1、T2」与区间「T1～T7」「T1-T3」；「生命周期契约」等说明文字不单独成标签，只在悬停提示里显示原文。
+   */
+  function depsOf(t) {
+    const out = [];
+    for (const m of String(t.deps || '').matchAll(/T(\d+)(?:\.\d+)?(?:\s*[~～\-–—至到]\s*T?(\d+))?/g)) {
+      const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+      for (let i = a; i <= Math.min(b, a + 50); i++) out.push('T' + i);
+    }
+    return [...new Set(out)];
+  }
   /** 日期 YYYY-MM-DD 只显示月-日；起止相同时只显示一个。 */
   const span = (a, b) => (!b ? '' : a === b || !a ? b.slice(5) : `${a.slice(5)} → ${b.slice(5)}`);
   const subKey = (t) => st.path + '#' + t.id;
@@ -77,21 +86,33 @@ window.FeatProgress = (() => {
         <span class="fp-sid">${esc(s.id)}</span><span class="fp-sttl">${esc(s.title)}</span><span class="fp-sst">${STATE_NAME[s.state]}</span>
       </button></li>`;
 
-  /** T 行：编号 + 任务名，下一行状态、依赖、日期、子任务开关；展开时列出子任务。 */
+  /**
+   * T 行固定两行：第一行编号 + 任务名（单行省略）+ 重复标记；第二行状态、子任务开关、日期、依赖（放最后，超出时截断）。
+   * 完整任务名、状态原文、依赖原文、记录与子任务统计放在整行悬停提示里；展开时列出子任务。
+   */
   function taskItem(t, byId) {
     const deps = depsOf(t);
     const live = t.subs.filter((s) => !['paused', 'cancelled'].includes(s.state));
+    const subDone = live.filter((s) => s.state === 'done').length;
     const open = t.subs.length && subsOpen(t);
     const date = span(t.first_date, t.last_date);
-    return `<li class="fp-t ${t.state}" data-tid="${esc(t.id)}" data-deps="${esc(deps.join(' '))}">
-      <button class="fp-tnode" data-line="${t.record_line || t.line}" title="${esc(t.id)} ${esc(t.title)}\n状态：${esc(t.status)}${t.records ? `\n开发记录 ${t.records} 条` : ''}">
-        <span class="fp-tid">${esc(t.id)}</span><span class="fp-ttl">${esc(t.title)}</span>${t.dup ? '<span class="fp-dup" title="路线图中编号重复">重复</span>' : ''}
+    const tip = [
+      `${t.id} ${t.title}`,
+      `状态：${t.status || '未填'}`,
+      t.deps && t.deps.trim() !== '-' ? `依赖：${t.deps}` : '无依赖',
+      t.records ? `开发记录 ${t.records} 条${date ? `（${date}）` : ''}` : '',
+      t.subs.length ? `子任务 ${subDone}/${live.length} 完成` : '',
+      t.dup ? '路线图中编号重复' : '',
+    ].filter(Boolean).join('\n');
+    return `<li class="fp-t ${t.state}" data-tid="${esc(t.id)}" data-deps="${esc(deps.join(' '))}" title="${esc(tip)}">
+      <button class="fp-tnode" data-line="${t.record_line || t.line}">
+        <span class="fp-tid">${esc(t.id)}</span><span class="fp-ttl">${esc(t.title)}</span>${t.dup ? '<span class="fp-dup">重复</span>' : ''}
       </button>
       <div class="fp-tmeta">
         <span class="fp-pill ${t.state}">${STATE_NAME[t.state]}</span>
-        ${deps.map((d) => { const s = byId[d]?.state || 'unknown'; return `<button class="fp-dep ${s}" data-goto="${esc(d)}" title="依赖 ${esc(d)}：${byId[d] ? STATE_NAME[s] : '路线图中没有该编号'}">← ${esc(d)}</button>`; }).join('')}
-        ${date ? `<span class="fp-date" title="§3.2 开发记录日期">${esc(date)}</span>` : ''}
-        ${t.subs.length ? `<button class="fp-fold" aria-expanded="${!!open}" title="${open ? '收起' : '展开'}子任务">子任务 ${live.filter((s) => s.state === 'done').length}/${live.length} <span aria-hidden="true">${open ? '▾' : '▸'}</span></button>` : ''}
+        ${t.subs.length ? `<button class="fp-fold" aria-expanded="${!!open}" title="${open ? '收起' : '展开'}子任务">子 ${subDone}/${live.length}<span aria-hidden="true">${open ? '▾' : '▸'}</span></button>` : ''}
+        ${date ? `<span class="fp-date">${esc(date)}</span>` : ''}
+        ${deps.length ? `<span class="fp-deps"><span aria-hidden="true">←</span>${deps.map((d) => { const s = byId[d]?.state || 'unknown'; return `<button class="fp-dep ${s}" data-goto="${esc(d)}" title="依赖 ${esc(d)}：${byId[d] ? STATE_NAME[s] : '路线图中没有该编号'}">${esc(d)}</button>`; }).join('')}</span>` : ''}
       </div>
       ${open ? `<ol class="fp-subs">${t.subs.map(subItem).join('')}</ol>` : ''}
     </li>`;

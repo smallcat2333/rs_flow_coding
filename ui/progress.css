@@ -32,7 +32,7 @@
 
 /* T 树：从主干横向分出，左侧状态圆点 */
 .fp-tasks { margin: 4px 0 2px 7px; }
-.fp-t { position: relative; padding: 5px 4px 6px 24px; border-radius: 6px; transition: opacity .15s ease, background-color .15s ease; }
+.fp-t { position: relative; padding: 4px 4px 4px 24px; border-radius: 6px; transition: opacity .15s ease, background-color .15s ease; }
 .fp-t::after { content: ""; position: absolute; left: 0; top: 13px; width: 13px; border-top: 1px solid var(--border); }
 .fp-t::before { content: ""; position: absolute; left: 12px; top: 9px; width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg2); background: var(--bg2); }
 .fp-t.doing::before { border-color: var(--accent); background: var(--accent); }
@@ -44,11 +44,15 @@
 .fp-tnode { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
 .fp-tnode:hover .fp-ttl { color: var(--accent); }
 .fp-tid { flex-shrink: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
-.fp-ttl { min-width: 0; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* T 固定两行：任务名单行省略，第二行不换行、超出截断，完整内容看整行悬停提示 */
+.fp-ttl { flex: 1; min-width: 0; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp-t.done .fp-ttl, .fp-t.paused .fp-ttl, .fp-t.cancelled .fp-ttl { color: var(--fg2); }
 .fp-t.cancelled .fp-ttl { text-decoration: line-through; }
 .fp-dup { flex-shrink: 0; padding: 0 4px; border-radius: 3px; background: var(--warn-bg); color: var(--warn-fg); font-size: 11px; }
-.fp-tmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; margin-top: 4px; }
+.fp-tmeta { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px; margin-top: 2px; min-width: 0; overflow: hidden; }
+.fp-tmeta > .fp-pill, .fp-tmeta > .fp-fold, .fp-tmeta > .fp-date { flex-shrink: 0; }
+.fp-deps { display: inline-flex; align-items: center; gap: 3px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; }
+.fp-deps > .fp-dep { flex-shrink: 0; }
 .fp-pill { padding: 0 7px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; line-height: 17px; white-space: nowrap; color: var(--fg2); }
 .fp-pill.done { background: var(--ok-bg); color: var(--ok-fg); border-color: transparent; }
 .fp-pill.doing { background: var(--sel); color: var(--accent); border-color: var(--accent-bd); }
@@ -56,7 +60,7 @@
 .fp-pill.todo { border-style: dashed; }
 .fp-pill.paused, .fp-pill.cancelled, .fp-pill.unknown { color: var(--muted); border-style: dashed; }
 /* 依赖：前置 T 已完成为绿，未完成为黄，路线图里找不到为灰虚线 */
-.fp-dep { padding: 0 6px; border: 1px solid var(--warn-bd); border-radius: 9px; background: transparent; color: var(--warn-fg); font-family: inherit; font-size: 11px; line-height: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fp-dep { padding: 0 4px; border: 1px solid var(--warn-bd); border-radius: 9px; background: transparent; color: var(--warn-fg); font-family: inherit; font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fp-dep.done { border-color: color-mix(in srgb, var(--ok-fg) 50%, transparent); color: var(--ok-fg); }
 .fp-dep.unknown, .fp-dep.cancelled { border-color: var(--border); border-style: dashed; color: var(--muted); }
 .fp-dep:hover { background: var(--hover); }
