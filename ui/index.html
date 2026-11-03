@@ -70,6 +70,7 @@
           <input id="node-find" type="search" placeholder="定位节点：ID 或 图名.drawio#ID" title="输入节点 ID，或粘贴含「图名.drawio#ID」的文字，回车定位" aria-label="定位节点" disabled>
           <button id="btn-ids" title="显示 / 隐藏节点左上角的 ID 小卡">ID</button>
           <button id="btn-history" disabled>历史对比</button>
+          <button id="btn-copy-flow-path" title="复制当前流程图的绝对路径，可发给 Agent 继续处理" disabled>复制路径</button>
           <button id="btn-flow-full" class="icon-button" title="全屏显示流程图（Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
           <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
           <button id="btn-flow-pop" class="no-solo" title="在独立窗口打开流程图" disabled>⧉</button>
@@ -108,6 +109,7 @@
           <button id="btn-toc" title="显示 / 隐藏标题大纲">大纲</button>
           <button id="btn-feat-nodes" title="显示 / 隐藏关联节点" aria-controls="fs-nodes" aria-expanded="true">关联节点 · <b id="feat-node-count">0</b></button>
           <button id="btn-feat-prog" title="显示 / 隐藏本 Feat 的推进树" aria-controls="fs-prog" aria-expanded="true">推进</button>
+          <button id="btn-copy-feat-path" title="复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理" disabled>复制路径</button>
           <button class="pane-float no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M6 2.5h7.5V10"/></svg></button>
           <button id="btn-feat-pop" class="no-solo" title="在独立窗口打开 Feat">⧉</button>
           <button id="btn-feat-tab" class="icon-button no-solo" title="拆分 Feat 到独立页签" aria-label="Feat 在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>

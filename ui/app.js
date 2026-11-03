@@ -186,6 +186,7 @@ function renderCurrentBar() {
   $('cur-counts').innerHTML = e ? badges(e.file.counts) : '';
   $('btn-flow-back').disabled = !st.cur || !flowBack.length || flowNavigating;
   $('btn-history').disabled = !st.cur;
+  $('btn-copy-flow-path').disabled = !st.cur;
   $('btn-flow-full').disabled = !st.cur;
   $('node-find').disabled = !st.cur;
   $('btn-flow-pop').disabled = !st.cur;
@@ -601,6 +602,21 @@ function copyRefs(ids) {
   }, (error) => saveState('复制失败：' + error, true));
 }
 $('btn-copy-ref').onclick = () => copyRefs(selCells.map((c) => c.id));
+
+/**
+ * 复制当前流程图的绝对路径，供粘贴给 Agent 继续处理这张图。
+ * 扫描结果里的路径已是绝对路径；未打开图时按钮禁用。成功时按钮短暂显示「已复制」。
+ */
+function copyFlowPath() {
+  if (!st.cur) return;
+  const btn = $('btn-copy-flow-path');
+  navigator.clipboard.writeText(st.cur).then(() => {
+    btn.textContent = '已复制';
+    saveState('已复制流程图绝对路径');
+    setTimeout(() => { btn.textContent = '复制路径'; }, 1200);
+  }, (error) => saveState('复制失败：' + error, true));
+}
+$('btn-copy-flow-path').onclick = copyFlowPath;
 
 /**
  * 解析定位输入：取文字中第一个「图名.drawio#ID」（可带目录），否则把整段视为当前图的节点 ID（可带前导 #）。

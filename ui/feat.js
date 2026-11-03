@@ -248,7 +248,23 @@ window.FeatPane = (() => {
     if (st.readOnly) { b.className = 'agent'; b.textContent = 'Agent 持锁'; }
     else if (st.holding) { b.className = 'user'; b.textContent = '你持锁'; }
     else { b.className = ''; b.textContent = ''; }
+    $('btn-copy-feat-path').disabled = !st.path;
   }
+
+  /**
+   * 复制当前 Feat 档案的绝对路径，供粘贴给 Agent 继续处理。
+   * 扫描结果里的路径已是绝对路径；未打开档案时按钮禁用。成功时按钮短暂显示「已复制」。
+   */
+  function copyFeatPath() {
+    if (!st.path) return;
+    const btn = $('btn-copy-feat-path');
+    navigator.clipboard.writeText(st.path).then(() => {
+      btn.textContent = '已复制';
+      setState('已复制档案绝对路径');
+      setTimeout(() => { btn.textContent = '复制路径'; }, 1200);
+    }, (error) => setState('复制失败：' + error, true));
+  }
+  $('btn-copy-feat-path').onclick = copyFeatPath;
 
   /** 关联节点列表：调用 tagged_nodes，按图分组，点击定位到流程图节点。 */
   async function renderNodes() {
