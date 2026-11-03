@@ -214,6 +214,19 @@
 .fb-legend i.pending { border-color: var(--warn-bd); }
 .fb-legend i.muted { border-color: var(--border); border-top-style: dashed; }
 .fb-legend .fb-hint { margin: 0; }
+/* 选中 T 的详情区块 */
+.fb-detail { border-left: 4px solid var(--accent-bd); }
+.fb-detail.t-done { border-left-color: var(--fb-ok); }
+.fb-detail.t-waiting { border-left-color: var(--warn-bd); }
+.fb-detail .fb-card-head h3 { gap: 8px; align-items: center; }
+.fb-detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
+.fb-detail-grid dt { color: var(--muted); font-size: 12px; padding-top: 2px; }
+.fb-detail-grid dd { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.fb-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.fb-detail .fb-tchip { font-size: 12px; line-height: 20px; padding: 0 7px; }
+.fb-detail-note { font-size: 12px; }
+.fb-detail-note.warn { color: var(--warn-fg); }
+.fb-detail-cmd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border2); color: var(--fg2); font-size: 12px; }
 .fb-waits { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .fb-wait { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--warn-bd); background: color-mix(in srgb, var(--warn-bg) 45%, transparent); }
 .fb-wait-title { flex: 1 1 160px; min-width: 0; font-weight: 600; }

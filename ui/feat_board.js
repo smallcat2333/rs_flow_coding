@@ -572,6 +572,43 @@ window.FeatBoard = (() => {
       <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span><span class="fb-hint">悬停高亮前后依赖 · 点击筛选开发记录</span></div>`;
   }
 
+  /**
+   * 选中 T 的详情区块（路线图与开发记录之间）：完整任务名、状态原文、前置 / 后续 / 可并行（点击切换选中）、
+   * 开发记录条数与日期、各记录中该 T 的子任务（同一子号以最后出现为准），以及按状态给出的命令。
+   * 编号重复时取路线图最后一行，并提示重复；编号已不在路线图中时显示提示并可清除选中。
+   */
+  function taskDetail(d, id) {
+    const rows = d.tasks.filter((t) => t.id === id);
+    const close = `<button class="fb-icon" ${act(() => { st.filterT = ''; render(); })} title="关闭详情，显示全部开发记录" aria-label="关闭详情">×</button>`;
+    if (!rows.length) return `<section class="fb-card fb-detail"><header class="fb-card-head"><h3>${esc(id)} 详情</h3><span class="spacer"></span>${close}</header>${empty('路线图中已没有该编号', '')}</section>`;
+    const t = rows[rows.length - 1];
+    const state = (p) => d.tasks.filter((x) => x.id === p).pop()?.state || 'unknown';
+    const chip = (p) => `<button class="fb-tchip t-${state(p)}" ${act(() => { st.filterT = p; render(); })} title="${esc(p)}：${TASK_NAME[state(p)]}">${esc(p)}</button>`;
+    const after = [...new Set(d.tasks.filter((x) => x.deps.includes(id)).map((x) => x.id))];
+    const recs = d.devs.filter((r) => r.ts.some((x) => x === id || x.startsWith(id + '.')) || r.subs.some((s) => s.id.startsWith(id + '.')));
+    const subs = new Map();
+    for (const r of d.devs) for (const s of r.subs) if (s.id.startsWith(id + '.')) { subs.delete(s.id); subs.set(s.id, s); }
+    const dates = recs.map((r) => r.date).sort();
+    const doneIds = new Set(d.tasks.filter((x) => x.state === 'done').map((x) => x.id));
+    const blocked = t.deps.filter((p) => !doneIds.has(p));
+    const command = t.state === 'waiting' ? cmd(`/smallcat-feat-3-dev ${api.id()} ${id} 用户确认通过`)
+      : ['todo', 'doing'].includes(t.state) && !blocked.length ? cmd(`/smallcat-feat-3-dev ${api.id()} ${id}`) : '';
+    const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+    return `<section class="fb-card fb-detail t-${t.state}" data-line="${t.n}">
+      <header class="fb-card-head"><h3><span class="fb-tid">${esc(id)}</span>${esc(t.title)}</h3>${pill(t.state, TASK_NAME[t.state], t.raw)}${rows.length > 1 ? pill('warn', `编号重复 ${rows.length} 行`) : ''}<span class="spacer"></span>${src(t.n)}${close}</header>
+      <dl class="fb-detail-grid">
+        ${row('状态', esc(t.raw || '未填'))}
+        ${row('前置', t.deps.length ? `<span class="fb-chips">${t.deps.map(chip).join('')}</span>${blocked.length ? `<span class="fb-detail-note warn">未完成：${esc(blocked.join('、'))}</span>` : ''}` : '<span class="fb-none">无</span>')}
+        ${t.depRaw && t.depRaw !== '-' && t.depRaw !== t.deps.join('、') ? row('依赖原文', esc(t.depRaw)) : ''}
+        ${row('后续', after.length ? `<span class="fb-chips">${after.map(chip).join('')}</span>` : '<span class="fb-none">无</span>')}
+        ${t.par.length ? row('可并行', `<span class="fb-chips">${t.par.map(chip).join('')}</span>`) : ''}
+        ${row('开发记录', recs.length ? `${recs.length} 条 · ${esc(dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} → ${dates[dates.length - 1]}`)}` : '<span class="fb-none">还没有</span>')}
+      </dl>
+      ${subs.size ? `<h4 class="fb-sub">子任务 ${[...subs.values()].filter((s) => s.state === 'done').length}/${subs.size}</h4><ul class="fb-subs">${[...subs.values()].map((s) => `<li data-line="${s.n}"><span class="fb-tid sm">${esc(s.id)}</span><span class="fb-sub-goal">${cell(s.goal)}</span><span class="fb-who">${esc(s.who)}</span>${pill(s.state, TASK_NAME[s.state], s.raw)}</li>`).join('')}</ul>` : ''}
+      ${command ? `<div class="fb-detail-cmd"><span>${t.state === 'waiting' ? '验证后交给 Agent 确认：' : '交给 Agent 推进：'}</span>${command}</div>` : ''}
+    </section>`;
+  }
+
   /** 开发页（§3）：路线图依赖关系图（点节点筛选记录，待用户确认的 T 另列确认命令）、开发记录卡（可折叠，子任务状态行）。 */
   function page3(d) {
     const x = d.stats.tasks;
@@ -602,6 +639,7 @@ window.FeatBoard = (() => {
     }).join('')}</div>` : empty(st.filterT ? `${st.filterT} 还没有开发记录` : '还没有开发记录', st.filterT ? '' : 'smallcat-feat-3-dev');
     const filter = st.filterT ? `<span class="fb-filter">只看 ${esc(st.filterT)}<button ${act(() => { st.filterT = ''; render(); })} title="清除筛选" aria-label="清除筛选">×</button></span>` : '';
     return `${card(d, '3.1', '任务路线图', tasks, x.total ? ring(x.done, x.total) + `<span class="fb-pills">${counts}</span>` : '')}
+      ${st.filterT ? taskDetail(d, st.filterT) : ''}
       ${card(d, '3.2', '开发记录', recs, filter)}`;
   }
 
