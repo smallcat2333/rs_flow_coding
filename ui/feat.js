@@ -261,7 +261,6 @@ window.FeatPane = (() => {
     const btn = $('btn-copy-feat-path');
     navigator.clipboard.writeText(st.path).then(() => {
       btn.title = '已复制档案绝对路径';
-      setState('已复制档案绝对路径');
       setTimeout(() => { btn.title = '复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理'; }, 1200);
     }, (error) => setState('复制失败：' + error, true));
   }

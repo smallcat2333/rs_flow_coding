@@ -11,7 +11,7 @@ window.Sidebar = (() => {
   const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
   /** 分组键：分组目录路径（APP 目录的父目录）；未分组的 APP 合并为空串一组。 */
   const groupKey = (a) => a.group ? a.flow_dir.replace(/[\\/][^\\/]+[\\/]docs[\\/]flow$/i, '') : '';
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 5;
   /** 一次写盘常触发多次文件通知，同一条目在该时间内只置顶一次（毫秒）。 */
   const BUMP_DEBOUNCE_MS = 1500;
   const ICON_EXPAND = 'm7 9 5-5 5 5M7 15l5 5 5-5';
@@ -48,21 +48,50 @@ window.Sidebar = (() => {
     return saveQueue;
   }
 
-  /** 切换一个折叠键；收纳区默认折叠，普通分组默认展开。 */
+  /** 收起父层级时递归收起子项并重置内部分页；展开只展开当前层，其他列表保持原状。 */
   function toggle(key, archived) {
     const field = archived ? 'expanded_archives' : 'collapsed';
     const set = new Set(prefs[field]);
+    const collapsing = archived ? set.has(key) : !set.has(key);
+    if (collapsing) {
+      const roots = key.startsWith(GROUP_PREFIX)
+        ? apps.filter((a) => groupKey(a) === key.slice(GROUP_PREFIX.length)).map((a) => a.flow_dir)
+        : [key];
+      for (const pageKey of limits.keys()) {
+        if (roots.some((root) => pageKey === root || pageKey.startsWith(root + '#'))) limits.delete(pageKey);
+      }
+      const collapsed = archived ? new Set(prefs.collapsed) : set;
+      const expanded = archived ? set : new Set(prefs.expanded_archives);
+      const below = (child) => child !== key && roots.some((root) => child === root || child.startsWith(root + '#'));
+      for (const a of apps) {
+        if (below(a.flow_dir)) collapsed.add(a.flow_dir);
+        for (const kind of ['flow', 'feat']) {
+          const sectionKey = a.flow_dir + '#' + kind;
+          const archiveKey = sectionKey + '#archive';
+          if (below(sectionKey)) collapsed.add(sectionKey);
+          if (below(archiveKey)) expanded.delete(archiveKey);
+          if (kind === 'feat') for (const f of a.feats.filter((f) => f.archived)) {
+            const monthKey = archiveKey + '#' + timeBucket(f.closed_at, true);
+            if (below(monthKey)) collapsed.add(monthKey);
+          }
+        }
+      }
+      prefs.collapsed = [...collapsed];
+      prefs.expanded_archives = [...expanded];
+    }
     if (set.has(key)) set.delete(key); else set.add(key);
     prefs[field] = [...set];
     persist();
     render(apps, currentFlow, currentFeat);
   }
 
-  /** 全部展开/收纳只更新折叠偏好；收纳只收 APP 与分区，已折叠的分组和月份行保持折叠；全部展开时月份也展开。清除搜索的强制展开，分页仍按每批20项显示。 */
+  /** 全部展开清除各层折叠；全部收纳同时收起 APP、分区、收纳区与月份，清除搜索并重置分页。 */
   function setAllExpanded(expanded) {
     const keys = apps.flatMap((a) => [a.flow_dir, a.flow_dir + '#flow', a.flow_dir + '#feat']);
-    const groups = prefs.collapsed.filter((k) => k.startsWith(GROUP_PREFIX) || k.includes('#archive#'));
-    prefs.collapsed = expanded ? [] : [...groups, ...keys];
+    const groups = prefs.collapsed.filter((k) => k.startsWith(GROUP_PREFIX));
+    const months = apps.flatMap((a) => a.feats.filter((f) => f.archived)
+      .map((f) => a.flow_dir + '#feat#archive#' + timeBucket(f.closed_at, true)));
+    prefs.collapsed = expanded ? [] : [...new Set([...groups, ...keys, ...months])];
     prefs.expanded_archives = expanded ? apps.flatMap((a) => [a.flow_dir + '#flow#archive', a.flow_dir + '#feat#archive']) : [];
     persist();
     $('tree-search').value = '';
@@ -230,7 +259,7 @@ window.Sidebar = (() => {
       <div class="feat-meta"><span class="entry-detail"><span>${esc(f.id)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></span>${lockTag(f.lock)}</div></div>`;
   }
 
-  /** 每组最多先显示 20 项；继续加载不改变文件状态。搜索时也分批，避免大历史一次撑满树。 */
+  /** 每组先显示 5 项，点击再增加 5 项；搜索也分批，收起所属分组后从头计数。 */
   function page(list, key, row) {
     const limit = limits.get(key) || PAGE_SIZE;
     return list.slice(0, limit).map((f) => row(f)).join('') + (list.length > limit
@@ -273,7 +302,7 @@ window.Sidebar = (() => {
     return !search || `${f.name || ''} ${f.title || ''} ${f.id || ''} ${f.status || ''}`.toLowerCase().includes(search);
   }
 
-  /** 一类文档的活跃项与历史区；状态过滤只筛启用图，临时展开匹配结果，不改折叠偏好。 */
+  /** 一类文档的活跃项与历史区；仅两者都为空时隐藏分组，历史始终保留在所属分组内。 */
   function section(a, kind) {
     const flow = kind === 'flow';
     const all = flow ? a.files : a.feats;
@@ -286,6 +315,8 @@ window.Sidebar = (() => {
     const row = flow ? (f) => flowRow(f, undefined, prefs.app_aliases[a.flow_dir] || a.app) : featRow;
     const live = all.filter((f) => flow ? f.enabled : !f.archived);
     const activeCount = filtering ? active.length : live.length;
+    const history = archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', (f) => timeBucket(flow ? f.disabled_at : f.closed_at, !flow));
+    if (!activeCount && !history) return '';
     const unseen = live.some((f) => isUnseen(f.path));
     return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}">
       <div class="sec-head ${unseen ? 'unseen' : ''}" role="button" tabindex="0" aria-expanded="${!collapsed}" title="${flow ? '流程图' : '功能需求档案'}">
@@ -293,7 +324,7 @@ window.Sidebar = (() => {
         <span class="sec-title">${flow ? 'Chart' : 'Feat'}</span><span class="sec-count" title="${flow ? '启用的流程图数量' : '开启的 Feat 数量'}">${activeCount}</span>
         <button class="${flow ? 'app-new' : 'feat-new'}" data-dir="${esc(flow ? a.flow_dir : a.feat_dir)}" title="${flow ? '新建流程图' : '新建 Feat 档案'}">＋</button></div>
       <div class="sec-body">${page(active, key, row) || `<div class="empty mini">${search ? '没有匹配的活跃项' : flow ? '暂无启用的流程图' : '暂无开启的 Feat'}</div>`}
-      ${archive(archived, key + '#archive', row, flow ? '已停用' : '已收纳', (f) => timeBucket(flow ? f.disabled_at : f.closed_at, !flow))}</div></div>`;
+      ${history}</div></div>`;
   }
 
   /** 原位编辑 APP 或分组显示名：Enter/失焦保存、Esc 取消；空值或填回原名恢复默认，写入失败恢复旧别名。
@@ -348,20 +379,20 @@ window.Sidebar = (() => {
     }
   }
 
-  /** APP 行固定显示三个优先统计（含零值），绿色确认和确认删除合计为待 Agent 实现。 */
+  /** APP 行只显示非零统计，优先待审、待实现和问题；绿色确认与确认删除合计为待 Agent 实现。 */
   function appBadges(counts) {
     const primary = [
       { key: 'review', name: '起草待审', value: counts.review },
       { key: 'confirmed', name: '待 Agent 实现', value: counts.confirmed + counts.confirm_delete },
       { key: 'issue', name: '有问题', value: counts.issue },
     ];
-    const fixed = primary.map((s) => `<span class="badge s-${s.key}" data-status="${s.key}" title="${s.name}" aria-label="${s.name} ${s.value}">${s.value}</span>`).join('');
+    const fixed = primary.filter((s) => s.value > 0).map((s) => `<span class="badge s-${s.key}" data-status="${s.key}" title="${s.name}" aria-label="${s.name} ${s.value}">${s.value}</span>`).join('');
     const other = STATUS.filter((s) => !['none', 'review', 'confirmed', 'confirm_delete', 'issue'].includes(s.key) && counts[s.key] > 0)
       .map((s) => `<span class="badge app-badge-other s-${s.key}" data-status="${s.key}" title="${s.name}" hidden>${counts[s.key]}</span>`).join('');
     return `<span class="badges app-badges">${fixed}${other}</span>`;
   }
 
-  /** 按实际宽度放入其他徽标，预留名称空间；三个优先统计始终完整且不换行。 */
+  /** 按实际宽度放入其他徽标，预留名称空间；非零的优先统计完整显示且不换行。 */
   function fitAppBadges() {
     for (const head of $('tree').querySelectorAll('.app-head')) {
       const name = head.querySelector('.app-name');
@@ -396,7 +427,7 @@ window.Sidebar = (() => {
       for (const a of g.apps) {
         if (statusFilter && !a.files.some((f) => f.enabled && f.counts[statusFilter] > 0 && matchesSearch(f))) continue;
         const sections = section(a, 'flow') + (statusFilter ? '' : section(a, 'feat'));
-        if (!sections) continue;
+        if (!sections && (search || statusFilter)) continue;
         const collapsed = !search && !statusFilter && prefs.collapsed.includes(a.flow_dir);
         const alias = prefs.app_aliases[a.flow_dir];
         const unseen = [...a.files.filter((f) => f.enabled), ...a.feats.filter((f) => !f.archived)].some((f) => isUnseen(f.path));
@@ -532,9 +563,10 @@ window.Sidebar = (() => {
           sideMsg(action === 'copy-name' ? '已复制目录名称' : '已复制目录路径', true);
           return;
         }
-        const details = `目录：${path}\n将从 Flow Coding 列表移除${group ? '此分组及其 ' + members.length + ' 个 APP' : '此 APP'}，重新扫描后仍不显示。磁盘文件不会删除。\n如需恢复，在设置的项目目录中添加此完整路径并保存扫描。`;
-        if (!await confirmStatus(`移除${group ? '分组' : 'APP'}「${name}」？`, details, false)) return;
-        await invoke('remove_directory', { path });
+        const details = `目录：${path}\n将此路径加入设置中的「排除路径」，${group ? '此分组及其 ' + members.length + ' 个 APP' : '此 APP'}将不再显示。磁盘文件不会删除。\n如需恢复，在设置 → 项目目录 → 排除路径中删除此项，再保存并扫描。`;
+        if (!await confirmStatus(`排除${group ? '分组' : ' APP'}「${name}」？`, details, false)) return;
+        const cfg = await invoke('remove_directory', { path });
+        $('excluded-roots-text').value = cfg.excluded_dirs.join('\n');
         await refresh();
         sideMsg('已从目录列表移除，磁盘文件保留', true);
       } catch (error) { sideMsg('目录操作失败：' + error); }

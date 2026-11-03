@@ -211,7 +211,9 @@
         </section>
         <section data-settings-panel="projects" aria-label="项目目录" hidden>
           <h3>项目目录</h3><p>扫描各项目中的 docs/flow 和 docs/feat，按 APP 汇总。</p>
-          <div class="settings-well"><label for="roots-text">项目根目录，每行一个</label><textarea id="roots-text" rows="6" spellcheck="false"></textarea><div class="settings-actions"><button id="settings-project-save">保存并扫描</button></div></div>
+          <div class="settings-well"><label for="roots-text">增加路径，每行一个</label><p>扫描这些目录中的 APP、流程图和 Feat 档案。</p><textarea id="roots-text" rows="5" spellcheck="false"></textarea></div>
+          <div class="settings-well"><label for="excluded-roots-text">排除路径，每行一个</label><p>填写上方扫描目录内要排除的子目录。APP / 分组右键「移除目录」会自动加入这里；删除对应排除项并保存即可恢复。</p><textarea id="excluded-roots-text" rows="5" spellcheck="false"></textarea></div>
+          <div class="settings-actions"><button id="settings-project-save">保存并扫描</button></div>
           <h3>发现新 APP</h3><p>新增 APP 后重新遍历项目。日常刷新只读取已发现的目录。</p>
           <div class="settings-well"><button id="btn-rescan">全量扫描</button></div>
         </section>
@@ -257,7 +259,7 @@
             <li>左侧按 APP 列出 <code>docs/flow</code> 下的流程图（Chart）和 <code>docs/feat</code> 下的 Feat 档案。</li>
             <li>点一张图在右侧打开。所有改动立即写盘，没有「保存」按钮。</li>
           </ol>
-          <p>在左侧 APP 或分组标题上右键，可「复制路径」「复制名称」或「移除目录」。复制名称取磁盘目录原名；移除前会再次确认，只从 Flow Coding 列表排除，保留磁盘文件，重新扫描也不会自动恢复。恢复时在设置的「项目目录」中添加被移除目录的完整路径，再保存并扫描。</p>
+          <p>在左侧 APP 或分组标题上右键，可「复制路径」「复制名称」或「移除目录」。复制名称取磁盘目录原名；移除前会再次确认，只从 Flow Coding 列表排除，保留磁盘文件，重新扫描也不会自动恢复。恢复时在设置的「项目目录 → 排除路径」中删除对应项，再保存并扫描。</p>
           <figure><img src="guide/shot_flow.png" alt="左侧为 APP 树和状态统计，右侧为内嵌的 draw.io 编辑器"><figcaption>左侧树与状态统计，右侧直接编辑流程图。</figcaption></figure>
         </section>
         <section id="guide-colors">

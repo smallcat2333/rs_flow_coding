@@ -153,15 +153,20 @@
   const api = {
     async get_config() { return config; },
     async feat_progress() { return Object.keys(mds).sort().reverse().map(progress); },
-    async set_roots({ roots }) {
+    async set_roots({ roots, excludedDirs }) {
+      const excluded = excludedDirs ?? config.excluded_dirs;
+      for (const dir of excluded) {
+        if (!roots.some((r) => dir === r || dir.startsWith(r.replace(/\/$/, '') + '/'))) throw '排除路径必须位于增加路径内：' + dir;
+      }
       config.roots = roots;
-      config.excluded_dirs = config.excluded_dirs.filter((d) => !roots.includes(d));
+      config.excluded_dirs = excluded;
       localStorage.setItem('fc-mock-excluded', JSON.stringify(config.excluded_dirs));
       return config;
     },
     async remove_directory({ path }) {
       if (!config.excluded_dirs.includes(path)) config.excluded_dirs.push(path);
       localStorage.setItem('fc-mock-excluded', JSON.stringify(config.excluded_dirs));
+      return config;
     },
     async save_sidebar({ sidebar }) { config.sidebar = sidebar; localStorage.setItem('fc-mock-sidebar', JSON.stringify(sidebar)); },
     async set_chart_enabled({ path, enabled }) {

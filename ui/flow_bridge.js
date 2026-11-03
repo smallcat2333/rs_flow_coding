@@ -407,6 +407,40 @@
     var savedViewport = null; // 同一张图外部同步前的缩放与滚动位置，仅用于本次更新。
     var presentation = null; // 演示前的编辑状态与视图，退出后恢复。
     var readOnly = false;    // Agent 持锁只读：禁用编辑，保留缩放、滚动和平移查看。
+    var renderRequest = 0;   // 只确认最后一次绘制请求，避免旧图的异步回调提前揭开新图。
+
+    // 原生缩略导航独立于可编辑状态；固定在画布可见范围内，全屏和只读时仍可平移定位。
+    var minimapCss = document.createElement('style');
+    minimapCss.textContent = '.fc-minimap{position:fixed;width:200px;height:140px;z-index:3;overflow:hidden;box-sizing:border-box;border:1px solid light-dark(#c7cdd5,#4b5563);border-radius:6px;background:light-dark(#fff,#161b22);box-shadow:0 2px 10px #0003}' +
+      '.fc-minimap>svg>rect{stroke:#4493f8;fill:#4493f8;stroke-width:2;fill-opacity:.18}';
+    document.head.appendChild(minimapCss);
+    var minimap = document.createElement('div');
+    minimap.className = 'fc-minimap';
+    minimap.setAttribute('role', 'region');
+    minimap.setAttribute('aria-label', '流程图缩略导航');
+    minimap.title = '点击缩略图或拖动蓝色区域定位画布';
+    document.body.appendChild(minimap);
+    var outline = new mxOutline(graph);
+    outline.border = 8;
+    outline.init(minimap);
+    /** 根据画布尺寸定位缩略图，避开滚动条与格式面板；窄画布等比缩小，不挤占布局。 */
+    function placeMinimap() {
+      var box = graph.container.getBoundingClientRect();
+      var width = Math.min(200, Math.max(0, graph.container.clientWidth - 24));
+      var height = Math.min(width * .7, Math.max(0, graph.container.clientHeight - 24));
+      minimap.hidden = width <= 0 || height <= 0;
+      minimap.style.width = width + 'px';
+      minimap.style.height = height + 'px';
+      minimap.style.left = box.left + graph.container.clientWidth - width - 12 + 'px';
+      minimap.style.top = box.top + graph.container.clientHeight - height - 12 + 'px';
+      outline.update(false);
+    }
+    new ResizeObserver(placeMinimap).observe(graph.container);
+    window.addEventListener('resize', placeMinimap);
+    ui.addListener('formatWidthChanged', placeMinimap);
+    ui.addListener('sidebarWidthChanged', placeMinimap);
+    graph.addListener(mxEvent.SIZE, placeMinimap);
+    placeMinimap();
 
     /** 只读切换：结束正在进行的文字编辑并禁用图编辑；演示中只记下状态，退出演示时按它恢复。 */
     function setReadOnly(on) {
@@ -448,6 +482,7 @@
         graph.container.scrollTop = v.translate.y * v.scale + v.scrollTop;
         presentation = null;
       }
+      placeMinimap();
     }
     var origCustom = graph.isCustomLink;
     var origClick = graph.customLinkClicked;
@@ -478,7 +513,7 @@
       new MutationObserver(fitPath).observe(menubar, { childList: true, subtree: true });
     }
     // 调试入口：浏览器预览 / 开发者工具中可直接检查编辑器与角标
-    window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks, linkMarks: linkMarks, idMarks: idMarks };
+    window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks, linkMarks: linkMarks, idMarks: idMarks, outline: outline };
     notesReady.then(function () {
       noteTools = window.installFlowNotes(ui);
       window.fcBridge.notes = noteTools;
@@ -522,6 +557,17 @@
         } else if (m.id) {
           send({ event: 'fc-select-miss', id: m.id });
         }
+      } else if (m.action === 'fc-render-ready') {
+        var request = ++renderRequest;
+        // 等 load、视图恢复和节点定位的消息处理完再确认；后台窗口不依赖可能暂停的动画帧。
+        setTimeout(function () {
+          if (request !== renderRequest) return;
+          graph.view.validate();
+          placeMinimap();
+          outline.updateSvg();
+          outline.updateViewport();
+          send({ event: 'fc-render-ready', path: m.path });
+        }, 0);
       } else if (m.action === 'fc-viewport-save') {
         savedViewport = graph.getViewState();
       } else if (m.action === 'fc-viewport-apply') {

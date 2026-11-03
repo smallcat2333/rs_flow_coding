@@ -129,6 +129,7 @@ window.Settings = (() => {
     await act($('settings-project-save'), async () => {
       const cfg = await invoke('get_config');
       $('roots-text').value = cfg.roots.join('\n');
+      $('excluded-roots-text').value = (cfg.excluded_dirs || []).join('\n');
       return '';
     });
   }
@@ -171,8 +172,10 @@ window.Settings = (() => {
     };
     $('settings-project-save').onclick = (e) => act(e.currentTarget, async () => {
       const roots = $('roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-      const cfg = await invoke('set_roots', { roots });
+      const excludedDirs = $('excluded-roots-text').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const cfg = await invoke('set_roots', { roots, excludedDirs });
       $('roots-text').value = cfg.roots.join('\n');
+      $('excluded-roots-text').value = (cfg.excluded_dirs || []).join('\n');
       if (!await refresh(true)) throw new Error($('side-msg').textContent);
       return '项目目录已保存并扫描';
     });

@@ -76,15 +76,32 @@
       '.fc-note-content[contenteditable=true]{min-height:100px;outline:1px solid #b7791f;padding:8px;box-sizing:border-box}' +
       '.fc-note-content:focus-visible,.fc-notes button:focus-visible{outline:2px solid #b7791f;outline-offset:2px}' +
       '.fc-note-actions{display:flex;gap:6px;flex-wrap:wrap;padding-top:10px}' +
-      '.fc-note-actions .geBtn{margin:0}' +
+      '.fc-note-actions .geBtn{margin:0;display:inline-flex;align-items:center;gap:5px}' +
+      '.fc-note-action-icon{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}' +
       '.fc-note-pick{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:10000;max-width:calc(100% - 32px);box-sizing:border-box;padding:10px 14px;border:1px solid #b7791f;border-radius:6px;background:light-dark(#fff8e8,#332b1c);color:light-dark(#55370a,#ffe0a0);font:13px/1.5 Arial,"Microsoft YaHei",sans-serif;pointer-events:none}';
     document.head.appendChild(css);
 
+    var actionIcons = {
+      '编辑': 'M12 3l3 3M3 12l9-9a2.1 2.1 0 0 1 3 3l-9 9-4 1z',
+      '解除挂载': 'M7 11l4-4M6 9l-2 2a3 3 0 0 0 4 4l2-2M9 6l2-2a3 3 0 0 1 4 4l-2 2M2 2l14 14',
+      '删除注释': 'M3 5h12M7 5V3h4v2M5 5l1 11h6l1-11M8 8v5M10 8v5'
+    };
     function button(label, run, primary) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'geBtn' + (primary ? ' gePrimaryBtn' : '');
-      btn.textContent = label;
+      if (actionIcons[label]) {
+        var icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('class', 'fc-note-action-icon');
+        icon.setAttribute('viewBox', '0 0 18 18');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.setAttribute('focusable', 'false');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', actionIcons[label]);
+        icon.appendChild(path);
+        btn.appendChild(icon);
+      }
+      btn.appendChild(document.createTextNode(label));
       btn.onclick = run;
       return btn;
     }

@@ -28,7 +28,7 @@ window.Tabs = (() => {
   /** 按 Windows 文件路径匹配已打开内容；优先当前页签，兼容分隔符与大小写差异。 */
   function find(kind, path) {
     const key = (p) => p.replace(/\\/g, '/').toLowerCase();
-    if (key(tabs[active][kind]) === key(path)) return active;
+    if (key(tabs[active]?.[kind] || '') === key(path)) return active;
     return tabs.findIndex((t) => key(t[kind]) === key(path));
   }
 
@@ -36,11 +36,10 @@ window.Tabs = (() => {
   function load() {
     try {
       const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
-      tabs = (saved.tabs || []).map((t) => ({ flow: t.flow || '', feat: t.feat || '' }));
+      tabs = (saved.tabs || [blank()]).map((t) => ({ flow: t.flow || '', feat: t.feat || '' }));
       active = saved.active || 0;
-    } catch { tabs = []; }
-    if (!tabs.length) tabs = [blank()];
-    active = Math.min(Math.max(active, 0), tabs.length - 1);
+    } catch { tabs = [blank()]; }
+    active = tabs.length ? Math.min(Math.max(active, 0), tabs.length - 1) : 0;
   }
   const save = () => localStorage.setItem(KEY, JSON.stringify({ tabs, active }));
 
@@ -66,6 +65,11 @@ window.Tabs = (() => {
   /** 当前页签的某一类内容变化（app.js 在打开 / 关闭图或档案时调用）：path 为空表示该类已关闭。 */
   function note(kind, path) {
     if (!api || busy || frozen) return;
+    if (!tabs.length) {
+      if (!path) return;
+      tabs.push(blank());
+      active = 0;
+    }
     const t = tabs[active];
     if (t[kind] === (path || '')) return;
     t[kind] = path || '';
@@ -93,7 +97,11 @@ window.Tabs = (() => {
   }
 
   /** 新建空白页签放在当前页签右侧并切过去。 */
-  const add = () => { tabs.splice(active + 1, 0, blank()); activate(active + 1); };
+  const add = () => {
+    const next = tabs.length ? active + 1 : 0;
+    tabs.splice(next, 0, blank());
+    activate(next);
+  };
 
   /** 侧栏查找已有内容；返回是否已处理，未打开的文件继续沿用侧栏原有打开方式。 */
   async function reveal(kind, path) {
@@ -109,7 +117,7 @@ window.Tabs = (() => {
   function isOtherProject(path) {
     if (!api || busy || frozen) return false;
     const project = api.project(path);
-    return !!project && Object.values(tabs[active]).some((p) => {
+    return !!project && Object.values(tabs[active] || {}).some((p) => {
       const other = p && api.project(p);
       return other && other !== project;
     });
@@ -120,8 +128,9 @@ window.Tabs = (() => {
     if (!api || busy) return;
     const i = find(kind, path);
     if (i >= 0) return activate(i, position);
-    tabs.splice(active + 1, 0, { ...blank(), [kind]: path });
-    return activate(active + 1, position);
+    const next = tabs.length ? active + 1 : 0;
+    tabs.splice(next, 0, { ...blank(), [kind]: path });
+    return activate(next, position);
   }
 
   /** 清除拖动标识与落点提示，取消拖动时不改变页签顺序。 */
@@ -205,8 +214,18 @@ window.Tabs = (() => {
     if (busy) return;
     tabs.splice(i, 1);
     if (!tabs.length) tabs.push(blank());
-    if (i === active) { activate(Math.min(i, tabs.length - 1)); return; }
+    if (i === active) return activate(Math.min(i, tabs.length - 1));
     if (i < active) active--;
+    save();
+    render();
+  }
+
+  /** 弹出内容已关闭后移除原来的空页签；组合页签保留另一项，最后一项移出后只留新建按钮。 */
+  function closeEmpty() {
+    if (!api || busy || !tabs.length || tabs[active].flow || tabs[active].feat) return;
+    if (tabs.length > 1) return close(active);
+    tabs = [];
+    active = 0;
     save();
     render();
   }
@@ -244,6 +263,7 @@ window.Tabs = (() => {
       const t = e.button === 1 && e.target.closest('.tab');
       if (t) { e.preventDefault(); close(Number(t.querySelector('[data-i]').dataset.i)); }
     });
+    if (!tabs.length) { render(); return; }
     return activate(active);
   }
 
@@ -254,6 +274,7 @@ window.Tabs = (() => {
     isOtherProject,
     openNew,
     split,
+    closeEmpty,
     render,
     /** 主窗口退出前调用：之后关栏不再改页签记录。 */
     freeze: () => { frozen = true; },

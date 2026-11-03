@@ -248,22 +248,36 @@ fn get_config() -> Result<scan::Config, String> {
 
 /// 设置项目根目录列表（规范化后保存）；不存在的目录报错。
 #[tauri::command]
-fn set_roots(roots: Vec<String>) -> Result<scan::Config, String> {
+fn set_roots(roots: Vec<String>, excluded_dirs: Option<Vec<String>>) -> Result<scan::Config, String> {
     let roots: Vec<String> = roots
         .iter()
         .filter(|r| !r.trim().is_empty())
         .map(|r| paths::norm(Path::new(r.trim())).map(|p| p.to_string_lossy().into_owned()))
         .collect::<Result<_, _>>()?;
+    let excluded = excluded_dirs.map(|dirs| dirs.iter()
+        .filter(|d| !d.trim().is_empty())
+        .map(|d| paths::norm(Path::new(d.trim())).map(|p| p.to_string_lossy().into_owned()))
+        .collect::<Result<Vec<_>, _>>()).transpose()?;
+    if let Some(dirs) = &excluded {
+        for dir in dirs {
+            if !roots.iter().any(|r| scan::within(Path::new(dir), Path::new(r))) {
+                return Err(format!("排除路径必须位于增加路径内：{dir}"));
+            }
+        }
+    }
     scan::update_config(|cfg| {
-        cfg.excluded_dirs.retain(|d| !roots.iter().any(|r| paths::key(Path::new(d)) == paths::key(Path::new(r))));
         cfg.roots = roots;
-        cfg.flow_dirs.retain(|f| cfg.roots.iter().any(|r| paths::key(Path::new(f)).starts_with(&paths::key(Path::new(r)))));
+        if let Some(dirs) = excluded { cfg.excluded_dirs = dirs; }
+        cfg.excluded_dirs.retain(|d| cfg.roots.iter().any(|r| scan::within(Path::new(d), Path::new(r))));
+        let exclusions = cfg.excluded_dirs.clone();
+        cfg.flow_dirs.retain(|f| cfg.roots.iter().any(|r| scan::within(Path::new(f), Path::new(r)))
+            && !exclusions.iter().any(|d| scan::within(Path::new(f), Path::new(d))));
     })
 }
 
 /// 仅从本机扫描列表移除目录；不删除项目文件。
 #[tauri::command]
-fn remove_directory(path: String) -> Result<(), String> {
+fn remove_directory(path: String) -> Result<scan::Config, String> {
     let directory = paths::norm(Path::new(&path))?;
     if !directory.is_dir() { return Err("请选择目录".into()); }
     scan::update_config(|cfg| {
@@ -273,8 +287,7 @@ fn remove_directory(path: String) -> Result<(), String> {
         }
         let excluded = cfg.excluded_dirs.clone();
         cfg.flow_dirs.retain(|f| !excluded.iter().any(|d| scan::within(Path::new(f), Path::new(d))));
-    })?;
-    Ok(())
+    })
 }
 
 /// 汇总全部 APP。`full=true` 时遍历项目根重新发现 flow 目录并更新缓存；否则用缓存目录（启动快）。

@@ -247,6 +247,12 @@ $('tree').addEventListener('click', async (ev) => {
 /** 向编辑器发送协议消息。 */
 function post(msg) { editor.contentWindow.postMessage(JSON.stringify(msg), '*'); }
 
+/** 覆盖载入中的旧画布但保留绘制；在新图绘制就绪、关闭或载入失败时解除。 */
+function setDiagramLoading(on) {
+  $('editor-wrap').classList.toggle('loading', on);
+  $('editor-wrap').setAttribute('aria-busy', String(on));
+}
+
 /** 加载编辑器页面（只在首次打开图时加载一次）。 */
 function ensureEditor() {
   if (editor.src) return;
@@ -443,13 +449,18 @@ window.addEventListener('message', (ev) => {
       else if (SOLO) currentWindow.close();
       break;
     case 'load':
-      // 图载入完成：按当前 Feat 重新高亮，执行等待中的节点定位
-      st.loaded = true;
-      flowNavigating = false;
-      renderCurrentBar();
+      // 图模型载入后先完成高亮、视图恢复和节点定位，绘制完成再展示。
       applyFeat();
       finishViewUpdate();
       if (st.pendingSelect) { post({ action: 'fc-select-cell', id: st.pendingSelect }); st.pendingSelect = ''; }
+      post({ action: 'fc-render-ready', path: st.cur });
+      break;
+    case 'fc-render-ready':
+      if (m.path !== st.cur || !st.cur) break;
+      st.loaded = true;
+      flowNavigating = false;
+      setDiagramLoading(false);
+      renderCurrentBar();
       break;
     case 'autosave':
     case 'save':
@@ -612,7 +623,6 @@ function copyFlowPath() {
   const btn = $('btn-copy-flow-path');
   navigator.clipboard.writeText(st.cur).then(() => {
     btn.title = '已复制流程图绝对路径';
-    saveState('已复制流程图绝对路径');
     setTimeout(() => { btn.title = '复制当前流程图的绝对路径，可发给 Agent 继续处理'; }, 1200);
   }, (error) => saveState('复制失败：' + error, true));
 }
@@ -682,6 +692,7 @@ async function routeDiagram(path, node, options = {}) {
     const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
     const changed = path !== st.cur || (!!node && node !== selCells[0]?.id);
     flowNavigating = true;
+    if (path !== st.cur || !st.loaded) setDiagramLoading(true);
     renderCurrentBar();
     try {
       // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
@@ -699,6 +710,7 @@ async function routeDiagram(path, node, options = {}) {
       }
     } catch (error) {
       flowNavigating = false;
+      setDiagramLoading(false);
       saveState('打开流程图失败：' + error, true);
     }
     renderCurrentBar();
@@ -864,7 +876,11 @@ async function popOut(kind) {
   if (kind === 'flow') await closeFlow('流程图已在独立窗口中打开');
   else await FeatPane.close();
   popped[kind] = true;
-  try { await invoke('open_popout', { kind, path, node: null }); localStorage.setItem(POP_KEY[kind], '1'); }
+  try {
+    await invoke('open_popout', { kind, path, node: null });
+    localStorage.setItem(POP_KEY[kind], '1');
+    await Tabs.closeEmpty();
+  }
   catch (e) { popped[kind] = false; sideMsg(String(e)); }
 }
 $('btn-flow-pop').onclick = () => popOut('flow');
@@ -1025,6 +1041,7 @@ async function closeFlow(msg) {
   if (!SOLO) Tabs.note('flow', '');
   // 图还在载入时关闭：结束这次导航，否则后续打开图（含切页签）会一直等载入完成。
   flowNavigating = false;
+  setDiagramLoading(false);
   st.loaded = false;
   selCells = [];
   $('empty').textContent = msg || EMPTY_TEXT;
