@@ -151,11 +151,10 @@ window.FeatPane = (() => {
   };
   applyTocVisible(localStorage.getItem('fc-toc') !== '0');
 
-  /** 顶栏保存状态。 */
+  /** 普通保存进度留在顶栏，异常与主窗口共用悬浮状态，不占用档案标题空间。 */
   function setState(text, isError) {
-    const el = $('md-state');
-    el.textContent = text || '';
-    el.classList.toggle('error', !!isError);
+    $('md-state').textContent = isError ? '' : (text || '');
+    if (isError && text) floatingStatus(text);
   }
 
   /** 同步当前档案：只替换变化片段，让滚动快照和光标随文字映射；外部改动不进撤销历史。 */
@@ -307,7 +306,7 @@ window.FeatPane = (() => {
     document.querySelectorAll('.nn.active').forEach((e) => e.classList.remove('active'));
     const item = document.querySelector(`.nn[data-id="${CSS.escape(nodeId)}"]`);
     if (item) { item.classList.add('active'); item.scrollIntoView({ block: 'nearest' }); }
-    if (!m) { setState(`档案中未引用该节点（#${nodeId}）`); return; }
+    if (!m) { setState(`档案中未引用该节点（#${nodeId}）`, true); return; }
     if (boardMode()) { FeatBoard.revealLine(view.state.doc.lineAt(m.index).number); return; }
     view.dispatch({ selection: { anchor: m.index, head: m.index + m[0].length }, scrollIntoView: true });
   }
@@ -607,7 +606,7 @@ window.FeatPane = (() => {
     const cmd = e.shiftKey ? null : k === 'z' ? undo : k === 'y' ? redo : null;
     if (!cmd) return;
     e.preventDefault();
-    if (!cmd(view)) setState(cmd === undo ? '没有可撤销的改动' : '没有可重做的改动');
+    if (!cmd(view)) setState(cmd === undo ? '没有可撤销的改动' : '没有可重做的改动', true);
   });
   window.addEventListener('beforeunload', () => { if (st.holding) invoke('release_lock', { path: st.path }); });
 

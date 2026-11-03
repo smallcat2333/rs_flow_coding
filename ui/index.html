@@ -50,7 +50,7 @@
       <div id="status-bars"></div>
     </section>
     <div id="tree"></div>
-    <div id="side-msg"></div>
+    <div id="side-msg" hidden></div>
   </aside>
   <div id="side-splitter" title="拖动调整侧栏宽度，双击恢复默认"></div>
 
@@ -73,7 +73,7 @@
           <button id="btn-history" disabled>历史对比</button>
           <div class="pane-tools" role="group" aria-label="流程图工具">
           <button id="btn-copy-flow-path" class="pane-tool" title="复制当前流程图的绝对路径，可发给 Agent 继续处理" aria-label="复制流程图路径" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 16h6"/></svg></button>
-          <button id="btn-flow-full" class="pane-tool" title="全屏显示流程图（Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+          <button id="btn-flow-full" class="pane-tool" title="全屏显示流程图（F11，Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
           <button class="pane-float pane-tool no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M9 3h12v12"/></svg></button>
           <button id="btn-flow-pop" class="pane-tool no-solo" title="在独立窗口打开流程图" aria-label="在独立窗口打开流程图" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="13" height="13" rx="1"/><rect x="8" y="3" width="13" height="13" rx="1"/></svg></button>
           <button id="btn-flow-tab" class="pane-tool no-solo" title="拆分流程图到独立页签" aria-label="流程图在独立页签打开" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h7l2 3h7v12H4zM9 14h7m-3-3 3 3-3 3"/></svg></button>
@@ -81,11 +81,11 @@
           </div>
           <button id="btn-flow-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这张图">回到主窗口</button>
         </div>
-        <!-- 只读提示条：Agent 持锁时显示在画布上方，不遮挡画布，仍可缩放、滚动查看 -->
-        <div id="readonly-mask" class="ro-strip" role="status" hidden>Agent 正在编辑，暂时只读，可缩放、滚动查看<small id="mask-detail"></small></div>
         <div id="editor-wrap">
           <iframe id="editor" title="draw.io" allow="clipboard-write"></iframe>
           <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
+          <!-- 只读悬浮标识：不占布局、不拦截鼠标，仍可缩放、滚动查看。 -->
+          <div id="readonly-mask" class="ro-strip" role="status" hidden>Agent 正在编辑 · 只读<small id="mask-detail"></small></div>
         </div>
         <!-- 底部常驻状态栏：选中节点信息与挂/摘 Feat，固定高度，不挤压编辑区 -->
         <div id="node-bar">
@@ -122,9 +122,9 @@
           </div>
           <button id="btn-feat-dock" class="solo-only" title="关闭独立窗口，在主窗口继续打开这个档案（保持阅读位置）">回到主窗口</button>
         </div>
-        <!-- 只读提示条：Agent 持锁时显示在正文上方，不遮挡正文，仍可滚动、选中复制 -->
-        <div id="md-mask" class="ro-strip" role="status" hidden>Agent 正在编辑档案，暂时只读，可滚动、选中复制</div>
         <div id="feat-body">
+          <!-- 与画布共用不拦截鼠标的只读悬浮标识，正文仍可滚动和选中复制。 -->
+          <div id="md-mask" class="ro-strip" role="status" hidden>Agent 正在编辑档案 · 只读</div>
           <div id="md-body">
             <nav id="md-toc" aria-label="标题大纲"></nav>
             <div id="md-editor"></div>
@@ -169,6 +169,8 @@
     <header><b id="viewer-title">旧版查看（只读）</b><span class="spacer"></span><button id="btn-viewer-close">关闭</button></header>
     <iframe id="viewer-frame" title="旧版"></iframe>
   </div>
+
+  <div id="floating-status" class="floating-status" popover="manual" role="alert" aria-atomic="true"></div>
 
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <header class="settings-header"><h2 id="settings-title">设置</h2><button id="settings-close" class="icon-button" aria-label="关闭设置" title="关闭设置">×</button></header>
@@ -326,7 +328,7 @@
         </section>
         <section id="guide-lock">
           <h3>Agent 加锁</h3>
-          <p>Agent 改图或改档案前必须加锁，期间 App 显示只读遮罩；解锁后自动合并磁盘最新内容。</p>
+          <p>Agent 改图或改档案前必须加锁，期间 App 显示半透明悬浮只读标识，不阻挡缩放、滚动或选中复制；解锁后自动合并磁盘最新内容。</p>
           <pre>flowctl lock &lt;文件&gt; --wait 30
 # 编辑文件
 flowctl unlock &lt;文件&gt;</pre>

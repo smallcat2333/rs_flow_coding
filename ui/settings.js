@@ -34,7 +34,7 @@ window.Settings = (() => {
     $('cache-size').textContent = bytes(s.cache_bytes);
   }
 
-  /** 设置动作串行执行，错误留在当前页；失败后仍可重试，不用侧栏隐藏错误。 */
+  /** 设置动作串行执行；异常共用顶部绘制层的悬浮状态，仍保留失败后重试能力。 */
   async function act(button, work) {
     if (busy) return;
     busy = true;
@@ -42,7 +42,7 @@ window.Settings = (() => {
     $('settings-msg').textContent = '处理中…';
     $('settings-msg').classList.remove('error');
     try { $('settings-msg').textContent = await work(); }
-    catch (error) { $('settings-msg').textContent = String(error); $('settings-msg').classList.add('error'); }
+    catch (error) { $('settings-msg').textContent = ''; floatingStatus(String(error)); }
     finally { busy = false; button.disabled = false; }
   }
 

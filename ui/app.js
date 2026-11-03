@@ -101,17 +101,28 @@ function renderStatusStats(counts) {
   }).join('');
 }
 
-/** 侧栏底部提示：成功操作显示绿色，错误保留红色；空串清除。 */
-function sideMsg(msg, success = false) {
-  $('side-msg').textContent = msg || '';
-  $('side-msg').classList.toggle('success', success);
+let floatingStatusTimer = 0;
+/** 非交互状态统一浮在窗口底部；新提示重置计时，原文按纯文本显示，六秒后收起且不抢焦点。 */
+function floatingStatus(text, tone = 'error') {
+  const el = $('floating-status');
+  clearTimeout(floatingStatusTimer);
+  el.textContent = text || '';
+  el.className = `floating-status ${tone}`;
+  if (!text) { el.hidePopover(); return; }
+  el.showPopover();
+  floatingStatusTimer = setTimeout(() => el.hidePopover(), 6000);
 }
 
-/** 顶栏保存状态提示。 */
+/** 侧栏操作结果改为悬浮提示；原节点仅保留结果文本，供设置页识别扫描失败。 */
+function sideMsg(msg, success = false) {
+  $('side-msg').textContent = msg || '';
+  if (msg) floatingStatus(msg, success ? 'success' : 'error');
+}
+
+/** 普通保存进度留在顶栏；异常走悬浮提示，避免长错误信息撑开标题栏。 */
 function saveState(text, isError) {
-  const el = $('save-state');
-  el.textContent = text || '';
-  el.classList.toggle('error', !!isError);
+  $('save-state').textContent = isError ? '' : (text || '');
+  if (isError && text) floatingStatus(text);
 }
 
 /** 简易输入对话框，返回 Promise<string|null>。 */
@@ -364,7 +375,7 @@ async function checkLock() {
   } else if (st.readOnly) await leaveReadOnly();
 }
 
-/** 进入只读：编辑器禁用编辑但仍可缩放、滚动查看，画布上方显示提示条（轮询由常驻锁巡检负责）。 */
+/** 进入只读：编辑器禁用编辑但仍可缩放、滚动查看，内容区显示悬浮标识（轮询由常驻锁巡检负责）。 */
 async function enterReadOnly(l) {
   l = l || await invoke('lock_status', { path: st.cur });
   st.readOnly = true;
@@ -443,6 +454,9 @@ window.addEventListener('message', (ev) => {
       break;
     case 'fc-select-miss':
       saveState(`当前图没有节点 ${m.id}`, true);
+      break;
+    case 'fc-toggle-fullscreen':
+      if (st.cur && ownsFlow()) setFlowFull(!flowFull);
       break;
     case 'fc-escape':
       if (flowFull) setFlowFull(false);
@@ -538,26 +552,13 @@ function sameApp() {
   return !!a && a === appOf(curFeat.path);
 }
 
-/** 单按钮提示：只说明原因，不改图、不改标签。关闭后移除，避免遮罩残留。 */
+/** 不需要用户作选择的异常说明统一悬浮显示；调用方的挂接限制保持不变。 */
 function alertBox(title, message) {
-  const dialog = document.createElement('dialog');
-  dialog.className = 'lifecycle-dialog';
-  const heading = document.createElement('h3');
-  heading.textContent = title;
-  const detail = document.createElement('p');
-  detail.textContent = message;
-  const form = document.createElement('form');
-  form.method = 'dialog';
-  form.className = 'dlg-btns';
-  form.innerHTML = '<button value="cancel">知道了</button>';
-  dialog.append(heading, detail, form);
-  document.body.appendChild(dialog);
-  dialog.addEventListener('close', () => dialog.remove(), { once: true });
-  dialog.showModal();
+  floatingStatus(title + '：' + message);
 }
 
 /** 底部状态栏：选中节点的标签，以及对当前 Feat 的挂/摘按钮。
- *  跨 APP 不在状态栏预告；点「挂到」时弹框拒绝，已挂上的残留标签仍可摘除。 */
+ *  跨 APP 不在状态栏预告；点「挂到」时悬浮提示拒绝，已挂上的残留标签仍可摘除。 */
 function renderNodeBar() {
   const fid = curFeat.id;
   const btn = $('btn-tag');
@@ -1146,13 +1147,19 @@ async function setFlowFull(on) {
   document.body.classList.toggle('flow-full', on);
   const btn = $('btn-flow-full');
   btn.setAttribute('aria-pressed', String(on));
-  btn.title = on ? '退出全屏（Esc）' : '全屏显示流程图（Esc 退出）';
+  btn.title = on ? '退出全屏（F11 / Esc）' : '全屏显示流程图（F11，Esc 退出）';
   post({ action: 'fc-presentation', show: on });
 }
 $('btn-flow-full').onclick = () => setFlowFull(!flowFull);
 // 焦点在编辑器外时的 Esc：先退出全屏；有对话框时留给对话框自己处理。焦点在编辑器内由 fc-escape 转发。
 // 须注册在独立窗口「Esc 关窗」之前，同为捕获阶段时先执行并截住事件。
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'F11' && !event.isComposing && st.cur && ownsFlow() && !document.querySelector('dialog[open], #roots-dlg')) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!event.repeat) setFlowFull(!flowFull);
+    return;
+  }
   if (event.key !== 'Escape' || event.isComposing || !flowFull || document.getElementById('roots-dlg')) return;
   event.preventDefault();
   event.stopImmediatePropagation();

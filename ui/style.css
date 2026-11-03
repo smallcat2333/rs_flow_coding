@@ -98,8 +98,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .app > .app-head { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; height: 30px; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
 .app > .app-head:hover { background: var(--hover); }
 .app-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; }
-.app-head > .app-badges { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
-.app-badges .badge { flex-shrink: 0; }
+.app-head > .app-badges { margin-left: auto; flex-shrink: 0; align-items: center; white-space: nowrap; }
+/* 固定数字色块高度，避免单个徽标与多个徽标依赖行盒撑高。 */
+.app-badges .badge { flex-shrink: 0; height: 18px; line-height: 16px; }
 .app-display { min-width: 0; max-width: 100%; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; }
 .app-name:has(.app-original) .app-display { max-width: calc(100% - 26px); }
 .app-original { min-width: 20px; flex: 0 1 auto; color: var(--muted); font-size: 11px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
@@ -273,11 +274,15 @@ body.pane-dragging .splitter { background: var(--accent); }
 #editor-wrap.loading #editor { pointer-events: none; }
 #editor-wrap.loading::after { content: '正在载入流程图…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--muted); }
 #editor-wrap .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); }
-/* 只读提示条（流程图 #readonly-mask / Feat #md-mask）：占栏内一行，不覆盖画布或正文，内容保持原亮度。 */
-.ro-strip { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 3px 12px; background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid var(--warn-bd); font-size: 12px; }
-.ro-strip::before { content: ""; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--warn-fg); }
-.ro-strip small { color: var(--fg2); font-size: 11px; }
+/* 只读悬浮标识：附着内容区底部，不挤占高度；半透明且鼠标穿透，不影响画布或正文操作。 */
+.ro-strip { position: absolute; z-index: 3; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; padding: 5px 10px; background: color-mix(in srgb, var(--warn-bg) 65%, transparent); color: var(--warn-fg); border: 1px solid color-mix(in srgb, var(--warn-bd) 40%, transparent); border-radius: 8px; font-size: 12px; pointer-events: none; user-select: none; }
+.ro-strip::before { content: ""; flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .75; }
+.ro-strip small { min-width: 0; color: var(--fg2); font-size: 11px; overflow-wrap: anywhere; }
 .ro-strip small:empty { display: none; }
+/* 非交互异常提示用原生 popover 进入顶层，设置对话框打开时也可见；不产生遮罩或占用布局。 */
+.floating-status { position: fixed; inset: auto; left: 50%; bottom: 96px; transform: translateX(-50%); margin: 0; width: max-content; max-width: min(640px, calc(100% - 32px)); padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--bg) 80%, transparent); color: var(--danger); font: inherit; overflow-wrap: anywhere; pointer-events: none; user-select: none; }
+.floating-status.success { color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 45%, transparent); }
+.floating-status::backdrop { background: transparent; pointer-events: none; }
 
 /* 独立窗口（?solo=flow|feat）：只显示一栏，隐藏侧栏与弹出/关闭按钮 */
 body.solo #side, body.solo #side-splitter, body.solo .no-solo { display: none !important; }
