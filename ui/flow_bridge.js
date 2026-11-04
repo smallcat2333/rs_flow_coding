@@ -99,7 +99,7 @@
   }
 
   /**
-   * ID 小卡图片：浅灰圆角底 + 等宽字体 id，宽度按字符估算（非 ASCII 按两倍宽）。
+   * ID 小卡图片：半透明浅灰圆角底 + 不透明等宽字体 id，宽度按字符估算（非 ASCII 按两倍宽）。
    * 浅色、深色画布上都可读；含中文时用 encodeURIComponent 生成 data URI（btoa 不支持非 Latin1）。
    */
   function idImage(text) {
@@ -108,7 +108,7 @@
     var w = Math.ceil(units * 6.2 + 8);
     var esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="14" viewBox="0 0 ' + w + ' 14">' +
-      '<rect x=".5" y=".5" width="' + (w - 1) + '" height="13" rx="3" fill="#f6f8fa" stroke="#8c959f"/>' +
+      '<rect x=".5" y=".5" width="' + (w - 1) + '" height="13" rx="3" fill="#f6f8fa" fill-opacity="0.65" stroke="#8c959f" stroke-opacity="0.65"/>' +
       '<text x="' + (w / 2) + '" y="10.5" font-size="10" font-family="Consolas,Menlo,monospace" fill="#24292f" text-anchor="middle">' + esc + '</text></svg>';
     return new mxImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg), w, 14);
   }
@@ -355,9 +355,20 @@
             icon.style.margin = '0 auto';
             icon.style.opacity = enabled === false ? '.4' : '.85';
           }
+          if (item && /^(全屏显示流程图|退出全屏)$/.test(title)) {
+            var shortcut = document.createElement('span');
+            shortcut.textContent = 'F11';
+            shortcut.style.cssText = 'float:right;margin-left:24px;opacity:.65';
+            item.cells[1].appendChild(shortcut);
+          }
           return item;
         };
       }
+      var full = document.body.classList.contains('fc-presentation');
+      menu.addItem(full ? '退出全屏' : '全屏显示流程图', null, function () {
+        send({ event: 'fc-toggle-fullscreen' });
+      });
+      menu.addSeparator();
       var sel = graph.getSelectionCells().filter(function (c) { return graph.model.isVertex(c); });
       if (cell && graph.model.isVertex(cell) && sel.length) {
         // 点菜单时焦点在本 iframe，外层文档写剪贴板会因未聚焦被拒，所以在这里写，结果交外层提示。
@@ -405,7 +416,9 @@
     installNodeMenu();
     var graph = ui.editor.graph;
     var savedViewport = null; // 同一张图外部同步前的缩放与滚动位置，仅用于本次更新。
-    var presentation = null; // 演示前的编辑状态与视图，退出后恢复。
+    var fitViewport = false; // 新图在两栏与编辑器布局稳定前持续适应；用户操作或节点定位后停止。
+    var presentation = null; // 演示前的编辑状态与选中项，浏览位置在进出时连续保留。
+    var presentationViewport = null; // 外层窗口改变尺寸前记录的缩放和画布中心坐标。
     var readOnly = false;    // Agent 持锁只读：禁用编辑，保留缩放、滚动和平移查看。
     var renderRequest = 0;   // 只确认最后一次绘制请求，避免旧图的异步回调提前揭开新图。
 
@@ -421,25 +434,59 @@
     minimap.title = '点击缩略图或拖动蓝色区域定位画布';
     document.body.appendChild(minimap);
     var outline = new mxOutline(graph);
+    var minimapFrame = 0;
+    var minimapFullUpdate = false;
+    var minimapLayoutDirty = true;
     outline.border = 8;
+    /** 合并同帧更新；首次载图可直接调用，避免后台窗口等待动画帧才完成载入。 */
+    function flushMinimap() {
+      if (minimapFrame) window.cancelAnimationFrame(minimapFrame);
+      minimapFrame = 0;
+      if (minimapLayoutDirty) {
+        minimapLayoutDirty = false;
+        var box = graph.container.getBoundingClientRect();
+        var width = Math.min(200, Math.max(0, graph.container.clientWidth - 24));
+        var height = Math.min(width * .7, Math.max(0, graph.container.clientHeight - 24));
+        minimap.hidden = width <= 0 || height <= 0;
+        minimap.style.width = width + 'px';
+        minimap.style.height = height + 'px';
+        minimap.style.left = box.left + graph.container.clientWidth - width - 12 + 'px';
+        minimap.style.top = box.top + graph.container.clientHeight - height - 12 + 'px';
+      }
+      if (outline.isSuspended()) return;
+      var fullUpdate = minimapFullUpdate;
+      minimapFullUpdate = false;
+      if (fullUpdate) outline.updateSvg();
+      outline.updateViewport();
+    }
+    /** 仅替换当前缩略图的调度：滚动更新视口，完整更新请求在同一帧内保留并合并。 */
+    outline.update = function (fullUpdate) {
+      minimapFullUpdate = minimapFullUpdate || fullUpdate;
+      if (!minimapFrame) minimapFrame = window.requestAnimationFrame(flushMinimap);
+    };
     outline.init(minimap);
-    /** 根据画布尺寸定位缩略图，避开滚动条与格式面板；窄画布等比缩小，不挤占布局。 */
+    /** 布局通知只标记待定位；同一帧统一读取尺寸，避开滚动条与格式面板。 */
     function placeMinimap() {
-      var box = graph.container.getBoundingClientRect();
-      var width = Math.min(200, Math.max(0, graph.container.clientWidth - 24));
-      var height = Math.min(width * .7, Math.max(0, graph.container.clientHeight - 24));
-      minimap.hidden = width <= 0 || height <= 0;
-      minimap.style.width = width + 'px';
-      minimap.style.height = height + 'px';
-      minimap.style.left = box.left + graph.container.clientWidth - width - 12 + 'px';
-      minimap.style.top = box.top + graph.container.clientHeight - height - 12 + 'px';
+      minimapLayoutDirty = true;
       outline.update(false);
     }
-    new ResizeObserver(placeMinimap).observe(graph.container);
+    var minimapObserver = new ResizeObserver(placeMinimap);
+    minimapObserver.observe(graph.container);
     window.addEventListener('resize', placeMinimap);
     ui.addListener('formatWidthChanged', placeMinimap);
     ui.addListener('sidebarWidthChanged', placeMinimap);
     graph.addListener(mxEvent.SIZE, placeMinimap);
+    var destroyOutline = outline.destroy;
+    /** 销毁时取消待绘制帧并解除布局监听，避免已释放的图继续收到更新。 */
+    outline.destroy = function () {
+      window.cancelAnimationFrame(minimapFrame);
+      minimapFrame = 0;
+      minimapObserver.disconnect();
+      window.removeEventListener('resize', placeMinimap);
+      ui.removeListener(placeMinimap);
+      graph.removeListener(placeMinimap);
+      destroyOutline.apply(this, arguments);
+    };
     placeMinimap();
 
     /** 只读切换：结束正在进行的文字编辑并禁用图编辑；演示中只记下状态，退出演示时按它恢复。 */
@@ -458,11 +505,123 @@
       'body.fc-presentation .geDiagramContainer{position:fixed!important;inset:0!important;margin:0!important;width:auto!important;height:auto!important;background-image:none!important}';
     document.head.appendChild(presentationCss);
 
-    /** 演示只保留画布；临时禁用编辑与节点角标，适应全图，退出恢复选中、缩放和滚动。 */
+    var frozenView = null;
+    var renderFrame = 0;
+    /** 过渡层始终跟随实际画布边界；工具栏收放前后都按当前可视区域居中，避免冻结瞬间位移。 */
+    function placeFrozenView() {
+      if (!frozenView) return;
+      var box = graph.container.getBoundingClientRect();
+      frozenView.style.left = box.left + 'px';
+      frozenView.style.top = box.top + 'px';
+      frozenView.style.width = graph.container.clientWidth + 'px';
+      frozenView.style.height = graph.container.clientHeight + 'px';
+    }
+    /** 冻结现有 SVG 与页背景，不改模型；轻微透明让被覆盖的新画布继续参与绘制。 */
+    function freezeView(full) {
+      if (frozenView || !graph.container.clientWidth || !graph.container.clientHeight) return;
+      if (!full) presentationViewport = null;
+      var c = graph.container;
+      var style = getComputedStyle(c);
+      var copy = c.cloneNode(true);
+      copy.removeAttribute('id');
+      copy.className = 'fc-frozen-content';
+      copy.style.cssText = 'position:absolute;left:50%;top:50%;right:auto;bottom:auto;overflow:visible;width:' + c.scrollWidth + 'px;height:' + c.scrollHeight + 'px;transform:translate(' + (-c.scrollLeft - c.clientWidth / 2) + 'px,' + (-c.scrollTop - c.clientHeight / 2) + 'px);';
+      copy.style.font = style.font;
+      frozenView = document.createElement('div');
+      frozenView.id = 'fc-view-freeze';
+      frozenView.style.cssText = 'position:fixed;z-index:10000;overflow:hidden;pointer-events:none;opacity:.999;';
+      frozenView.style.background = style.backgroundColor;
+      frozenView.appendChild(copy);
+      var mini = minimap.cloneNode(true);
+      Object.assign(mini.style, { position: 'absolute', left: 'auto', top: 'auto', right: '12px', bottom: '12px' });
+      frozenView.appendChild(mini);
+      document.body.appendChild(frozenView);
+      placeFrozenView();
+    }
+    /** 结束绘制事务；取消旧回执，避免已关闭或失败的切换再次放开画面。 */
+    function revealView() {
+      renderRequest++;
+      window.cancelAnimationFrame(renderFrame);
+      renderFrame = 0;
+      if (frozenView) frozenView.remove();
+      frozenView = null;
+    }
+    /** 窗口或侧栏继续变尺寸时仍保持全屏切换时的中心，直到用户开始下一次视图操作。 */
+    function restorePresentationViewport() {
+      if (!presentationViewport) return;
+      var v = presentationViewport;
+      graph.view.scaleAndTranslate(v.scale,
+        graph.container.clientWidth / (2 * v.scale) - v.x,
+        graph.container.clientHeight / (2 * v.scale) - v.y);
+      graph.sizeDidChange();
+      graph.container.scrollLeft = (v.x + graph.view.translate.x) * v.scale - graph.container.clientWidth / 2;
+      graph.container.scrollTop = (v.y + graph.view.translate.y) * v.scale - graph.container.clientHeight / 2;
+    }
+    /** 按当前可视尺寸适应全部图形；复用原生缩放与居中，不修改图纸和节点坐标。 */
+    function fitCurrentViewport() {
+      ui.setFitWindowEnabled(false);
+      ui.fitDiagramToWindow(1, new mxRectangle(24, 24, 24, 24), false, true);
+    }
+    var viewResize = new ResizeObserver(function () {
+      placeFrozenView();
+      if (fitViewport) fitCurrentViewport();
+      restorePresentationViewport();
+    });
+    viewResize.observe(graph.container);
+    /** 用户接管视图后停止初始适应和旧中心纠正；冻结期间忽略这些输入。 */
+    function releasePresentationViewport() {
+      if (!frozenView) { fitViewport = false; presentationViewport = null; }
+    }
+    document.addEventListener('pointerdown', releasePresentationViewport, true);
+    document.addEventListener('wheel', releasePresentationViewport, { capture: true, passive: true });
+    document.addEventListener('keydown', releasePresentationViewport, true);
+    /** 等尺寸与视图连续稳定两帧、再完成一轮绘制后确认；后台不可绘制时不阻塞载入。 */
+    function confirmViewPaint(event, path) {
+      var request = ++renderRequest;
+      window.cancelAnimationFrame(renderFrame);
+      graph.view.validate();
+      var previous = '', stable = 0;
+      function finish() {
+        if (request !== renderRequest) return;
+        placeMinimap();
+        outline.update(true);
+        flushMinimap();
+        renderFrame = 0;
+        send({ event: event, path: path });
+      }
+      function check() {
+        if (request !== renderRequest) return;
+        var c = graph.container, box = c.getBoundingClientRect();
+        var current = [innerWidth, innerHeight, box.left, box.top, c.clientWidth, c.clientHeight,
+          graph.view.scale, graph.view.translate.x, graph.view.translate.y, c.scrollLeft, c.scrollTop].join(',');
+        stable = current === previous ? stable + 1 : 0;
+        // draw.io 在栏宽变化后还会调整平移和滚动；揭图前按最终视口重新适应，再等待稳定。
+        if (fitViewport && current !== previous) fitCurrentViewport();
+        previous = current;
+        renderFrame = requestAnimationFrame(stable >= 2 ? finish : check);
+      }
+      if (document.hidden || !document.documentElement.clientWidth || !document.documentElement.clientHeight) finish();
+      else renderFrame = requestAnimationFrame(check);
+    }
+
+    /** 在窗口和工具栏改变尺寸前记录当前画布中心，进出全屏都使用最后浏览的位置。 */
+    function preparePresentation() {
+      fitViewport = false;
+      var scale = graph.view.scale;
+      presentationViewport = {
+        scale: scale,
+        x: (graph.container.scrollLeft + graph.container.clientWidth / 2) / scale - graph.view.translate.x,
+        y: (graph.container.scrollTop + graph.container.clientHeight / 2) / scale - graph.view.translate.y
+      };
+      freezeView(true);
+      send({ event: 'fc-presentation-ready', frozen: !!frozenView });
+    }
+
+    /** 演示只保留画布；保持当前缩放和视图中心，退出只恢复编辑状态与选中项。 */
     function setPresentation(show) {
       if (show === !!presentation) return;
       if (show) {
-        presentation = { view: graph.getViewState(), enabled: graph.isEnabled(), selection: graph.getSelectionCells() };
+        presentation = { enabled: graph.isEnabled(), selection: graph.getSelectionCells() };
         graph.stopEditing(false);
         graph.clearSelection();
         graph.setEnabled(false);
@@ -471,18 +630,14 @@
       graph.view.getOverlayPane().style.visibility = show ? 'hidden' : '';
       ui.refresh(true);
       graph.sizeDidChange();
-      if (show) {
-        ui.actions.get('fitWindow').funct();
-      } else {
+      if (!show) {
         graph.setEnabled(presentation.enabled);
         graph.setSelectionCells(presentation.selection.filter(function (c) { return graph.model.contains(c); }));
-        var v = presentation.view;
-        graph.view.scaleAndTranslate(v.scale, v.translate.x, v.translate.y);
-        graph.container.scrollLeft = v.translate.x * v.scale + v.scrollLeft;
-        graph.container.scrollTop = v.translate.y * v.scale + v.scrollTop;
         presentation = null;
       }
+      restorePresentationViewport();
       placeMinimap();
+      confirmViewPaint('fc-presentation-painted');
     }
     var origCustom = graph.isCustomLink;
     var origClick = graph.customLinkClicked;
@@ -549,38 +704,44 @@
         lastTag = m.tag || '';
         highlight(graph, lastTag);
       } else if (m.action === 'fc-select-cell') {
+        fitViewport = false;
+        presentationViewport = null;
         var cell = graph.model.getCell(m.id);
         if (cell) {
+          var note = noteTools && noteTools.isAttached(cell) ? cell : null;
+          var target = note ? graph.model.getParent(note) : cell;
           autoSelect = true;
-          try { graph.setSelectionCell(cell); } finally { autoSelect = false; }
-          graph.scrollCellToVisible(cell, true);
+          try { graph.setSelectionCell(target); } finally { autoSelect = false; }
+          graph.scrollCellToVisible(target, true);
+          if (note) noteTools.reveal(note);
         } else if (m.id) {
           send({ event: 'fc-select-miss', id: m.id });
         }
+      } else if (m.action === 'fc-view-freeze') {
+        freezeView(false);
+        send({ event: 'fc-view-frozen', frozen: !!frozenView });
+      } else if (m.action === 'fc-view-reveal') {
+        revealView();
       } else if (m.action === 'fc-render-ready') {
-        var request = ++renderRequest;
-        // 等 load、视图恢复和节点定位的消息处理完再确认；后台窗口不依赖可能暂停的动画帧。
-        setTimeout(function () {
-          if (request !== renderRequest) return;
-          graph.view.validate();
-          placeMinimap();
-          outline.updateSvg();
-          outline.updateViewport();
-          send({ event: 'fc-render-ready', path: m.path });
-        }, 0);
+        confirmViewPaint('fc-render-ready', m.path);
       } else if (m.action === 'fc-viewport-save') {
+        fitViewport = false;
         savedViewport = graph.getViewState();
       } else if (m.action === 'fc-viewport-apply') {
+        fitViewport = !m.keep;
+        presentationViewport = null;
         if (m.keep && savedViewport) {
           graph.view.scaleAndTranslate(savedViewport.scale, savedViewport.translate.x, savedViewport.translate.y);
           graph.container.scrollLeft = graph.view.translate.x * savedViewport.scale + savedViewport.scrollLeft;
           graph.container.scrollTop = graph.view.translate.y * savedViewport.scale + savedViewport.scrollTop;
         } else if (!m.keep) {
-          ui.actions.get('fitWindow').funct();
+          fitCurrentViewport();
         }
         savedViewport = null;
       } else if (m.action === 'fc-readonly') {
         setReadOnly(!!m.on);
+      } else if (m.action === 'fc-presentation-prepare') {
+        preparePresentation();
       } else if (m.action === 'fc-presentation') {
         setPresentation(!!m.show);
       } else if (m.action === 'fc-feats') {
@@ -600,8 +761,14 @@
         }
       }
     });
-    // iframe 内的按键不会冒泡到外层；Esc 转发给窗口，draw.io 对话框打开时优先由其处理。
+    // iframe 内的按键不会冒泡到外层；F11 切换画布全屏，Esc 转发给窗口。
     document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'F11' && !ev.isComposing && !(ui.dialogs && ui.dialogs.length)) {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        if (!ev.repeat) send({ event: 'fc-toggle-fullscreen' });
+        return;
+      }
       if (ev.key === 'Escape' && noteTools && noteTools.isPicking()) {
         noteTools.cancelPick();
         ev.preventDefault();

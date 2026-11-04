@@ -55,6 +55,8 @@ const editor = $('editor');
 /** 图导航回退栈只保留在本窗口，记录来源图和节点，不写进项目文件。 */
 const flowBack = [];
 let flowNavigating = false;
+let tabChanging = false;
+let viewFreezeReady = null;
 
 const st = {
   apps: [],
@@ -119,10 +121,10 @@ function sideMsg(msg, success = false) {
   if (msg) floatingStatus(msg, success ? 'success' : 'error');
 }
 
-/** 普通保存进度留在顶栏；异常走悬浮提示，避免长错误信息撑开标题栏。 */
+/** 操作提示统一走气泡，保存与复制结果均不占标题栏空间。 */
 function saveState(text, isError) {
-  $('save-state').textContent = isError ? '' : (text || '');
-  if (isError && text) floatingStatus(text);
+  $('save-state').textContent = '';
+  if (text) floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info');
 }
 
 /** 简易输入对话框，返回 Promise<string|null>。 */
@@ -258,10 +260,24 @@ $('tree').addEventListener('click', async (ev) => {
 /** 向编辑器发送协议消息。 */
 function post(msg) { editor.contentWindow.postMessage(JSON.stringify(msg), '*'); }
 
-/** 覆盖载入中的旧画布但保留绘制；在新图绘制就绪、关闭或载入失败时解除。 */
+/** 仅首次载入用空白提示；已有画面保留冻结层，成功、关闭或失败时统一释放。 */
 function setDiagramLoading(on) {
   $('editor-wrap').classList.toggle('loading', on);
   $('editor-wrap').setAttribute('aria-busy', String(on));
+  if (!on) {
+    $('editor-wrap').classList.remove('frozen');
+    if (st.ready) post({ action: 'fc-view-reveal' });
+  }
+}
+
+/** 在异步读取或布局变更前冻结当前图，不重建 iframe，也不把旧图替换成纯色。 */
+async function freezeDiagram() {
+  if (!st.ready || !st.loaded || $('editor-wrap').classList.contains('frozen')) return;
+  await new Promise((resolve) => {
+    viewFreezeReady = resolve;
+    post({ action: 'fc-view-freeze' });
+  });
+  setDiagramLoading(true);
 }
 
 /** 加载编辑器页面（只在首次打开图时加载一次）。 */
@@ -282,18 +298,19 @@ async function pushFromDisk(first, retry = false) {
   const d = await invoke('read_diagram', { path: st.cur });
   st.curHash = d.hash;
   st.suppressUntil = Date.now() + SUPPRESS_MS;
-  st.restoreView = !first;
+  st.restoreView = first ? 'fit' : 'update';
   if (!first && !retry) post({ action: 'fc-viewport-save' });
   if (first || retry) post({ action: 'load', xml: d.xml, autosave: 1, diffSync: true, title: d.path.split(/[\\/]/).pop() });
   else post({ action: 'merge', xml: d.xml });
   post({ action: 'fc-path', path: d.path });
 }
 
-/** 同一张图更新完成后应用视图偏好；首次打开和主动节点定位沿用原行为。 */
+/** 新图先适应内容；同图更新按偏好恢复视图，后续节点定位仍优先。 */
 function finishViewUpdate() {
   if (!st.restoreView) return;
+  const keep = st.restoreView !== 'fit' && Settings.keepFlowView();
   st.restoreView = false;
-  post({ action: 'fc-viewport-apply', keep: Settings.keepFlowView() });
+  post({ action: 'fc-viewport-apply', keep });
 }
 
 /** 打开一张图：先释放上一张的锁，再加载。 */
@@ -455,6 +472,17 @@ window.addEventListener('message', (ev) => {
     case 'fc-select-miss':
       saveState(`当前图没有节点 ${m.id}`, true);
       break;
+    case 'fc-view-frozen':
+      $('editor-wrap').classList.toggle('frozen', m.frozen);
+      if (viewFreezeReady) { const ready = viewFreezeReady; viewFreezeReady = null; ready(); }
+      break;
+    case 'fc-presentation-ready':
+      $('editor-wrap').classList.toggle('frozen', m.frozen);
+      if (fullScreenReady) { const ready = fullScreenReady; fullScreenReady = null; ready(); }
+      break;
+    case 'fc-presentation-painted':
+      if (fullScreenPaintReady) { const ready = fullScreenPaintReady; fullScreenPaintReady = null; ready(); }
+      break;
     case 'fc-toggle-fullscreen':
       if (st.cur && ownsFlow()) setFlowFull(!flowFull);
       break;
@@ -473,7 +501,7 @@ window.addEventListener('message', (ev) => {
       if (m.path !== st.cur || !st.cur) break;
       st.loaded = true;
       flowNavigating = false;
-      setDiagramLoading(false);
+      if (!tabChanging) setDiagramLoading(false);
       renderCurrentBar();
       break;
     case 'autosave':
@@ -693,9 +721,12 @@ async function routeDiagram(path, node, options = {}) {
     const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
     const changed = path !== st.cur || (!!node && node !== selCells[0]?.id);
     flowNavigating = true;
-    if (path !== st.cur || !st.loaded) setDiagramLoading(true);
     renderCurrentBar();
     try {
+      if (path !== st.cur || !st.loaded) {
+        await freezeDiagram();
+        setDiagramLoading(true);
+      }
       // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
       while (st.saving || st.pendingXml != null) await new Promise((resolve) => setTimeout(resolve, 20));
       await invoke('read_diagram', { path }); // 读取失败时保留当前图与回退栈。
@@ -773,6 +804,18 @@ async function routeFeat(path, node, line = 0) {
 /** 页签接口（tabs.js）：在主窗口打开 / 关闭页签里的图与档案；已弹到独立窗口的一类照常转给独立窗口。
  *  切页签时清空图导航回退栈，回退只在同一页签内有效。 */
 const tabApi = {
+  /** 页签的两栏作为一次绘制事务，避免图已显示后 Feat 才改变布局。 */
+  async begin() {
+    tabChanging = true;
+    await freezeDiagram();
+  },
+  /** 两栏开闭完成后再确认最终尺寸；无冻结层但已加载的图也须完成回执，避免载入遮罩残留。 */
+  end() {
+    tabChanging = false;
+    if (st.cur && st.ready && (st.loaded || $('editor-wrap').classList.contains('frozen'))) {
+      post({ action: 'fc-render-ready', path: st.cur });
+    } else if (!st.cur) setDiagramLoading(false);
+  },
   /** 同一 APP 使用同一个规范化目录键，同名 APP 或不同分组不混淆。 */
   project: (path) => (appOf(path)?.flow_dir || '').replace(/\\/g, '/').toLowerCase(),
   async openFlow(path, node = '') {
@@ -1134,21 +1177,41 @@ let closing = false;
 
 /** 流程图是否处于全屏。 */
 let flowFull = false;
+/** 全屏切换期间等待编辑器确认已记录当前视图，同时阻止重复切换。 */
+let fullScreenReady = null;
+let fullScreenPaintReady = null;
+let fullScreenSwitching = false;
 
 /**
- * 全屏只展示流程图画布：系统全屏加桥接演示模式，隐藏编辑器与外层工具栏。
- * 退出恢复窗口和编辑视图；窗口切换失败时保留原状态并显示错误。
+ * 全屏只展示当前流程图视图：改变窗口尺寸前先记录画布中心，进出时保持最新位置与缩放。
+ * 退出恢复窗口和编辑状态；窗口切换失败时保留原状态并显示错误。
  */
 async function setFlowFull(on) {
-  if (on === flowFull) return;
-  try { await currentWindow.setFullscreen(on); }
-  catch (error) { saveState('切换全屏失败：' + error, true); return; }
-  flowFull = on;
-  document.body.classList.toggle('flow-full', on);
-  const btn = $('btn-flow-full');
-  btn.setAttribute('aria-pressed', String(on));
-  btn.title = on ? '退出全屏（F11 / Esc）' : '全屏显示流程图（F11，Esc 退出）';
-  post({ action: 'fc-presentation', show: on });
+  if (on === flowFull || fullScreenSwitching || flowNavigating || tabChanging || !st.loaded || !st.ready || $('editor-wrap').classList.contains('loading')) return;
+  fullScreenSwitching = true;
+  try {
+    await new Promise((resolve) => {
+      fullScreenReady = resolve;
+      post({ action: 'fc-presentation-prepare' });
+    });
+    setDiagramLoading(true);
+    await currentWindow.setFullscreen(on);
+    flowFull = on;
+    document.body.classList.toggle('flow-full', on);
+    const btn = $('btn-flow-full');
+    btn.setAttribute('aria-pressed', String(on));
+    btn.title = on ? '退出全屏（F11 / Esc）' : '全屏显示流程图（F11，Esc 退出）';
+    await new Promise((resolve) => {
+      fullScreenPaintReady = resolve;
+      post({ action: 'fc-presentation', show: on });
+    });
+  } catch (error) {
+    saveState('切换全屏失败：' + error, true);
+  } finally {
+    fullScreenReady = fullScreenPaintReady = null;
+    fullScreenSwitching = false;
+    setDiagramLoading(false);
+  }
 }
 $('btn-flow-full').onclick = () => setFlowFull(!flowFull);
 // 焦点在编辑器外时的 Esc：先退出全屏；有对话框时留给对话框自己处理。焦点在编辑器内由 fc-escape 转发。

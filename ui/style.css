@@ -272,15 +272,16 @@ body.pane-dragging .splitter { background: var(--accent); }
 #editor { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 /* 载入时覆盖旧画布但保留 iframe 绘制，等新图和定位完成再展示，避免闪现旧图或暂停绘制帧。 */
 #editor-wrap.loading #editor { pointer-events: none; }
-#editor-wrap.loading::after { content: '正在载入流程图…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--muted); }
+#editor-wrap.loading:not(.frozen)::after { content: '正在载入流程图…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--muted); }
 #editor-wrap .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); }
 /* 只读悬浮标识：附着内容区底部，不挤占高度；半透明且鼠标穿透，不影响画布或正文操作。 */
 .ro-strip { position: absolute; z-index: 3; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; padding: 5px 10px; background: color-mix(in srgb, var(--warn-bg) 65%, transparent); color: var(--warn-fg); border: 1px solid color-mix(in srgb, var(--warn-bd) 40%, transparent); border-radius: 8px; font-size: 12px; pointer-events: none; user-select: none; }
 .ro-strip::before { content: ""; flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .75; }
 .ro-strip small { min-width: 0; color: var(--fg2); font-size: 11px; overflow-wrap: anywhere; }
 .ro-strip small:empty { display: none; }
-/* 非交互异常提示用原生 popover 进入顶层，设置对话框打开时也可见；不产生遮罩或占用布局。 */
+/* 操作提示用原生 popover 进入顶层，设置对话框打开时也可见；不产生遮罩或占用布局。 */
 .floating-status { position: fixed; inset: auto; left: 50%; bottom: 96px; transform: translateX(-50%); margin: 0; width: max-content; max-width: min(640px, calc(100% - 32px)); padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--bg) 80%, transparent); color: var(--danger); font: inherit; overflow-wrap: anywhere; pointer-events: none; user-select: none; }
+.floating-status.info { color: var(--fg); border-color: var(--border); }
 .floating-status.success { color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 45%, transparent); }
 .floating-status::backdrop { background: transparent; pointer-events: none; }
 
