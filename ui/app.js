@@ -211,11 +211,22 @@ function renderCurrentBar() {
   syncMenuFeats();
 }
 
-/** 把当前图所属 APP 的未收纳 Feat 下发给编辑器，供右键「挂到 Feat」列出；编辑器未就绪时跳过，init 时补发。 */
+/** 当前图的节点入链，按节点 ID 汇总同 APP Feat 正文引用；只用于视图与来源跳转。 */
+let incomingFeats = {};
+
+/** 同步可挂接 Feat 及正文入链；沿用汇总中一次读取的文档引用，避免逐节点读盘。 */
 function syncMenuFeats() {
   if (!st.ready) return;
-  const feats = (curEntry()?.app.feats || []).filter((f) => !f.archived).map((f) => ({ id: f.id, title: f.title }));
-  post({ action: 'fc-feats', feats });
+  const all = curEntry()?.app.feats || [];
+  const feats = all.filter((f) => !f.archived).map((f) => ({ id: f.id, title: f.title }));
+  const name = (st.cur || '').split(/[\\/]/).pop().toLowerCase();
+  incomingFeats = {};
+  for (const f of all) for (const r of f.references) {
+    if (r.file.toLowerCase() !== name) continue;
+    (incomingFeats[r.node] ||= []).push({ ...f, line: r.line });
+  }
+  post({ action: 'fc-feats', path: st.cur || '', feats,
+    incoming: Object.fromEntries(Object.entries(incomingFeats).map(([node, sources]) => [node, sources.map((f) => ({ path: f.path, title: f.title, line: f.line }))])) });
 }
 
 $('tree').addEventListener('click', async (ev) => {
@@ -460,6 +471,9 @@ window.addEventListener('message', (ev) => {
     case 'fc-open-feat':
       if (m.cell) openNodeFeat(m.cell);
       break;
+    case 'fc-open-incoming':
+      if (m.source === st.cur && m.cell) openIncomingFeat(m.cell);
+      break;
     case 'fc-open-flow':
       if (m.source === st.cur) followFlowLink(m.link, m.cell);
       break;
@@ -542,11 +556,18 @@ function openNodeFeat(cell) {
   else if (feats.length > 1) pickFeat(feats, cell);
 }
 
-/** 弹出节点的 Feat 列表；missing 中的缺失编号可逐个解除，只读时禁用；Esc、点空白或取消关闭。 */
-function pickFeat(feats, cell, notice = '', missing = []) {
+/** 点击入链时打开来源行；多个引用文档复用现有 Feat 选择列表，不创建节点标签。 */
+function openIncomingFeat(cell) {
+  const sources = incomingFeats[cell.id] || [];
+  if (sources.length === 1) openLinked('feat', sources[0].path, '', sources[0].line);
+  else if (sources.length > 1) pickFeat(sources, cell, '', [], true);
+}
+
+/** 弹出出链或入链的 Feat 来源；missing 仅供解除缺失出链，入链点击定位正文行。 */
+function pickFeat(feats, cell, notice = '', missing = [], incoming = false) {
   const wrap = document.createElement('div');
   wrap.id = 'roots-dlg';
-  wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」关联的 Feat</b>${notice ? `<p class="hint">${esc(notice)}</p>` : ''}
+  wrap.innerHTML = `<div class="dlg"><b>节点「${esc(cell.label.slice(0, 30))}」${incoming ? '入链来源' : '关联的 Feat'}</b>${notice ? `<p class="hint">${esc(notice)}</p>` : ''}
     <div class="pick">${feats.map((f) => `<button data-p="${esc(f.path)}"><b>${esc(f.id)}</b> ${esc(f.title)}<small>${esc(f.owner || '')} ${esc(f.status)}</small></button>`).join('')}
       ${missing.map((id) => `<button data-unlink="${esc(id)}"${st.readOnly ? ' disabled title="流程图只读，暂不能解除关联"' : ''}><b>${esc(id)}</b><small>解除关联</small></button>`).join('')}</div>
     <div class="dlg-btns"><button data-x="1">取消（Esc）</button></div></div>`;
@@ -554,7 +575,10 @@ function pickFeat(feats, cell, notice = '', missing = []) {
   const close = (path) => {
     document.removeEventListener('keydown', onKey, true);
     wrap.remove();
-    if (path) openLinked('feat', path, feats.find((f) => f.path === path).foreign ? undefined : cell.id);
+    if (path) {
+      const source = feats.find((f) => f.path === path);
+      openLinked('feat', path, incoming || source.foreign ? '' : cell.id, incoming ? source.line : 0);
+    }
   };
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   document.addEventListener('keydown', onKey, true);
@@ -753,12 +777,12 @@ async function routeDiagram(path, node, options = {}) {
 }
 
 /** 右上角挂载标记：根据本机偏好另开页签，普通打开与侧栏点击保持原行为。 */
-function openLinked(kind, path, node) {
+function openLinked(kind, path, node, line = 0) {
   if (Settings.linksNewTab()) {
-    if (SOLO) return emit('ui-route', { kind, path, node: node || '', newTab: true });
-    return Tabs.openNew(kind, path, { node });
+    if (SOLO) return emit('ui-route', { kind, path, node: node || '', line, newTab: true });
+    return Tabs.openNew(kind, path, { node, line });
   }
-  return kind === 'flow' ? routeDiagram(path, node, { fromNode: selCells[0]?.id }) : routeFeat(path, node);
+  return kind === 'flow' ? routeDiagram(path, node, { fromNode: selCells[0]?.id }) : routeFeat(path, node, line);
 }
 
 /** 按当前图解析链接；目标不存在时留在原图，错误显示在保存状态栏。 */

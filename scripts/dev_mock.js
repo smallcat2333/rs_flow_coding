@@ -63,6 +63,8 @@
       tasks_total: rows.filter((r) => !/^\s*(暂缓|取消)/.test(r.split('|').slice(-2)[0])).length,
       tasks_done: rows.filter((r) => /^\s*完成/.test(r.split('|').slice(-2)[0])).length,
       closable: mine.length > 0 && c.none === mine.length,
+      references: [...text.matchAll(/([\w一-龥.-]+\.drawio)#([\w-]+)/g)].map((m) => ({ file: m[1], node: m[2], line: text.slice(0, m.index).split('\n').length }))
+        .filter((r, i, all) => all.findIndex((x) => x.file.toLowerCase() === r.file.toLowerCase() && x.node === r.node) === i),
     };
   }
 

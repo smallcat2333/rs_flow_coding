@@ -31,6 +31,36 @@ pub struct FeatEntry {
     pub node_total: usize,
     pub closable: bool,
     pub lock: Option<crate::lock::LockInfo>,
+    /// 正文中显式的图名#节点引用，供画布入链角标定位来源行；不改变节点标签。
+    pub references: Vec<NodeReference>,
+}
+
+/// 一条 Feat 正文节点引用：图文件名、节点 ID、首次引用所在行（1 起）。
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeReference {
+    pub file: String,
+    pub node: String,
+    pub line: usize,
+}
+
+/// 提取与控件页同口径的 `图名.drawio#节点ID`，同一文档同一目标只保留首次出现位置。
+/// 图名允许中文、字母数字、点、下划线、横线；没有节点 ID 的整图引用不产生节点入链。
+pub fn node_references(text: &str) -> Vec<NodeReference> {
+    let mut refs: Vec<NodeReference> = Vec::new();
+    for (line_index, line) in text.lines().enumerate() {
+        for (offset, _) in line.match_indices(".drawio#") {
+            let start = line[..offset].char_indices().rev()
+                .find(|(_, c)| !(c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+                .map(|(i, c)| i + c.len_utf8()).unwrap_or(0);
+            let node: String = line[offset + ".drawio#".len()..].chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')).collect();
+            if start == offset || node.is_empty() { continue; }
+            let file = format!("{}.drawio", &line[start..offset]);
+            if refs.iter().any(|r| r.file.eq_ignore_ascii_case(&file) && r.node == node) { continue; }
+            refs.push(NodeReference { file, node, line: line_index + 1 });
+        }
+    }
+    refs
 }
 
 /// 挂了某 Feat 标签的节点（跨图）。
@@ -196,6 +226,7 @@ pub fn summarize(feat_dir: &Path, nodes: &[(String, flow::Node)]) -> Vec<FeatEnt
                 tasks_total,
                 counts,
                 node_total,
+                references: node_references(&text),
             }
         })
         .collect()
@@ -227,6 +258,17 @@ mod tests {
     use super::*;
 
     const MD: &str = "# Feat_260910_1 通用检查流程\n\n> 状态：开发中\n> 应用：app_x\n\n## 3. 开发任务\n\n### 3.1 任务路线图\n\n| 编号 | 任务 | 依赖 | 可并行 | 状态 |\n| --- | --- | --- | --- | --- |\n| T1 | a | - | - | 完成 |\n| T2 | b | T1 | - | 进行中 |\n| T3 | c | - | - | 取消 |\n\n### 3.2 开发记录\n| x | y |\n| --- | --- |\n| 1 | 完成 |\n";
+
+    /// 节点引用保留首次行号，重复引用去重；同 ID 不同图分别保留，整图与空 ID 不计入。
+    #[test]
+    fn incoming_node_references() {
+        let refs = node_references("# 标题\n`查询任务调度.drawio#n15`\n查询任务调度.drawio#n15 其他.drawio#n15\n[引用](路径/other.drawio#node-2)\n只有图.drawio 空节点.drawio#\n");
+        assert_eq!(refs.len(), 3);
+        assert_eq!((&refs[0].file[..], &refs[0].node[..], refs[0].line), ("查询任务调度.drawio", "n15", 2));
+        assert_eq!((&refs[1].file[..], &refs[1].node[..], refs[1].line), ("其他.drawio", "n15", 3));
+        assert_eq!((&refs[2].file[..], &refs[2].node[..], refs[2].line), ("other.drawio", "node-2", 4));
+        assert!(node_references("没有节点引用").is_empty());
+    }
 
     #[test]
     fn parse_md_fields() {

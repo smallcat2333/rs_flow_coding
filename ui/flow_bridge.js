@@ -4,6 +4,7 @@
 // 发给外层：{event:'fc-select', cells:[{id, label, tags:[...]}], auto}（选中变化，仅更新选中状态）
 //           {event:'fc-open-feat', cell:{id, label, tags:[...]}}（点击书签，打开关联 Feat）
 //           {event:'fc-open-flow', source, link, cell}（点击图链接，打开目标图/节点）
+//           {event:'fc-open-incoming', source, cell:{id,label}}（点击深黄色入链，定位引用来源）
 //           {event:'fc-select-miss', id}（fc-select-cell 要定位的节点不在当前图）
 //           {event:'fc-copied', count | error}（右键「复制引用」已写剪贴板或失败，外层提示）
 //           {event:'fc-tagged'}（右键挂/摘 Feat 后，外层刷新统计）
@@ -15,7 +16,7 @@
 //   {action:'fc-viewport-save'}            暂存当前缩放与位置（同图更新前）
 //   {action:'fc-viewport-apply', keep}     更新完成后恢复暂存视图，或自动适应
 //   {action:'fc-ids', show}                显示 / 隐藏节点左上角的 ID 小卡
-//   {action:'fc-feats', feats:[{id,title}]} 当前图所属 APP 的未收纳 Feat，供右键「挂到 Feat」列出
+//   {action:'fc-feats', path, feats:[{id,title}], incoming:{节点ID:[{path,title,line}]}} 当前 APP 的挂接候选和正文入链
 // 右键节点时菜单顶部追加 Flow Coding 操作：复制引用、打开关联 Feat、挂到 Feat ▸。
 // 另：挂了 Feat 标签的节点右上角显示书签角标（数字 = 挂了几个 Feat），仅点击角标打开关联档案。
 // 角标是 mxCellOverlay，只存在于视图，不写入文件。
@@ -37,6 +38,9 @@
   var autoSelect = false; // 正在执行程序定位（fc-select-cell），选中通知带 auto 标记
   var marks = {};         // 节点 id -> {cell, overlay, key}：当前显示的书签角标
   var linkMarks = {};     // 图间链接角标，和 Feat 书签分别维护
+  var incomingMarks = {}; // 正文入链角标，与蓝色出链独立，不写入 XML
+  var incomingRefs = {};  // 节点 ID -> [{path,title,line}]，由所属 APP 的 Feat 汇总产生
+  var incomingPath = ''; // 入链对应的图，切图时避免旧引用短暂出现在新图
   var idMarks = {};       // 节点 id -> {cell, overlay, key}：左上角 ID 小卡
   var showIds = true;     // 是否显示 ID 小卡，外层按本机偏好通过 fc-ids 下发
   var ID_SHOW_MAX = 12;   // 小卡最多显示的字符数，超出省略，完整 id 看悬停提示
@@ -44,11 +48,11 @@
   var fullPath = '';      // 当前图完整路径，由外层 fc-path 下发；用于路径提示和「复制引用」的图名
   var appFeats = [];      // 当前图所属 APP 的未收纳 Feat [{id, title}]，由外层 fc-feats 下发
 
-  /** 书签角标图片：蓝色书签形状 + 白色数字（超过 9 显示 9+）。 */
-  function markImage(n) {
+  /** 书签角标图片：出链用蓝色，正文入链用深黄色；白色数字超过 9 显示 9+。 */
+  function markImage(n, incoming) {
     var t = n > 9 ? '9+' : String(n);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="20" viewBox="0 0 16 20">' +
-      '<path d="M0 0h16v20l-8-5-8 5z" fill="#0969da" stroke="#fff" stroke-width="1"/>' +
+      '<path d="M0 0h16v20l-8-5-8 5z" fill="' + (incoming ? '#9a6700' : '#0969da') + '" stroke="#fff" stroke-width="1"/>' +
       '<text x="8" y="11" font-size="' + (t.length > 1 ? 8 : 10) + '" font-family="Arial" font-weight="bold" fill="#fff" text-anchor="middle">' + t + '</text></svg>';
     return new mxImage('data:image/svg+xml;base64,' + btoa(svg), 16, 20);
   }
@@ -95,6 +99,39 @@
         graph.removeCellOverlay(linkMarks[id].cell, linkMarks[id].overlay);
         delete linkMarks[id];
       }
+    }
+  }
+
+  /** 深黄色正文入链：按来源文档计数，与蓝色书签和图链接并排；失效引用立即移除。 */
+  function refreshIncomingMarks(graph, cells) {
+    var seen = {};
+    for (var i = 0; fullPath === incomingPath && i < cells.length; i++) {
+      var cell = cells[i];
+      if (!graph.model.isVertex(cell)) continue;
+      var sources = incomingRefs[cell.id];
+      if (!sources || !sources.length) continue;
+      var slots = (tagsOf(graph, cell).some(function (tag) { return FEAT_TAG.test(tag); }) ? 1 : 0) +
+        (isFlowLink(graph.getLinkForCell(cell)) ? 1 : 0);
+      var key = JSON.stringify(sources) + '|' + slots;
+      seen[cell.id] = true;
+      var old = incomingMarks[cell.id];
+      if (old && old.cell === cell && old.key === key) continue;
+      if (old) graph.removeCellOverlay(old.cell, old.overlay);
+      var tip = '入链：' + sources.length + ' 个 Feat 引用此节点\n' + sources.map(function (s) { return s.title; }).join('\n');
+      var ov = new mxCellOverlay(markImage(sources.length, true), tip,
+        mxConstants.ALIGN_RIGHT, mxConstants.ALIGN_TOP, new mxPoint(-14 - slots * 21, 10), 'pointer');
+      ov.addListener(mxEvent.CLICK, (function (target) {
+        return function () {
+          graph.setSelectionCell(target);
+          send({ event: 'fc-open-incoming', source: fullPath, cell: { id: target.id, label: plain(graph, target) } });
+        };
+      })(cell));
+      graph.addCellOverlay(cell, ov);
+      incomingMarks[cell.id] = { cell: cell, overlay: ov, key: key };
+    }
+    for (var id in incomingMarks) if (!seen[id]) {
+      graph.removeCellOverlay(incomingMarks[id].cell, incomingMarks[id].overlay);
+      delete incomingMarks[id];
     }
   }
 
@@ -157,7 +194,7 @@
       var old = marks[c.id];
       if (old && old.cell === c && old.key === key) continue;
       if (old) graph.removeCellOverlay(old.cell, old.overlay);
-      var ov = new mxCellOverlay(markImage(feats.length), '挂了 ' + feats.length + ' 个 Feat：\n' + feats.join('\n'),
+      var ov = new mxCellOverlay(markImage(feats.length), '出链：关联 ' + feats.length + ' 个 Feat：\n' + feats.join('\n'),
         mxConstants.ALIGN_RIGHT, mxConstants.ALIGN_TOP, new mxPoint(-14, 10), 'pointer');
       ov.addListener(mxEvent.CLICK, (function (cell) {
         return function () {
@@ -175,6 +212,7 @@
       }
     }
     refreshLinkMarks(graph, cells);
+    refreshIncomingMarks(graph, cells);
     refreshIdMarks(graph, cells);
     if (noteTools) noteTools.refresh();
   }
@@ -713,7 +751,7 @@
       new MutationObserver(fitPath).observe(menubar, { childList: true, subtree: true });
     }
     // 调试入口：浏览器预览 / 开发者工具中可直接检查编辑器与角标
-    window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks, linkMarks: linkMarks, idMarks: idMarks, outline: outline };
+    window.fcBridge = { ui: ui, refreshMarks: function () { refreshMarks(graph); }, marks: marks, linkMarks: linkMarks, incomingMarks: incomingMarks, idMarks: idMarks, outline: outline };
     notesReady.then(function () {
       noteTools = window.installFlowNotes(ui);
       window.fcBridge.notes = noteTools;
@@ -745,6 +783,7 @@
       if (m.action === 'fc-path') {
         fullPath = m.path;
         fitPath();
+        refreshMarks(graph);
       } else if (m.action === 'fc-highlight') {
         lastTag = m.tag || '';
         highlight(graph, lastTag);
@@ -791,6 +830,9 @@
         setPresentation(!!m.show);
       } else if (m.action === 'fc-feats') {
         appFeats = m.feats || [];
+        incomingPath = m.path;
+        incomingRefs = m.incoming;
+        refreshMarks(graph);
       } else if (m.action === 'fc-ids') {
         showIds = !!m.show;
         refreshMarks(graph);
