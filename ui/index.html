@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="guide.css">
   <link rel="stylesheet" href="progress.css">
   <link rel="stylesheet" href="feat_board.css">
+  <link rel="stylesheet" href="timeline.css">
 </head>
 <body>
   <aside id="side">
@@ -86,6 +87,15 @@
           <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
           <!-- 只读悬浮标识：不占布局、不拦截鼠标，仍可缩放、滚动查看。 -->
           <div id="readonly-mask" class="ro-strip" role="status" hidden>Agent 正在编辑 · 只读<small id="mask-detail"></small></div>
+          <!-- 时间线回看旧版时的只读预览层（timeline.js），盖住编辑器，回到当前即收起 -->
+          <div id="tl-view" hidden><iframe id="tl-frame" title="历史版本预览"></iframe><div id="tl-stamp" class="tl-stamp" role="status"></div></div>
+        </div>
+        <!-- 时间线：按本机历史快照逐版回看，拖到最右端回到当前 -->
+        <div id="flow-timeline" hidden>
+          <span class="tl-title">时间线</span>
+          <div class="tl-track"><div id="tl-ticks"></div><input id="tl-range" type="range" min="0" max="0" step="1" value="0" aria-label="历史时间线，拖动回看旧版本"></div>
+          <span id="tl-info"></span>
+          <button id="tl-now" title="收起历史预览，回到可编辑的当前图（Esc）" disabled>回到当前</button>
         </div>
         <!-- 底部常驻状态栏：选中节点信息与挂/摘 Feat，固定高度，不挤压编辑区 -->
         <div id="node-bar">
@@ -356,6 +366,7 @@ flowctl unlock &lt;文件&gt;</pre>
   <script src="layout.js"></script>
   <script src="tabs.js"></script>
   <script src="app.js"></script>
+  <script src="timeline.js"></script>
   <script src="settings.js"></script>
   <script src="live_markdown.js"></script>
   <script src="progress.js"></script>
