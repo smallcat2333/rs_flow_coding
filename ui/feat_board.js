@@ -606,6 +606,9 @@ window.FeatBoard = (() => {
     svg.setAttribute('width', width);
     svg.setAttribute('height', height);
     graph.dataset.direction = horizontal ? 'horizontal' : 'vertical';
+    // 4px 中心距让 2.4px 高亮线仍留出 1px 以上空隙；边缘通道用满后循环复用。
+    const lanePitch = 4, laneCount = Math.floor((G.pad - 4) / lanePitch) + 1;
+    let crossLane = 0;
     graph.querySelectorAll('.fb-edge').forEach((edge) => {
       const a = positions[Number(edge.dataset.source)], b = positions[Number(edge.dataset.target)];
       const x1 = horizontal ? a.x + nodeW : a.x + nodeW / 2, y1 = horizontal ? a.y + G.h / 2 : a.y + G.h;
@@ -614,7 +617,8 @@ window.FeatBoard = (() => {
       // 跨层依赖共用左侧（横向图为上侧）通道，圆角接入与转出，避开中间节点。
       const skip = Number(nodes[Number(edge.dataset.target)].dataset.level) - Number(nodes[Number(edge.dataset.source)].dataset.level) > 1;
       if (skip) {
-        const lead = G.gap / 2, rail = G.pad / 2;
+        const lane = crossLane++ % laneCount;
+        const lead = G.gap / 2 + (lane - (laneCount - 1) / 2) * lanePitch, rail = 2 + lane * lanePitch;
         edge.setAttribute('d', roundedRoute(horizontal
           ? [[x1, y1], [x1 + lead, y1], [x1 + lead, rail], [x2 - lead, rail], [x2 - lead, y2], [x2, y2]]
           : [[x1, y1], [x1, y1 + lead], [rail, y1 + lead], [rail, y2 - lead], [x2, y2 - lead], [x2, y2]]));
