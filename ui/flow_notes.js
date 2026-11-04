@@ -71,20 +71,21 @@
       '.fc-notes-summary{opacity:.7;font-size:12px;margin-bottom:12px}' +
       '.fc-notes-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}' +
       '.fc-note-card{border-top:1px solid light-dark(#d0d7de,#505050);padding:12px 0}' +
-      '.fc-note-caption{font-size:11px;opacity:.65;margin-bottom:6px}' +
+      '.fc-note-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}' +
+      '.fc-note-caption{font-size:11px;opacity:.65;min-width:0}' +
       '.fc-note-content{overflow-wrap:anywhere;max-height:300px;overflow:auto;white-space:normal}' +
       '.fc-note-content[contenteditable=true]{min-height:100px;outline:1px solid #b7791f;padding:8px;box-sizing:border-box}' +
       '.fc-note-content:focus-visible,.fc-notes button:focus-visible{outline:2px solid #b7791f;outline-offset:2px}' +
-      '.fc-note-actions{display:flex;gap:6px;flex-wrap:wrap;padding-top:10px}' +
-      '.fc-note-actions .geBtn{margin:0;display:inline-flex;align-items:center;gap:5px}' +
-      '.fc-note-action-icon{width:14px;height:14px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}' +
+      '.fc-note-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0}' +
+      '.fc-note-actions .geBtn{margin:0;padding:2px 4px;min-width:0;font-size:11px;line-height:16px;display:inline-flex;align-items:center;gap:3px}' +
+      '.fc-note-action-icon{width:12px;height:12px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}' +
       '.fc-note-pick{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:10000;max-width:calc(100% - 32px);box-sizing:border-box;padding:10px 14px;border:1px solid #b7791f;border-radius:6px;background:light-dark(#fff8e8,#332b1c);color:light-dark(#55370a,#ffe0a0);font:13px/1.5 Arial,"Microsoft YaHei",sans-serif;pointer-events:none}';
     document.head.appendChild(css);
 
     var actionIcons = {
       '编辑': 'M12 3l3 3M3 12l9-9a2.1 2.1 0 0 1 3 3l-9 9-4 1z',
-      '解除挂载': 'M7 11l4-4M6 9l-2 2a3 3 0 0 0 4 4l2-2M9 6l2-2a3 3 0 0 1 4 4l-2 2M2 2l14 14',
-      '删除注释': 'M3 5h12M7 5V3h4v2M5 5l1 11h6l1-11M8 8v5M10 8v5'
+      '解绑': 'M7 11l4-4M6 9l-2 2a3 3 0 0 0 4 4l2-2M9 6l2-2a3 3 0 0 1 4 4l-2 2M2 2l14 14',
+      '删除': 'M3 5h12M7 5V3h4v2M5 5l1 11h6l1-11M8 8v5M10 8v5'
     };
     function button(label, run, primary) {
       var btn = document.createElement('button');
@@ -250,10 +251,13 @@
       notesOf(target).forEach(function (note) {
         var card = document.createElement('section');
         card.className = 'fc-note-card';
+        var noteHead = document.createElement('div');
+        noteHead.className = 'fc-note-head';
+        card.appendChild(noteHead);
         var caption = document.createElement('div');
         caption.className = 'fc-note-caption';
         caption.textContent = '注释 ' + note.id;
-        card.appendChild(caption);
+        noteHead.appendChild(caption);
         var body = document.createElement('div');
         body.className = 'fc-note-content';
         body.dataset.noteId = note.id;
@@ -262,7 +266,7 @@
         card.appendChild(body);
         var actions = document.createElement('div');
         actions.className = 'fc-note-actions';
-        card.appendChild(actions);
+        noteHead.appendChild(actions);
         function edit() {
           if (!editable(note)) return;
           body.contentEditable = 'true';
@@ -289,8 +293,8 @@
         });
         if (editable(note) && editable(target)) {
           actions.appendChild(button('编辑', edit));
-          actions.appendChild(button('解除挂载', function () { closePanel(); detach(note); }));
-          actions.appendChild(button('删除注释', function () {
+          actions.appendChild(button('解绑', function () { closePanel(); detach(note); }));
+          actions.appendChild(button('删除', function () {
             if (!editable(note) || !editable(target)) return;
             graph.removeCells([note]);
             open(target);

@@ -776,7 +776,7 @@
         return;
       }
       if (ev.key === 'Escape' && !ev.isComposing && !(ui.dialogs && ui.dialogs.length)) {
-        if (noteTools && noteTools.isOpen()) {
+        if (noteTools && noteTools.isOpen() && document.querySelector('.fc-notes').contains(ev.target)) {
           noteTools.close();
           ev.preventDefault();
           ev.stopImmediatePropagation();
