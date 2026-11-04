@@ -110,7 +110,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .app.collapsed > .sec { display: none; }
 .sec { padding-left: 10px; margin-top: 6px; }
 /* Chart / Feat 区头比 APP 行小一级：12px、行高 24px。 */
-.sec-head { display: flex; align-items: center; gap: 5px; height: 26px; padding: 2px 6px; color: var(--fg2); background: var(--bg2); border: 1px solid var(--border2); font-size: 12px; cursor: pointer; border-radius: 5px; }
+.sec-head { display: flex; align-items: center; gap: 5px; height: 26px; padding: 2px 6px; color: var(--fg2); background: transparent; border: 0; font-size: 12px; cursor: pointer; }
 .sec-head:hover { background: var(--hover); }
 /* 未查看沿分组、APP、区头传到具体条目；区头自带底色，须单独覆盖。悬停仍保留绿色，避免看不清路径。 */
 .group.unseen, .app > .app-head.unseen, .sec-head.unseen,
@@ -217,7 +217,7 @@ body.tab-dragging iframe { pointer-events: none; }
 .tab-close { flex-shrink: 0; width: 20px; height: 20px; margin-right: 4px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); line-height: 18px; opacity: 0; }
 .tab:hover .tab-close, .tab.active .tab-close, .tab-close:focus-visible { opacity: 1; }
 .tab-close:hover:not(:disabled) { background: var(--border2); color: var(--fg); }
-#tab-new { position: sticky; right: 0; z-index: 1; flex-shrink: 0; align-self: center; width: 26px; height: 26px; margin-left: auto; padding: 0; border: 0; border-radius: 5px; background: var(--bg2); color: var(--fg2); font-size: 15px; line-height: 24px; }
+#tab-new { position: sticky; left: 0; z-index: 2; flex-shrink: 0; align-self: center; width: 26px; height: 26px; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; background: var(--bg2); color: var(--fg2); font-size: 15px; line-height: 24px; }
 /* 手工标色应用于整块页签；未查看更新时仍优先显示绿色底色。 */
 [data-color="blue"], [data-tab-color="blue"] { --tab-color: #579bee; }
 [data-color="purple"], [data-tab-color="purple"] { --tab-color: #ae83e8; }
@@ -236,7 +236,15 @@ body.tab-dragging iframe { pointer-events: none; }
 #settings-tab-lifetime { display: block; width: 100px; margin-top: 8px; }
 /* 主区网格：栏始终是 #panes 的直接子元素，layout.js 只改网格位置与悬浮定位，不移动 DOM（避免 draw.io 重载）。 */
 #panes { flex: 1; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; }
-.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+/* 两类空位共用同一结构与主题，盖住旧内容和工具栏；不重建编辑器 iframe。 */
+.pane-empty { position: absolute; z-index: 4; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 28px; background: #f1f5f9; text-align: center; }
+.pane-empty-icon { display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 4px; border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 16px; background: #e3edf9; color: var(--accent); }
+.pane-empty-icon svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.pane-empty h2 { margin: 0; color: var(--fg); font-size: 16px; font-weight: 600; line-height: 1.5; }
+.pane-empty p { max-width: 320px; margin: 0; color: var(--fg2); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+html[data-theme="dark"] .pane-empty { background: #1b2532; }
+html[data-theme="dark"] .pane-empty-icon { background: #23364d; }
 .pane-bar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pane-bar > button, .pane-bar > .spacer { flex-shrink: 0; }
 .pane-bar > .spacer { flex: 1 1 0; min-width: 4px; }
@@ -290,7 +298,6 @@ body.pane-dragging .splitter { background: var(--accent); }
 /* 载入时覆盖旧画布但保留 iframe 绘制，等新图和定位完成再展示，避免闪现旧图或暂停绘制帧。 */
 #editor-wrap.loading #editor { pointer-events: none; }
 #editor-wrap.loading:not(.frozen)::after { content: '正在载入流程图…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--muted); }
-#editor-wrap .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg2); }
 /* 只读悬浮标识：附着内容区底部，不挤占高度；半透明且鼠标穿透，不影响画布或正文操作。 */
 .ro-strip { position: absolute; z-index: 3; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; padding: 5px 10px; background: color-mix(in srgb, var(--warn-bg) 65%, transparent); color: var(--warn-fg); border: 1px solid color-mix(in srgb, var(--warn-bd) 40%, transparent); border-radius: 8px; font-size: 12px; pointer-events: none; user-select: none; }
 .ro-strip::before { content: ""; flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .75; }

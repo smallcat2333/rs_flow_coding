@@ -741,36 +741,40 @@ async function routeDiagram(path, node, options = {}) {
   if (!SOLO && Settings.projectsNewTab() && Tabs.isOtherProject(path)) return Tabs.openNew('flow', path, { node });
   Sidebar.select(path);
   if (ownsFlow()) {
-    if (flowNavigating) return;
-    const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
-    const changed = path !== st.cur || (!!node && node !== selCells[0]?.id);
-    flowNavigating = true;
-    renderCurrentBar();
-    try {
-      if (path !== st.cur || !st.loaded) {
-        await freezeDiagram();
-        setDiagramLoading(true);
-      }
-      // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
-      while (st.saving || st.pendingXml != null) await new Promise((resolve) => setTimeout(resolve, 20));
-      await invoke('read_diagram', { path }); // 读取失败时保留当前图与回退栈。
-      // 切页签打开的图不进回退栈（回退栈在切页签时清空，只记同一页签内的跳转）。
-      if (from && changed && !options.back && !options.tab) flowBack.push(from);
-      if (options.back) flowBack.pop();
-      if (path !== st.cur || !st.loaded) {
-        st.pendingSelect = node || '';
-        await openDiagram(path);
-      } else {
-        if (node) post({ action: 'fc-select-cell', id: node });
+    contentRoute = contentRoute.catch(() => {}).then(async () => {
+      if (flowNavigating) return;
+      const from = st.cur ? { path: st.cur, node: options.fromNode || selCells[0]?.id || '' } : null;
+      const changed = path !== st.cur || (!!node && node !== selCells[0]?.id);
+      flowNavigating = true;
+      renderCurrentBar();
+      try {
+        if (path !== st.cur || !st.loaded) {
+          await freezeDiagram();
+          setDiagramLoading(true);
+        }
+        // 切图前等最后一次自动保存结束，避免旧图的异步写入落到新路径。
+        while (st.saving || st.pendingXml != null) await new Promise((resolve) => setTimeout(resolve, 20));
+        await invoke('read_diagram', { path }); // 读取失败时保留当前图与回退栈。
+        // 替换模式同样遵守同 APP 配对；先保存并关闭异 APP 的档案，再展示目标图。
+        if (FeatPane.curPath() && appOf(FeatPane.curPath()) !== appOf(path)) await FeatPane.close();
+        // 切页签打开的图不进回退栈（回退栈在切页签时清空，只记同一页签内的跳转）。
+        if (from && changed && !options.back && !options.tab) flowBack.push(from);
+        if (options.back) flowBack.pop();
+        if (path !== st.cur || !st.loaded) {
+          st.pendingSelect = node || '';
+          await openDiagram(path);
+        } else {
+          if (node) post({ action: 'fc-select-cell', id: node });
+          flowNavigating = false;
+        }
+      } catch (error) {
         flowNavigating = false;
+        setDiagramLoading(false);
+        saveState('打开流程图失败：' + error, true);
       }
-    } catch (error) {
-      flowNavigating = false;
-      setDiagramLoading(false);
-      saveState('打开流程图失败：' + error, true);
-    }
-    renderCurrentBar();
-    return;
+      renderCurrentBar();
+    });
+    return contentRoute;
   }
   if (SOLO) emit('ui-route', { kind: 'flow', path, node: node || '' });
   else await invoke('open_popout', { kind: 'flow', path, node: node || null });
@@ -810,16 +814,19 @@ listen('rename-finished', ({ payload: p }) => {
   for (const item of flowBack) if (item.path === p.oldPath) item.path = p.path;
 });
 
-// 快速连续选 Feat 时串行完成保存与载入，防止前一份异步读取覆盖后一份文档。
-let featRoute = Promise.resolve();
+// 图与 Feat 共用保存、关闭和载入队列，防止快速交错点击绕过同 APP 配对检查。
+let contentRoute = Promise.resolve();
 
 /** 打开 Feat 档案并可选定位节点引用或源文件行号（line，1 起；0 为不定位）：路由规则同 routeDiagram。 */
 async function routeFeat(path, node, line = 0) {
   if (!SOLO && Settings.projectsNewTab() && Tabs.isOtherProject(path)) return Tabs.openNew('feat', path, { node, line });
   Sidebar.select(path);
   if (ownsFeat()) {
-    featRoute = featRoute.catch(() => {}).then(() => FeatPane.open(path, { node, line }));
-    return featRoute;
+    contentRoute = contentRoute.catch(() => {}).then(async () => {
+      if (st.cur && appOf(st.cur) !== appOf(path)) await closeFlow();
+      return FeatPane.open(path, { node, line });
+    });
+    return contentRoute;
   }
   if (SOLO) emit('ui-route', { kind: 'feat', path, node: node || '', line });
   else await invoke('open_popout', { kind: 'feat', path, node: node || null, line: line || null });
@@ -854,8 +861,8 @@ const tabApi = {
   },
   /** 排在 Feat 打开队列之后关闭，避免和正在载入的档案交错。 */
   closeFeat() {
-    featRoute = featRoute.catch(() => {}).then(() => FeatPane.curPath() && FeatPane.close());
-    return featRoute;
+    contentRoute = contentRoute.catch(() => {}).then(() => FeatPane.curPath() && FeatPane.close());
+    return contentRoute;
   },
   /** 文件是否还在汇总里（恢复页签时剔除已删除或移出项目的文件）。 */
   exists: (kind, path) => !!appOf(path)?.[kind === 'flow' ? 'files' : 'feats'].some((x) => x.path === path),
@@ -919,7 +926,7 @@ if (!SOLO) {
     popped[kind] = false;
     if (!closing) localStorage.removeItem(POP_KEY[kind]);
     if (closingPopouts[kind]) { closingPopouts[kind](); delete closingPopouts[kind]; }
-    if (kind === 'flow') { lastSel = { file: null, cells: [] }; $('empty').textContent = EMPTY_TEXT; }
+    if (kind === 'flow') { lastSel = { file: null, cells: [] }; $('empty-message').textContent = EMPTY_TEXT; }
     if (kind === 'feat' && curFeat.path && $('feat-pane').hidden) FlowLink.setFeat('', '');
     const dock = docking[kind];
     delete docking[kind];
@@ -1100,7 +1107,7 @@ listen('history-pruned', () => {
 
 // 栏的显示、排布、固定 / 悬浮由 layout.js 的 window.Split 负责。
 /** 流程图栏空白时的提示。 */
-const EMPTY_TEXT = '从左侧选择一张流程图或一个 Feat';
+const EMPTY_TEXT = '从左侧选择一张流程图，在这里查看和编辑';
 
 /** 关闭当前流程图并释放锁；空位或首页提示由布局规则统一决定，msg 用于空位说明。 */
 async function closeFlow(msg) {
@@ -1112,7 +1119,7 @@ async function closeFlow(msg) {
   setDiagramLoading(false);
   st.loaded = false;
   selCells = [];
-  $('empty').textContent = msg || EMPTY_TEXT;
+  $('empty-message').textContent = msg || EMPTY_TEXT;
   $('empty').hidden = false;
   Split.hide('flow');
   renderTree();
@@ -1302,7 +1309,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   } else {
     // 上次流程图在独立窗口打开：本次仍弹出，主窗口提示原因。
-    if (popped.flow) $('empty').textContent = '流程图在独立窗口中打开（独立窗口里点「回到主窗口」可改回）';
+    if (popped.flow) $('empty-message').textContent = '流程图在独立窗口中打开（独立窗口里点「回到主窗口」可改回）';
     // 汇总到手后再恢复页签：页签名称取自汇总。
     refresh(false).then(() => Tabs.init(tabApi));
   }

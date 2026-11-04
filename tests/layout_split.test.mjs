@@ -21,7 +21,7 @@ function fixture({ force = false, solo = '', mode = 'row' } = {}) {
       querySelector(selector) { return selector === '.pane-bar' ? this.bar : this.button; },
     };
   }
-  for (const id of ['panes', 'flow-pane', 'feat-pane', 'feat-body', 'split-a']) {
+  for (const id of ['panes', 'flow-pane', 'feat-pane', 'feat-body', 'split-a', 'empty', 'feat-empty']) {
     nodes[id] = element();
     nodes[id].bar = element();
     nodes[id].button = element();
@@ -87,6 +87,22 @@ test('图单独打开时，强制拆分的 Feat 空位不显示旧内容', () =>
   assert.equal(nodes['feat-pane'].bar.hidden, true);
   assert.equal(nodes['feat-body'].hidden, true);
   assert.equal(split.isOpen('feat'), false);
+});
+
+// 反复打开和关闭两类内容时，占位与栏头必须互斥，不能覆盖编辑器或露出旧工具。
+test('两侧空态随真实打开状态切换，关闭后恢复引导', () => {
+  const { split, nodes } = fixture({ force: true });
+  split.layout();
+  assert.equal(nodes.empty.hidden, false);
+  assert.equal(nodes['feat-empty'].hidden, false);
+  for (const [kind, empty] of [['flow', 'empty'], ['feat', 'feat-empty']]) {
+    split.show(kind);
+    assert.equal(nodes[empty].hidden, true);
+    assert.equal(nodes[kind + '-pane'].bar.hidden, false);
+    split.hide(kind);
+    assert.equal(nodes[empty].hidden, false);
+    assert.equal(nodes[kind + '-pane'].bar.hidden, true);
+  }
 });
 
 // 上下布局同样使用两条轨道，关闭强制拆分后归为一栏。

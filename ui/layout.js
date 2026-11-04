@@ -74,8 +74,10 @@ window.Split = (() => {
     for (const k of Object.keys(IDS)) {
       pane(k).hidden = solo ? k !== solo : !force && !opened[k] && (hasContent || k !== 'flow');
     }
-    // 关闭的 Feat 可能仍保留编辑器内容；空位不展示旧正文、标题或工具。
-    pane('feat').querySelector('.pane-bar').hidden = !opened.feat;
+    // 两侧空位统一隐藏旧标题和正文，显示各自的同款引导；不改动 iframe 所在的 DOM。
+    for (const k of Object.keys(IDS)) pane(k).querySelector('.pane-bar').hidden = !opened[k];
+    $('empty').hidden = opened.flow;
+    $('feat-empty').hidden = opened.feat;
     $('feat-body').hidden = !opened.feat;
     const docked = pref.order.filter((k) => !pane(k).hidden && !floating(k));
     const sa = $('split-a');

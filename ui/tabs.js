@@ -100,14 +100,14 @@ window.Tabs = (() => {
     if (!api || drag?.moved) return;
     closeMenu();
     const bar = $('tabbar');
-    bar.innerHTML = tabs.map((t, i) => {
+    bar.innerHTML = '<button id="tab-new" title="新建空白页签" aria-label="新建空白页签">＋</button>' + tabs.map((t, i) => {
       const parts = [t.flow && part('flow', t.flow), t.feat && part('feat', t.feat)].filter(Boolean);
       const unseen = Sidebar.isUnseen(t.flow) || Sidebar.isUnseen(t.feat);
       const title = ([t.flow, t.feat].filter(Boolean).join('\n') || '空白页签：在左侧点图或 Feat 填入') + (unseen ? '\n有未查看更新' : '');
       return `<div class="tab ${i === active ? 'active' : ''} ${unseen ? 'unseen' : ''}" data-tab="${i}"${t.color ? ` data-color="${t.color}"` : ''}>
         <button class="tab-main" role="tab" aria-selected="${i === active}" data-i="${i}" title="${esc(title)}">${parts.join('<span class="tab-join">+</span>') || '<span class="tab-empty">新页签</span>'}</button>
         <button class="tab-close" data-close="${i}" title="关闭页签（中键单击页签也可关闭）" aria-label="关闭页签">×</button></div>`;
-    }).join('') + '<button id="tab-new" title="新建空白页签" aria-label="新建空白页签">＋</button>';
+    }).join('');
     bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     for (const kind of ['flow', 'feat']) $('btn-' + kind + '-tab').disabled = !canSplit(kind);
   }
@@ -385,6 +385,17 @@ window.Tabs = (() => {
     active = tabs.includes(current) ? tabs.indexOf(current) : 0;
     // 上次退出后被删除或移出项目的文件不再恢复。
     for (const t of tabs) for (const k of ['flow', 'feat']) if (t[k] && !api.exists(k, t[k])) t[k] = '';
+    // 已保存的异 APP 组合拆成相邻单栏页签，保留两份内容及当前页签，不恢复混合并排。
+    const selected = tabs[active];
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      if (t.flow && t.feat && api.project(t.flow) !== api.project(t.feat)) {
+        tabs.splice(i + 1, 0, { ...t, flow: '' });
+        t.feat = '';
+        i++;
+      }
+    }
+    active = selected ? tabs.indexOf(selected) : 0;
     save();
     bindActivity(document);
     const editor = $('editor');

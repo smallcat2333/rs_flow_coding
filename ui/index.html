@@ -61,6 +61,11 @@
     <div id="panes">
       <!-- 流程图栏 -->
       <section id="flow-pane" class="pane">
+        <div id="empty" class="pane-empty">
+          <span class="pane-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="6" rx="1.5"/><path d="M12 9v5M5 14h14M5 14v3M19 14v3"/><rect x="2" y="17" width="6" height="4" rx="1"/><rect x="16" y="17" width="6" height="4" rx="1"/></svg></span>
+          <h2>打开流程图</h2>
+          <p id="empty-message">从左侧选择一张流程图，在这里查看和编辑</p>
+        </div>
         <div id="bar" class="pane-bar">
           <button id="btn-flow-back" class="icon-button" title="返回上一张图及原节点" aria-label="返回上一张图" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h18"/></svg></button>
           <span id="cur-app"></span>
@@ -84,7 +89,6 @@
         </div>
         <div id="editor-wrap">
           <iframe id="editor" title="draw.io" allow="clipboard-write"></iframe>
-          <div id="empty" class="empty">从左侧选择一张流程图或一个 Feat</div>
           <!-- 只读悬浮标识：不占布局、不拦截鼠标，仍可缩放、滚动查看。 -->
           <div id="readonly-mask" class="ro-strip" role="status" hidden>Agent 正在编辑 · 只读<small id="mask-detail"></small></div>
           <!-- 时间线回看旧版时的只读预览层（timeline.js），盖住编辑器，回到当前即收起 -->
@@ -111,6 +115,11 @@
 
       <!-- Feat 栏 -->
       <section id="feat-pane" class="pane" hidden>
+        <div id="feat-empty" class="pane-empty">
+          <span class="pane-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H6V3zM14 3v5h4M9 12h6M9 16h6"/></svg></span>
+          <h2>打开 Feat</h2>
+          <p>从左侧选择一个 Feat，在这里查看需求与进度</p>
+        </div>
         <div class="pane-bar">
           <span id="feat-id"></span>
           <span id="feat-title"></span>
