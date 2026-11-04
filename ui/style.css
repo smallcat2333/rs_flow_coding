@@ -192,9 +192,10 @@ button.archive-year:hover { background: var(--hover); }
 
 /* 主区 */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-/* 页签栏：当前页签与下方栏同底色相连，其余页签沉在栏底色里；页签过多时横向滚动。 */
-#tabbar { flex: 0 0 34px; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; background: var(--bg2); border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
-.tab { position: relative; display: flex; align-items: center; flex: 0 1 auto; min-width: 96px; max-width: 280px; height: 29px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--fg2); }
+/* 页签保持固定宽度；滚轮切换并让活动项进入视口，隐藏滚动条。 */
+#tabbar { flex: 0 0 34px; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; background: var(--bg2); border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#tabbar::-webkit-scrollbar { display: none; }
+.tab { position: relative; display: flex; align-items: center; flex: 0 0 200px; min-width: 0; height: 29px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--fg2); }
 .tab:hover { background: var(--hover); }
 .tab.dragging { opacity: .45; }
 body.tab-dragging { user-select: none; cursor: grabbing; }
@@ -216,7 +217,19 @@ body.tab-dragging iframe { pointer-events: none; }
 .tab-close { flex-shrink: 0; width: 20px; height: 20px; margin-right: 4px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); line-height: 18px; opacity: 0; }
 .tab:hover .tab-close, .tab.active .tab-close, .tab-close:focus-visible { opacity: 1; }
 .tab-close:hover:not(:disabled) { background: var(--border2); color: var(--fg); }
-#tab-new { flex-shrink: 0; align-self: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--fg2); font-size: 15px; line-height: 24px; }
+#tab-new { position: sticky; right: 0; z-index: 1; flex-shrink: 0; align-self: center; width: 26px; height: 26px; margin-left: auto; padding: 0; border: 0; border-radius: 5px; background: var(--bg2); color: var(--fg2); font-size: 15px; line-height: 24px; }
+/* 手工色点独立于绿色更新底色，更新出现和已读后均保留。 */
+[data-color="blue"], [data-tab-color="blue"] { --tab-color: #579bee; }
+[data-color="purple"], [data-tab-color="purple"] { --tab-color: #ae83e8; }
+[data-color="orange"], [data-tab-color="orange"] { --tab-color: #e6a14b; }
+[data-color="red"], [data-tab-color="red"] { --tab-color: #e87979; }
+.tab-color-mark, .tab-color-dot { display: block; flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--tab-color); }
+.tab-colors { display: flex; gap: 6px; padding: 6px 8px 9px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.tab-actions .tab-colors button { display: grid; place-items: center; width: 26px; min-width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 50%; color: var(--fg2); }
+.tab-actions .tab-colors button[aria-checked="true"] { border-color: var(--fg2); }
+.tab-color-dot { width: 12px; height: 12px; }
+.tab-colors [data-tab-color=""] .tab-color-dot { background: transparent; border: 1.5px solid currentColor; opacity: .5; }
+#settings-tab-lifetime { display: block; width: 100px; margin-top: 8px; }
 /* 主区网格：栏始终是 #panes 的直接子元素，layout.js 只改网格位置与悬浮定位，不移动 DOM（避免 draw.io 重载）。 */
 #panes { flex: 1; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
