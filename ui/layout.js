@@ -8,8 +8,9 @@ window.Split = (() => {
   const $ = (id) => document.getElementById(id);
   const IDS = { flow: 'flow-pane', feat: 'feat-pane' };
   const KEY = 'fc-layout';
-  const solo = !!new URLSearchParams(location.search).get('solo');
-  const floating = (k) => !solo && !!pref.float[k];
+  const solo = new URLSearchParams(location.search).get('solo') || '';
+  const opened = { flow: false, feat: false }; // 实际打开的内容，不把首页提示或强制拆分空位计为已打开。
+  const floating = (k) => !solo && opened[k] && !!pref.float[k];
   const GAP = 5;            // 分隔条宽度（px）
   const MIN = 160;          // 固定栏最小边长（px）
   const MODES = ['row', 'col'];
@@ -31,7 +32,7 @@ window.Split = (() => {
   })();
   const save = () => localStorage.setItem(KEY, JSON.stringify(pref));
   const pane = (k) => $(IDS[k]);
-  const isOpen = (k) => !pane(k).hidden;
+  const isOpen = (k) => opened[k];
   let zTop = 30;
 
   /** 权重数组：缺省等分；栏数变化时各自独立记忆。 */
@@ -63,18 +64,25 @@ window.Split = (() => {
   }
 
   /**
-   * 按当前打开的栏与偏好重排：悬浮栏绝对定位，固定栏按排布方式放进网格。
-   * 独立窗口（body.solo）只有一栏，网格自然占满。
+   * 按实际内容重排：默认单栏占满，强制拆分时保留两栏空位；全部关闭时保留首页提示。
+   * 悬浮偏好只应用于已打开内容，独立窗口始终只展示其所属一栏。
    */
   function layout() {
     const box = $('panes');
-    if (!solo && !Object.keys(IDS).some(isOpen)) pane('flow').hidden = false;
-    const docked = pref.order.filter((k) => isOpen(k) && !floating(k));
+    const force = !solo && Settings.forceSplit();
+    const hasContent = Object.keys(IDS).some(isOpen);
+    for (const k of Object.keys(IDS)) {
+      pane(k).hidden = solo ? k !== solo : !force && !opened[k] && (hasContent || k !== 'flow');
+    }
+    // 关闭的 Feat 可能仍保留编辑器内容；空位不展示旧正文、标题或工具。
+    pane('feat').querySelector('.pane-bar').hidden = !opened.feat;
+    $('feat-body').hidden = !opened.feat;
+    const docked = pref.order.filter((k) => !pane(k).hidden && !floating(k));
     const sa = $('split-a');
     sa.hidden = true;
     for (const k of Object.keys(IDS)) {
       const el = pane(k);
-      const isFloating = isOpen(k) && floating(k);
+      const isFloating = !el.hidden && floating(k);
       el.classList.toggle('floating', isFloating);
       if (isFloating) {
         el.style.gridColumn = el.style.gridRow = '';
@@ -272,15 +280,16 @@ window.Split = (() => {
       el.addEventListener('pointerdown', () => { if (pref.float[k]) raise(k); }, true);
     }
     window.addEventListener('resize', () => layout());
+    window.addEventListener('storage', (e) => { if (e.key === 'fc-force-split') layout(); });
     initMenu();
     layout();
   }
 
   return {
-    /** 显示一栏（flow / feat）。 */
-    show(k) { pane(k).hidden = false; layout(); },
-    /** 关闭一栏。 */
-    hide(k) { pane(k).hidden = true; layout(); },
+    /** 记录实际打开的内容并更新布局（flow / feat）。 */
+    show(k) { opened[k] = true; layout(); },
+    /** 清除实际内容；是否保留空位由强制拆分和首页规则决定。 */
+    hide(k) { opened[k] = false; layout(); },
     isOpen,
     layout,
     init,

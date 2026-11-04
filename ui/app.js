@@ -1078,7 +1078,7 @@ listen('history-pruned', () => {
 /** 流程图栏空白时的提示。 */
 const EMPTY_TEXT = '从左侧选择一张流程图或一个 Feat';
 
-/** 关闭当前流程图：释放锁；Feat 栏开着时收起流程图栏，否则保留栏并显示提示 msg。 */
+/** 关闭当前流程图并释放锁；空位或首页提示由布局规则统一决定，msg 用于空位说明。 */
 async function closeFlow(msg) {
   await releaseNow();
   st.cur = null;
@@ -1090,7 +1090,7 @@ async function closeFlow(msg) {
   selCells = [];
   $('empty').textContent = msg || EMPTY_TEXT;
   $('empty').hidden = false;
-  if (Split.isOpen('feat')) Split.hide('flow');
+  Split.hide('flow');
   renderTree();
   renderCurrentBar();
   renderNodeBar();

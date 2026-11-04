@@ -217,6 +217,7 @@
         </section>
         <section data-settings-panel="links" aria-label="链接与页签" hidden>
           <h3>链接与页签</h3>
+          <div class="settings-well"><label class="settings-check"><input id="settings-force-split" type="checkbox">强制拆分</label><p>默认关闭，单独打开流程图或 Feat 时占满主区。开启后始终保留图和 Feat 的位置，未打开的一侧留空。</p></div>
           <div class="settings-well"><label for="settings-tab-lifetime">顶部页签的存活时间（小时）</label><input id="settings-tab-lifetime" type="number" min="0" step="1" value="0"><p>超过设定时长未操作的页签自动关闭。0 表示不自动关闭；例如 24 表示闲置 24 小时后关闭。外部内容更新不延长存活时间。</p></div>
           <div class="settings-well"><label class="settings-check"><input id="settings-projects-new-tab" type="checkbox" checked>不同项目在独立页签打开</label><p>默认开启。打开的 Chart 或 Feat 与当前页签不属于同一 APP 时，新建页签；已打开的条目切到已有页签。同一项目仍可在当前页签并排显示。</p></div>
           <div class="settings-well"><label class="settings-check"><input id="settings-links-new-tab" type="checkbox">链接在独立页签打开</label><p>默认关闭。开启后，点击节点右上角的 Feat 书签或图间链接标记，在新页签打开目标并定位，保留来源页签。</p></div>

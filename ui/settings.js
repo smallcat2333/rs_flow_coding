@@ -13,6 +13,8 @@ window.Settings = (() => {
   const linksNewTab = () => localStorage.getItem('fc-links-new-tab') === '1';
   /** 不同 APP 默认分开页签，避免把不相关的图和档案并排组合。 */
   const projectsNewTab = () => localStorage.getItem('fc-projects-new-tab') !== '0';
+  /** 强制拆分默认关闭；开启时在主窗口为另一类内容保留空位。 */
+  const forceSplit = () => localStorage.getItem('fc-force-split') === '1';
   /** 页签闲置关闭阈值（小时）；默认 0，不自动关闭，设置输入处校验范围。 */
   const tabLifetime = () => Number(localStorage.getItem('fc-tab-lifetime') || '0');
 
@@ -126,6 +128,7 @@ window.Settings = (() => {
     $('settings-keep-feat-position').checked = keepFeatPosition();
     $('settings-links-new-tab').checked = linksNewTab();
     $('settings-projects-new-tab').checked = projectsNewTab();
+    $('settings-force-split').checked = forceSplit();
     $('settings-tab-lifetime').value = tabLifetime();
     $('settings-dialog').showModal();
     tab('appearance');
@@ -165,6 +168,11 @@ window.Settings = (() => {
         $('settings-msg').textContent = '内容更新设置已保存';
       };
     }
+    $('settings-force-split').onchange = (e) => {
+      localStorage.setItem('fc-force-split', e.currentTarget.checked ? '1' : '0');
+      Split.layout();
+      $('settings-msg').textContent = '布局设置已保存';
+    };
     $('settings-tab-lifetime').onchange = (e) => {
       const input = e.currentTarget;
       if (input.value === '' || !input.reportValidity()) { input.value = tabLifetime(); return; }
@@ -211,5 +219,5 @@ window.Settings = (() => {
     });
   }
 
-  return { init, keepFlowView, keepFeatPosition, linksNewTab, projectsNewTab, tabLifetime };
+  return { init, keepFlowView, keepFeatPosition, linksNewTab, projectsNewTab, forceSplit, tabLifetime };
 })();
