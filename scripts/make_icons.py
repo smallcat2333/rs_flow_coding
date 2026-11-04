@@ -1,4 +1,4 @@
-"""生成 rs_flow_coding 的应用图标（32/128 PNG + ico）。
+"""生成 flow_coding 的应用图标（32/128 PNG + ico）。
 
 输入：无；输出：src-tauri/icons/ 下的 32x32.png、128x128.png、icon.png、icon.ico。
 图案：三个状态色块（黄/红/绿）由连线串起，对应流程图协作颜色。

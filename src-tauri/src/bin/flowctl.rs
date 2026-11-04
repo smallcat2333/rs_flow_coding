@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rs_flow_coding_lib::{db, feat, flow, links, lock, paths, scan, write_atomic};
+use flow_coding_lib::{db, feat, flow, links, lock, paths, scan, write_atomic};
 
 /// 打印错误并返回退出码 1。
 fn fail(msg: impl std::fmt::Display) -> ExitCode {

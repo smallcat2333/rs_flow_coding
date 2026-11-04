@@ -1010,6 +1010,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "flow_coding"
+version = "0.2.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "dunce",
+ "flate2",
+ "hex",
+ "notify",
+ "percent-encoding",
+ "roxmltree",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-single-instance",
+ "walkdir",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2888,28 +2910,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "rs_flow_coding"
-version = "0.2.2"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "dunce",
- "flate2",
- "hex",
- "notify",
- "percent-encoding",
- "roxmltree",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-single-instance",
- "walkdir",
 ]
 
 [[package]]

@@ -1,17 +1,17 @@
 [package]
-name = "rs_flow_coding"
+name = "flow_coding"
 version = "0.2.2"
 description = "按 APP 汇总 draw.io 流程图，颜色状态统计、实时编辑、加锁协作与历史对比"
 authors = ["smallcat_SY"]
 edition = "2021"
-default-run = "rs_flow_coding"
+default-run = "flow_coding"
 
 [lib]
-name = "rs_flow_coding_lib"
+name = "flow_coding_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "rs_flow_coding"
+name = "flow_coding"
 path = "src/main.rs"
 
 [[bin]]

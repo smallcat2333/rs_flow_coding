@@ -206,7 +206,7 @@ pub fn parse(xml: &str) -> Result<Vec<Node>, String> {
 pub fn blank_diagram(name: &str) -> String {
     let esc = name.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
     format!(
-        "<mxfile host=\"rs_flow_coding\">\n  <diagram id=\"page-1\" name=\"{esc}\">\n    <mxGraphModel grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"1400\" pageHeight=\"1000\" math=\"0\" shadow=\"0\">\n      <root>\n        <mxCell id=\"0\" />\n        <mxCell id=\"1\" parent=\"0\" />\n      </root>\n    </mxGraphModel>\n  </diagram>\n</mxfile>\n"
+        "<mxfile host=\"flow_coding\">\n  <diagram id=\"page-1\" name=\"{esc}\">\n    <mxGraphModel grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"1400\" pageHeight=\"1000\" math=\"0\" shadow=\"0\">\n      <root>\n        <mxCell id=\"0\" />\n        <mxCell id=\"1\" parent=\"0\" />\n      </root>\n    </mxGraphModel>\n  </diagram>\n</mxfile>\n"
     )
 }
 

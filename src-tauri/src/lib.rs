@@ -1,4 +1,4 @@
-//! rs_flow_coding 库：Tauri App 与 flowctl CLI 共用的流程图解析、加锁、历史与扫描能力，
+//! flow_coding 库：Tauri App 与 flowctl CLI 共用的流程图解析、加锁、历史与扫描能力，
 //! 以及 App 的 Tauri 命令与文件监听。
 
 pub mod db;
@@ -549,7 +549,7 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("启动 rs_flow_coding 失败");
+        .expect("启动 flow_coding 失败");
 }
 
 /// 弹出系统错误消息框（Windows 直接调 user32 的 MessageBoxW，不引入额外依赖）；其他平台打印到 stderr。
