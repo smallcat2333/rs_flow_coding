@@ -1,74 +1,45 @@
-/* 流程图时间线（timeline.js）：编辑区与节点状态栏之间的固定条 + 编辑区上方的只读历史预览层。
- * 轨道几何：总高 40px，上方 2~15px 为日期标注，28px 处为轨道中线；刻度层与滑块左右各缩进 7px（滑块半径），
- * 保证第 i 个圆点、进度条末端与滑块中心对齐。 */
-
-#flow-timeline { --tl-accent: var(--accent); flex: 0 0 46px; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--bg2); border-top: 1px solid var(--border); font-size: 12px; color: var(--fg2); white-space: nowrap; min-width: 0; }
+/* 静态日历标尺：月份在轨道上方；保存时间和返回按钮同列放在右侧，没有持续动画。 */
+#flow-timeline { flex: 0 0 48px; display: flex; align-items: center; gap: 14px; padding: 0 12px; background: var(--bg2); border-top: 1px solid var(--border); font-size: 12px; color: var(--fg2); min-width: 0; }
 #flow-timeline[hidden] { display: none; }
-#flow-timeline .tl-title { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; letter-spacing: .08em; }
-#flow-timeline .tl-title::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tl-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tl-accent) 22%, transparent); }
-#tl-info { flex: 0 1 auto; max-width: 340px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-#tl-info b { color: var(--fg); font-weight: 600; }
-#flow-timeline.previewing #tl-info b { color: var(--warn-fg); }
-#tl-now { flex-shrink: 0; height: 22px; padding: 0 10px; border-radius: 11px; font-size: 12px; color: var(--tl-accent); border-color: color-mix(in srgb, var(--tl-accent) 45%, var(--border)); background: color-mix(in srgb, var(--tl-accent) 8%, transparent); }
-#tl-now:disabled { color: var(--muted); border-color: var(--border); background: transparent; opacity: .55; }
+#flow-timeline .tl-title { flex: 0 0 auto; font-size: 11px; color: var(--fg2); white-space: nowrap; }
+#tl-now { flex: 0 0 auto; height: 26px; padding: 0 9px; border-radius: 4px; font-size: 12px; background: transparent; color: var(--fg2); border: 1px solid var(--border); white-space: nowrap; }
+#tl-now:not(:disabled):hover { color: var(--fg); background: var(--sel); }
+#tl-now:disabled { opacity: .5; }
+.tl-track { position: relative; flex: 1 1 0; min-width: 0; height: 40px; container-type: inline-size; }
+.tl-actions { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tl-actions #tl-now { height: 22px; }
+#tl-info { white-space: nowrap; line-height: 16px; color: var(--fg2); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.tl-track { position: relative; flex: 1 1 auto; min-width: 160px; height: 40px; }
+/* 日历标签与快照分开：无记录的月份仍占据实际时间跨度；窄轨道由脚本减少月标签。 */
+#tl-dates { position: absolute; left: 7px; right: 7px; top: 2px; height: 14px; pointer-events: none; }
+.tl-date { position: absolute; top: 0; transform: translateX(-50%); font-size: 10px; line-height: 14px; color: var(--fg2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tl-date::after { content: ''; position: absolute; left: 50%; top: 17px; width: 1px; height: 5px; background: var(--border); }
+.tl-date.start { left: 0; transform: none; }
+.tl-date.start::after { left: 0; }
+.tl-date.end { right: 0; transform: none; }
+.tl-date.end::after { left: auto; right: 0; }
+#tl-rail { position: absolute; left: 7px; right: 7px; top: 26px; height: 1px; background: var(--border); }
+#tl-fill { position: absolute; left: 7px; top: 26px; width: calc((100% - 14px) * var(--p, 1)); height: 1px; background: var(--fg2); pointer-events: none; }
 
-/* 日期标注：每天第一版上方一枚，细线连到轨道；贴边的向内对齐 */
-#tl-dates { position: absolute; left: 7px; right: 7px; top: 2px; height: 13px; pointer-events: none; }
-.tl-date { position: absolute; top: 0; transform: translateX(-50%); font-size: 10.5px; line-height: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.tl-date::after { content: ""; position: absolute; left: 50%; top: 100%; width: 1px; height: 8px; background: linear-gradient(var(--border), transparent); }
-.tl-date.start { transform: translateX(-3px); }
-.tl-date.start::after { left: 3px; }
-.tl-date.end { transform: translateX(calc(-100% + 3px)); }
-.tl-date.end::after { left: auto; right: 3px; }
-.tl-date.today { color: var(--tl-accent); font-weight: 600; }
-
-/* 底轨 + 已播放的流动进度条：渐变持续向右流动，另有一道光沿进度条扫过 */
-#tl-rail { position: absolute; left: 7px; right: 7px; top: 27px; height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--muted) 30%, transparent); }
-#tl-fill { position: absolute; left: 7px; top: 26px; height: 4px; width: calc((100% - 14px) * var(--p, 1)); border-radius: 2px; overflow: hidden; pointer-events: none;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--tl-accent) 35%, transparent), var(--tl-accent) 30%, #8250df 55%, var(--tl-accent) 80%, color-mix(in srgb, var(--tl-accent) 35%, transparent));
-  background-size: 200% 100%; animation: tl-flow 3.2s linear infinite;
-  box-shadow: 0 0 8px color-mix(in srgb, var(--tl-accent) 45%, transparent);
-  transition: width .28s cubic-bezier(.2, .8, .2, 1); }
-#tl-fill::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 48px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .75), transparent); animation: tl-sweep 2.6s ease-in-out infinite; }
-@keyframes tl-flow { to { background-position: -200% 0; } }
-@keyframes tl-sweep { from { left: -48px; } to { left: 100%; } }
-
-/* 快照圆点：按来源着色，外圈与背景同色留缝；当前放大，之后的版本变淡 */
-#tl-ticks { position: absolute; left: 7px; right: 7px; top: 21px; height: 14px; pointer-events: none; }
-.tl-tick { position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 2px var(--bg2); transition: opacity .2s, transform .2s; }
-.tl-tick.s-user { background: var(--tl-accent); }
-.tl-tick.s-agent { background: #8250df; }
-.tl-tick.s-restore { background: var(--warn-fg); }
-.tl-tick.ahead { opacity: .35; }
-.tl-tick.on { transform: scale(1.35); }
-
-/* 滑块：只画拇指，轨道透明，覆盖整条刻度层 */
-#tl-range { position: absolute; left: 0; right: 0; top: 21px; width: 100%; height: 14px; margin: 0; background: transparent; appearance: none; cursor: pointer; }
+/* 快照和聚合记录均为小圆点；聚合点填实，数量只在悬停提示内显示。 */
+#tl-ticks { position: absolute; left: 7px; right: 7px; top: 20px; height: 14px; pointer-events: none; }
+.tl-tick { position: absolute; top: 3px; width: 8px; height: 8px; margin-left: -4px; border: 1px solid var(--fg2); border-radius: 50%; background: var(--bg2); box-sizing: border-box; }
+.tl-tick.cluster { background: var(--fg2); }
+.tl-tick.ahead { opacity: .45; }
+.tl-tick.on { border-color: var(--accent); background: var(--accent); }
+#tl-range { position: absolute; left: 0; top: 15px; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; appearance: none; cursor: pointer; }
 #tl-range:disabled { cursor: default; }
-#tl-range::-webkit-slider-runnable-track { height: 14px; background: transparent; }
-#tl-range::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); border: 3px solid var(--tl-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tl-accent) 20%, transparent), 0 0 12px color-mix(in srgb, var(--tl-accent) 55%, transparent); transition: transform .15s; }
-#tl-range:not(:disabled):hover::-webkit-slider-thumb, #tl-range:active::-webkit-slider-thumb { transform: scale(1.15); }
-#tl-range:disabled::-webkit-slider-thumb { border-color: var(--muted); box-shadow: none; }
-#flow-timeline.previewing #tl-range::-webkit-slider-thumb { animation: tl-pulse 1.6s ease-out infinite; }
-@keyframes tl-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tl-accent) 55%, transparent), 0 0 12px color-mix(in srgb, var(--tl-accent) 55%, transparent); }
-  100% { box-shadow: 0 0 0 9px transparent, 0 0 12px color-mix(in srgb, var(--tl-accent) 55%, transparent); }
-}
+#tl-range::-webkit-slider-runnable-track { height: 24px; background: transparent; }
+#tl-range::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; margin-top: 5px; border: 2px solid var(--accent); border-radius: 50%; background: var(--bg); }
+#tl-range:disabled::-webkit-slider-thumb { border-color: var(--muted); }
 #tl-range:focus-visible { outline: none; }
-#tl-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--tl-accent); outline-offset: 2px; }
+#tl-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-@media (prefers-reduced-motion: reduce) {
-  #tl-fill, #tl-fill::after, #flow-timeline.previewing #tl-range::-webkit-slider-thumb { animation: none; }
-  #tl-fill { transition: none; }
-}
-
-/* 历史预览盖住编辑器（编辑器保持载入、不接收鼠标）；只读悬浮标识 z 3 仍在其上 */
+/* 预览隐藏时保留尺寸，避免 draw.io 从零尺寸恢复时在 ResizeObserver 通知内反复自适应。 */
 #tl-view { position: absolute; inset: 0; z-index: 2; background: var(--bg2); }
-#tl-view[hidden] { display: none; }
+#tl-view[hidden] { display: block !important; visibility: hidden; pointer-events: none; }
 #tl-frame { width: 100%; height: 100%; border: 0; display: block; }
-.tl-stamp { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 78%, transparent); border: 1px solid color-mix(in srgb, var(--warn-bd) 50%, var(--border)); color: var(--fg2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; user-select: none; backdrop-filter: blur(6px); }
-
-/* 全屏只展示画布，与节点状态栏一致隐藏时间线和历史预览 */
+.tl-stamp { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 10px; border-radius: 4px; background: var(--bg2); border: 1px solid var(--border); color: var(--fg2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 body.flow-full #flow-timeline, body.flow-full #tl-view { display: none !important; }
+@container (max-width: 180px) { .tl-date.start { display: none; } }
+@media (max-width: 600px) { #flow-timeline { gap: 8px; padding-inline: 8px; } #flow-timeline .tl-title { display: none; } }
