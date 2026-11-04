@@ -18,6 +18,12 @@
 
   const bar = $('flow-timeline'), range = $('tl-range'), ticks = $('tl-ticks'), info = $('tl-info');
   const view = $('tl-view'), frame = $('tl-frame'), stamp = $('tl-stamp');
+  /** 轨道内由脚本补齐的层（自下而上）：日期标注、底轨、已播放的流动进度条；刻度与滑块在其上。 */
+  const track = range.parentElement;
+  const [dates, rail, fill] = ['tl-dates', 'tl-rail', 'tl-fill'].map((id) => Object.assign(document.createElement('div'), { id }));
+  track.prepend(dates, rail, fill);
+  /** 日期标注之间的最小间距（像素），更密时只保留靠前的一天，避免文字重叠。 */
+  const DATE_GAP_PX = 46;
 
   const tl = {
     path: null,      // 时间线对应的图路径
@@ -58,21 +64,53 @@
     if (kept < 0) closePreview();
   }
 
-  /** 每个快照一根刻度，按来源着色；跨天的第一版刻度加高，悬停显示时间与来源。 */
+  /** 快照时间的日期部分；兼容「2026-11-04 14:10:13」与「2026/11/4 14:10:13」两种写法，返回 [年, 月, 日] 数字。 */
+  const dayOf = (ts) => ts.split(' ')[0].split(/[-/]/).map(Number);
+  /** 第 i 个快照在轨道上的比例位置（0~1）；只有一版时放在最右端。 */
+  const ratio = (i) => tl.rows.length > 1 ? i / (tl.rows.length - 1) : 1;
+
+  /** 每个快照一个圆点，按来源着色，悬停显示时间与来源；同时重绘日期标注。 */
   function renderTicks() {
-    const n = tl.rows.length;
-    ticks.innerHTML = tl.rows.map((r, i) => {
-      const day = i > 0 && r.ts.slice(0, 10) !== tl.rows[i - 1].ts.slice(0, 10);
-      const left = n > 1 ? i / (n - 1) * 100 : 100;
-      return `<i class="tl-tick s-${esc(r.source)}${day ? ' day' : ''}${i === tl.idx ? ' on' : ''}" style="left:${left}%" title="${esc(`#${r.id} ${r.ts} · ${SRC[r.source] || r.source}`)}"></i>`;
+    ticks.innerHTML = tl.rows.map((r, i) =>
+      `<i class="tl-tick s-${esc(r.source)}" style="left:${ratio(i) * 100}%" title="${esc(`#${r.id} ${r.ts} · ${SRC[r.source] || r.source}`)}"></i>`).join('');
+    renderDates();
+  }
+
+  /**
+   * 在每天第一版的位置上方标注日期（今年只写月/日，往年带年份，今天另加「今天」并高亮）。
+   * 按轨道实际宽度换算位置，与上一个已显示标注过近时跳过；贴近两端的标注向内对齐，不被裁切。
+   */
+  function renderDates() {
+    const w = ticks.clientWidth, now = new Date();
+    const today = [now.getFullYear(), now.getMonth() + 1, now.getDate()].join('-');
+    let lastX = -Infinity;
+    dates.innerHTML = tl.rows.map((r, i) => {
+      const [y, m, d] = dayOf(r.ts);
+      if (i > 0 && dayOf(tl.rows[i - 1].ts).join('-') === [y, m, d].join('-')) return '';
+      const x = ratio(i) * w;
+      if (x - lastX < DATE_GAP_PX) return '';
+      lastX = x;
+      const md = `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
+      const isToday = [y, m, d].join('-') === today;
+      const text = (y === now.getFullYear() ? md : `${y}/${md}`) + (isToday ? ' 今天' : '');
+      const edge = x < 24 ? ' start' : w - x < 24 ? ' end' : '';
+      return `<span class="tl-date${edge}${isToday ? ' today' : ''}" style="left:${ratio(i) * 100}%">${text}</span>`;
     }).join('');
+  }
+
+  /** 按滑块位置刷新进度条长度与圆点状态：当前版放大，之后的版本变淡。 */
+  function paintProgress() {
+    track.style.setProperty('--p', tl.idx < 0 ? 1 : ratio(tl.idx));
+    [...ticks.children].forEach((t, i) => {
+      t.classList.toggle('on', i === tl.idx);
+      t.classList.toggle('ahead', i > tl.idx);
+    });
   }
 
   /** 滑块旁文字：第几版、时间戳、来源；在最右端显示「当前」。 */
   function renderInfo() {
     const r = tl.rows[tl.idx];
-    ticks.querySelectorAll('.tl-tick.on').forEach((t) => t.classList.remove('on'));
-    ticks.children[tl.idx]?.classList.add('on');
+    paintProgress();
     if (!r) { info.textContent = '暂无历史'; $('tl-now').disabled = true; return; }
     const pos = `${tl.idx + 1}/${tl.rows.length}`;
     info.innerHTML = tl.idx === last()
@@ -138,6 +176,7 @@
     const seq = ++tl.seq, row = tl.rows[tl.idx], prev = tl.rows[tl.idx - 1];
     stamp.textContent = `历史版本 · ${row.ts} · ${SRC[row.source] || row.source} · 只读`;
     view.hidden = false;
+    bar.classList.add('previewing');
     await ensureFrame();
     const [xml, changes] = await Promise.all([xmlOf(row.id), prev ? invoke('diff', { old: prev.id, new: row.id }) : Promise.resolve(null)]);
     if (seq !== tl.seq) return;
@@ -174,6 +213,7 @@
   function closePreview() {
     tl.seq++;
     view.hidden = true;
+    bar.classList.remove('previewing');
     if (tl.rows.length && tl.idx !== last()) {
       tl.idx = last();
       range.value = String(tl.idx);
@@ -203,6 +243,7 @@
   range.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && previewing()) { ev.stopPropagation(); closePreview(); } });
   $('tl-now').onclick = closePreview;
 
+  new ResizeObserver(renderDates).observe(track);
   new MutationObserver(syncPath).observe($('cur-name'), { childList: true, characterData: true, subtree: true });
 
   let refreshTimer = 0;
