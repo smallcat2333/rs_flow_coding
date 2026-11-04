@@ -555,6 +555,20 @@ window.FeatBoard = (() => {
       <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span></div>`;
   }
 
+  /** 沿跨层通道连接非重合的拐点，用二次贝塞尔圆角过渡；短线段的圆角最多占其一半。 */
+  function roundedRoute(points) {
+    let d = `M${points[0][0]} ${points[0][1]}`;
+    for (let i = 1; i < points.length - 1; i++) {
+      const [px, py] = points[i - 1], [x, y] = points[i], [nx, ny] = points[i + 1];
+      const incoming = Math.hypot(x - px, y - py), outgoing = Math.hypot(nx - x, ny - y);
+      const radius = Math.min(10, incoming / 2, outgoing / 2);
+      d += ` L${x + (px - x) * radius / incoming} ${y + (py - y) * radius / incoming}` +
+        ` Q${x} ${y} ${x + (nx - x) * radius / outgoing} ${y + (ny - y) * radius / outgoing}`;
+    }
+    const last = points[points.length - 1];
+    return `${d} L${last[0]} ${last[1]}`;
+  }
+
   /**
    * 用实际图宽重排节点与连线：横向能放下全部依赖层时从左到右，否则从上到下，同一层按宽度折为多行。
    * 只更新几何，不重建控件或改变选中状态；ResizeObserver 和每次渲染后调用。隐藏或零宽度时等下次可见再排。
@@ -597,12 +611,13 @@ window.FeatBoard = (() => {
       const x1 = horizontal ? a.x + nodeW : a.x + nodeW / 2, y1 = horizontal ? a.y + G.h / 2 : a.y + G.h;
       const x2 = horizontal ? b.x - 3 : b.x + nodeW / 2, y2 = horizontal ? b.y + G.h / 2 : b.y - 3;
       const bend = Math.max(16, (horizontal ? x2 - x1 : y2 - y1) / 2);
-      // 跨越中间层的依赖沿图边缘绕行，避免穿过中间节点；箭头仍指向后续任务的入口。
+      // 跨层依赖共用左侧（横向图为上侧）通道，圆角接入与转出，避开中间节点。
       const skip = Number(nodes[Number(edge.dataset.target)].dataset.level) - Number(nodes[Number(edge.dataset.source)].dataset.level) > 1;
       if (skip) {
-        edge.setAttribute('d', horizontal
-          ? `M${x1} ${y1} H${x1 + 8} V4 H${x2 - 8} V${y2} H${x2}`
-          : `M${x1} ${y1} V${y1 + 7} H5 V${y2 - 7} H${x2} V${y2}`);
+        const lead = G.gap / 2, rail = G.pad / 2;
+        edge.setAttribute('d', roundedRoute(horizontal
+          ? [[x1, y1], [x1 + lead, y1], [x1 + lead, rail], [x2 - lead, rail], [x2 - lead, y2], [x2, y2]]
+          : [[x1, y1], [x1, y1 + lead], [rail, y1 + lead], [rail, y2 - lead], [x2, y2 - lead], [x2, y2]]));
       } else edge.setAttribute('d', horizontal ? `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
         : `M${x1} ${y1} C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`);
     });
