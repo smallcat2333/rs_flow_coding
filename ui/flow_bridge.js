@@ -217,6 +217,50 @@
     }
   }
 
+  /**
+   * 删除状态复用原生 SVG 斜线：灰白线条独立于底色，确认删除在斜线下面保留主题适配的绿色。
+   * 只处理灰/绿填充且 dashed=1 的节点；不改 XML、不影响连线及其他状态，导出也走同一绘制路径。
+   */
+  function installDeletionHatching() {
+    var configureCanvas = mxShape.prototype.configureCanvas;
+    mxShape.prototype.configureCanvas = function (canvas) {
+      configureCanvas.apply(this, arguments);
+      var style = this.style || {};
+      var fill = String(style[mxConstants.STYLE_FILLCOLOR] || '').toUpperCase();
+      canvas.fcDeletionFill = this.state && this.state.cell.vertex && style[mxConstants.STYLE_DASHED] == '1' &&
+        (fill === '#F5F5F5' || fill === '#D5E8D4') ? fill : null;
+      if (canvas.fcDeletionFill && canvas instanceof mxSvgCanvas2D) {
+        canvas.state.fillStyle = 'hatch';
+        canvas.state.gradientColor = null;
+        canvas.state.hachureGap = 10;
+        canvas.state.fillWeight = .8;
+      }
+    };
+    var patternId = mxSvgCanvas2D.prototype.createFillPatternId;
+    /** 单独缓存删除状态图案，防止与普通斜线填充共用同色的 SVG 定义。 */
+    mxSvgCanvas2D.prototype.createFillPatternId = function () {
+      return patternId.apply(this, arguments) + (this.fcDeletionFill ? '-fc-delete' : '');
+    };
+    var hatchPattern = mxSvgCanvas2D.prototype.createHatchPattern;
+    /** 在原生斜线图案内增加确认删除底色；颜色由原生 light/dark 映射解析，边界裁剪沿用原形状。 */
+    mxSvgCanvas2D.prototype.createHatchPattern = function (strokeSize, color) {
+      var pattern = hatchPattern.apply(this, arguments);
+      if (!this.fcDeletionFill) return pattern;
+      var line = pattern.querySelector('line');
+      line.setAttribute('stroke', '#C9CDD2');
+      line.style.stroke = '#C9CDD2';
+      if (this.fcDeletionFill === '#D5E8D4') {
+        var background = this.createElement('rect');
+        background.setAttribute('width', pattern.getAttribute('width'));
+        background.setAttribute('height', pattern.getAttribute('height'));
+        background.setAttribute('fill', color.light);
+        background.style.fill = color.cssText;
+        pattern.insertBefore(background, pattern.firstChild);
+      }
+      return pattern;
+    };
+  }
+
   /** 用协作状态替换原生配色快捷按钮，颜色与虚线在同一次撤销事务中应用。 */
   function installStatusStyles() {
     var states = [
@@ -412,6 +456,7 @@
   /** 绑定选中事件与外层消息，ui 为 draw.io EditorUi 实例。 */
   function attach(app) {
     ui = app;
+    installDeletionHatching();
     installStatusStyles();
     installNodeMenu();
     var graph = ui.editor.graph;
