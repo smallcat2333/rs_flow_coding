@@ -7,8 +7,10 @@
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button[aria-pressed="true"] { background: var(--sel); color: var(--accent); font-weight: 600; }
 
-#feat-board {
+#feat-board, #feat-notices {
   --fb-ok: var(--ok-fg); --fb-err: var(--danger); --fb-warn: var(--warn-fg); --fb-info: var(--accent); --fb-muted: var(--muted);
+}
+#feat-board {
   flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--bg2); line-height: 1.55;
   container-type: inline-size; container-name: board;
   scrollbar-width: thin;
@@ -47,6 +49,12 @@
 .fb-next.err { border-color: color-mix(in srgb, var(--fb-err) 40%, transparent); background: color-mix(in srgb, var(--fb-err) 7%, transparent); }
 .fb-next-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .fb-next .fb-cmd { flex: 0 1 auto; margin-left: 16px; }
+/* 状态提示位于滚动区外，悬浮在 Feat 上方；半透明且鼠标穿透，不挤占正文。 */
+#feat-notices { position: absolute; z-index: 4; top: 10px; left: 12px; right: 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; line-height: 1.55; pointer-events: none; }
+#feat-notices:empty, #feat-board[hidden] ~ #feat-notices { display: none; }
+#feat-notices .fb-next { width: max-content; max-width: min(680px, 100%); flex-wrap: nowrap; background: color-mix(in srgb, var(--bg) 80%, transparent); box-shadow: 0 3px 12px var(--shadow); }
+#feat-notices .fb-next-text { flex: 1 1 auto; }
+#feat-notices .fb-next.warn { color: var(--warn-fg); background: color-mix(in srgb, var(--warn-bg) 75%, transparent); }
 
 /* 命令与小按钮 */
 .fb-cmd { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 100%; box-sizing: border-box; font-size: 12px; border-color: var(--border); background: var(--bg); }

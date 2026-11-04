@@ -151,10 +151,10 @@ window.FeatPane = (() => {
   };
   applyTocVisible(localStorage.getItem('fc-toc') !== '0');
 
-  /** 普通保存进度留在顶栏，异常与主窗口共用悬浮状态，不占用档案标题空间。 */
+  /** 与主窗口共用气泡，操作提示不占用档案标题空间。 */
   function setState(text, isError) {
-    $('md-state').textContent = isError ? '' : (text || '');
-    if (isError && text) floatingStatus(text);
+    $('md-state').textContent = '';
+    if (text) floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info');
   }
 
   /** 同步当前档案：只替换变化片段，让滚动快照和光标随文字映射；外部改动不进撤销历史。 */

@@ -380,7 +380,6 @@ window.FeatBoard = (() => {
       if (m.fail || a.fail) add('err', `有 ${m.fail + a.fail} 项不通过：先交给 feat-4-test 记入 §4.3，再在新会话修复。`, `/smallcat-feat-4-test ${id}`);
       else if (x.issues.open) add('err', `§4.3 还有 ${x.issues.open} 个问题未复测通过，修复后复测。`, `/smallcat-feat-3-dev ${id}`);
       else if (m.total && m.filled === m.total && a.pass === a.total) add('ok', '测试全部通过，可以关闭 Feat。', `/smallcat-feat-5-close ${id}`);
-      else if (m.filled) add('info', '已填的人工确认结果可交给 feat-4-test 同步进度。', `/smallcat-feat-4-test ${id}`);
     } else add('warn', `档案头状态「${s || '空'}」不在词表中，请在文档视图修正。`);
     return out;
   }
@@ -396,10 +395,14 @@ window.FeatBoard = (() => {
       .map((s) => ({ n: s.n, title: s.title.replace(/[（(].*$/, '').trim(), filled: meaningful(s.body) > 0 }));
   }
 
-  /** 内容区顶部：下一步建议（无建议时不显示）。 */
+  /** 按下一步建议生成两组 HTML：纯状态提示在正文外悬浮，带复制命令的建议保留在正文内。 */
   function nexts(d) {
-    const steps = nextSteps(d).map((x) => `<div class="fb-next ${x.tone}"><span class="fb-next-dot" aria-hidden="true"></span><span class="fb-next-text">${esc(x.text)}</span>${x.command ? cmd(x.command) : ''}</div>`).join('');
-    return steps ? `<div class="fb-nexts" aria-label="下一步">${steps}</div>` : '';
+    const steps = nextSteps(d);
+    /** 保留提示颜色与命令按钮的现有结构，正文外只渲染无交互的提示。 */
+    const item = (x) => `<div class="fb-next ${x.tone}"><span class="fb-next-dot" aria-hidden="true"></span><span class="fb-next-text">${esc(x.text)}</span>${x.command ? cmd(x.command) : ''}</div>`;
+    const notices = steps.filter((x) => !x.command).map(item).join('');
+    const commands = steps.filter((x) => x.command).map(item).join('');
+    return { notices, commands: commands ? `<div class="fb-nexts" aria-label="下一步">${commands}</div>` : '' };
   }
 
   /**
@@ -819,7 +822,7 @@ window.FeatBoard = (() => {
     st.dirty = false;
     st.holdRender = false;
     const path = api.path();
-    if (!path) { box.innerHTML = ''; st.path = ''; return; }
+    if (!path) { box.innerHTML = ''; $('feat-notices').innerHTML = ''; st.path = ''; return; }
     const d = model(api.text());
     const fresh = path !== st.path;
     if (fresh) Object.assign(st, { path, tab: d.stage, selectedT: '', onlyTodo: false, open: new Set(), openTouched: false });
@@ -830,7 +833,9 @@ window.FeatBoard = (() => {
     acts = [];
     mds = [];
     hovered = null;
-    box.innerHTML = `<div class="fb-shell">${rail(d)}<div class="fb-main">${nexts(d)}<div class="fb-page tab-${st.tab}" role="tabpanel">${PAGES[st.tab](d)}</div></div></div>`;
+    const next = nexts(d);
+    $('feat-notices').innerHTML = next.notices;
+    box.innerHTML = `<div class="fb-shell">${rail(d)}<div class="fb-main">${next.commands}<div class="fb-page tab-${st.tab}" role="tabpanel">${PAGES[st.tab](d)}</div></div></div>`;
     box.querySelectorAll('[data-md]').forEach((el) => {
       const { text, inline } = mds[el.dataset.md];
       const frag = LiveMarkdown.render(text);
