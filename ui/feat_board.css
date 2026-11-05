@@ -22,7 +22,7 @@
 /* 左侧导航 + 右侧内容：导航外层撑满高度，内层吸顶 */
 .fb-shell { display: flex; min-height: 100%; }
 .fb-main { flex: 1; min-width: 0; padding-bottom: 32px; }
-.fb-rail { flex: 0 0 160px; background: var(--bg); border-right: 1px solid var(--border); }
+.fb-rail { flex: 0 0 160px; min-width: 0; background: var(--bg); border-right: 1px solid var(--border); }
 .fb-rail-in { position: sticky; top: 0; padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; }
 .fb-rail-head { display: flex; align-items: center; gap: 4px; }
 .fb-meta { display: flex; flex-direction: column; gap: 1px; padding: 0 4px 8px; border-bottom: 1px solid var(--border2); }
@@ -35,7 +35,7 @@
 .fb-status.s-closed { background: var(--ok-bg); color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 40%, transparent); }
 .fb-status.s-paused, .fb-status.s-dropped, .fb-status.s-unknown { background: var(--bg2); color: var(--fg2); border-color: var(--border); }
 .fb-status.s-unknown { border-style: dashed; }
-.fb-meta-item { color: var(--fg2); font-size: 12px; }
+.fb-meta-item { color: var(--fg2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-meta-item i { font-style: normal; color: var(--muted); margin-right: 4px; }
 .fb-nexts { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px 0; }
 .fb-next { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg2); }
@@ -74,6 +74,15 @@
 /* 连线画在整个阶段项上（含其下的章节与 T 标签），连到下一项的圆点 */
 .fb-stage-item:not(:last-child)::after { content: ""; position: absolute; left: 13px; top: 22px; bottom: -12px; width: 2px; background: var(--border2); }
 .fb-stage-item.past:not(:last-child)::after { background: color-mix(in srgb, var(--fb-ok) 55%, transparent); }
+/* 概览不在进度轴上：不画连线、方形标记，下方细线与阶段轴分开。 */
+.fb-stage-item.ovw { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--border2); }
+.fb-stage-item.ovw::after { display: none; }
+.fb-stage.ovw .fb-stage-dot { border-radius: 3px; border-color: var(--group-fg); }
+.fb-stage.ovw.on .fb-stage-dot { background: var(--group-fg); }
+/* 页签名称完整保留编号、中文与英文；进度徽标另放摘要行，避免挤压名称。 */
+.fb-stage-no { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.fb-stage-zh { flex-shrink: 0; margin-left: -2px; }
+.fb-stage-en { flex-shrink: 0; white-space: nowrap; margin-left: -2px; font-size: 11px; font-weight: 400; color: var(--muted); }
 /* 开发阶段的 T 状态小标签 */
 .fb-tchips { display: flex; flex-wrap: wrap; gap: 3px; padding: 2px 4px 4px 30px; }
 .fb-tchip { padding: 0 4px; min-width: 24px; border-radius: 4px; font-family: Consolas, monospace; font-size: 10.5px; line-height: 16px; border: 1px solid var(--border); background: var(--bg); color: var(--fg2); }
@@ -92,7 +101,8 @@
 .fb-stage.current .fb-stage-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .fb-stage-name { display: flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
 .fb-stage.future .fb-stage-name { color: var(--muted); font-weight: 400; }
-.fb-stage-sum { grid-column: 2; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-stage-meta { grid-column: 2; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.fb-stage-sum { min-width: 0; flex: 1 1 0; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-badge { padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 17px; background: var(--bg2); color: var(--fg2); border: 1px solid var(--border2); font-variant-numeric: tabular-nums; font-weight: 400; white-space: nowrap; flex-shrink: 0; }
 .fb-badge.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); }
 .fb-badge.err { background: color-mix(in srgb, var(--fb-err) 12%, transparent); color: var(--fb-err); border-color: color-mix(in srgb, var(--fb-err) 40%, transparent); }
@@ -273,6 +283,27 @@
 .fb-who { color: var(--muted); font-size: 12px; white-space: nowrap; }
 
 /* §4 测试：汇总、自测、人工确认、问题 */
+/* 概览的阶段流水线：五格等宽横排，格间用箭头连接，已过阶段之后的箭头为绿；窄栏改纵向（见容器查询）。 */
+.fb-pipe { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; }
+.fb-pipe-step { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); text-align: left; }
+.fb-pipe-step:hover:not(:disabled) { background: var(--hover); }
+.fb-pipe-step + .fb-pipe-step::before { content: ""; position: absolute; left: -13px; top: calc(50% - 4px); width: 6px; height: 6px; border-top: 2px solid var(--border2); border-right: 2px solid var(--border2); transform: rotate(45deg); }
+.fb-pipe-step.past + .fb-pipe-step::before { border-color: color-mix(in srgb, var(--fb-ok) 70%, transparent); }
+.fb-pipe-step.past { border-color: color-mix(in srgb, var(--fb-ok) 35%, var(--border)); }
+.fb-pipe-step.current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); box-shadow: 0 0 0 1px var(--accent); }
+.fb-pipe-step.future { color: var(--fg2); }
+.fb-pipe-mark { flex: 0 0 36px; height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 3px solid var(--border2); border-radius: 50%; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.fb-pipe-step.past .fb-pipe-mark { border-color: var(--fb-ok); color: var(--fb-ok); }
+.fb-pipe-step.current .fb-pipe-mark { border-color: var(--accent); color: var(--accent); }
+.fb-pipe-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fb-pipe-name { display: flex; align-items: baseline; gap: 4px; font-weight: 600; min-width: 0; white-space: nowrap; }
+.fb-pipe-step.future .fb-pipe-name { font-weight: 400; }
+.fb-pipe-sum { font-size: 12px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container board (max-width: 1000px) {
+  .fb-pipe { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .fb-pipe-step { padding: 6px 10px; }
+  .fb-pipe-step + .fb-pipe-step::before { display: none; }
+}
 .fb-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .fb-meter { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
 .fb-meter b { display: block; }
@@ -326,7 +357,7 @@
 
 /* 按控件页自身的可用宽度判断，右侧推进栏占去的空间不会误计为正文空间。 */
 @container board (max-width: 760px) {
-  .fb-rail { flex-basis: 130px; }
+  .fb-rail { flex-basis: 160px; }
   .fb-rail-in { padding: 10px 6px; }
   .fb-meta-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fb-page { padding: 12px; }
@@ -341,7 +372,9 @@
   .fb-rail-head, .fb-meta { display: none; }
   .fb-stages { flex-direction: column; }
   .fb-stage { width: auto; grid-template-columns: 8px auto; column-gap: 6px; padding: 4px 6px; }
-  .fb-stage-item::after, .fb-stage-sum, .fb-tchips { display: none; }
+  .fb-stage-item::after, .fb-stage-meta, .fb-tchips { display: none; }
+  .fb-tchips.fb-rchips { display: flex; padding: 4px 0 0 20px; }
+  .fb-stage-item.ovw { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
   .fb-stage-dot { grid-row: auto; margin-top: 0; width: 8px; height: 8px; }
   .fb-stage-item .fb-toc { display: flex; flex-direction: row; flex-wrap: wrap; gap: 2px 6px; padding: 4px 0 0; border-top: 1px solid var(--border2); }
   .fb-toc button { font-size: 11px; }

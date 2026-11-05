@@ -48,8 +48,16 @@ const SAMPLE_MD = `
 - [ ] 自测项 1
 `;
 
-/** 构造最小 DOM 环境并初始化 FeatBoard。 */
-function setupBoard() {
+const WITH_TALKS = SAMPLE_MD.replace('## 1. 需求', `## 0. 探讨记录
+### R1 2026-11-04
+- 决策：拆分概览与探讨
+- 依据：章节号对齐档案
+- 待确认：核对侧栏
+
+## 1. 需求`);
+
+/** 构造最小 DOM 环境并初始化 FeatBoard，可传入探讨中或缺少第 0 章的档案。 */
+function setupBoard(text = SAMPLE_MD) {
   let innerHtml = '';
   const located = [];
   const listeners = {};
@@ -97,7 +105,7 @@ function setupBoard() {
   fb.init({
     path: () => 'docs/feat/Feat_261104_1.md',
     id: () => 'Feat_261104_1',
-    text: () => SAMPLE_MD,
+    text: () => text,
     readOnly: () => false,
     nodes: () => [],
     openFlow() {},
@@ -124,6 +132,64 @@ function setupBoard() {
     },
   };
 }
+
+/** 通过真实事件委托切换页签，返回右侧内容，避免把侧栏中的记录名误当成页面内容。 */
+function openTab(board, key) {
+  board.click({ dataset: { tab: key }, matches: selector => selector === '[data-tab]' });
+  return board.html.slice(board.html.indexOf('<div class="fb-page '));
+}
+
+test('概览无编号，0 为探讨 / Exp；R 目录与待确认角标归属第 0 章', () => {
+  const nav = setupBoard(WITH_TALKS).html.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/)[0];
+  const items = nav.split('<div class="fb-stage-item ');
+  const overview = items.find(item => item.includes('data-tab="overview"'));
+  const exp = items.find(item => item.includes('data-tab="0"'));
+  assert.ok(overview && exp);
+  assert.ok(overview.includes('概览'));
+  assert.ok(overview.includes('/ Ovw'));
+  assert.ok(!overview.includes('fb-stage-no'));
+  assert.ok(!overview.includes('R1 2026-11-04'));
+  assert.ok(!overview.includes('1 待确认'));
+  assert.ok(exp.includes('fb-stage-no">0.'));
+  assert.ok(exp.includes('探讨'));
+  assert.ok(exp.includes('/ Exp'));
+  assert.ok(exp.includes('R1 2026-11-04'));
+  assert.ok(exp.includes('1 待确认'));
+  assert.ok(nav.indexOf('data-tab="overview"') < nav.indexOf('data-tab="0"'));
+  assert.ok(nav.indexOf('data-tab="0"') < nav.indexOf('data-tab="1"'));
+});
+
+test('概览保留阶段汇总，探讨页只展示第 0 章记录，两页独立切换', () => {
+  const board = setupBoard(WITH_TALKS);
+  const overview = openTab(board, 'overview');
+  assert.ok(overview.includes('tab-overview'));
+  assert.ok(overview.includes('阶段进度'));
+  assert.ok(!overview.includes('R1 2026-11-04'));
+  const exp = openTab(board, '0');
+  assert.ok(exp.includes('tab-0'));
+  assert.ok(exp.includes('探讨记录'));
+  assert.ok(exp.includes('R1 2026-11-04'));
+  assert.ok(!exp.includes('阶段进度'));
+});
+
+test('从概览点击 R 记录会进入探讨页并定位原行号', () => {
+  const board = setupBoard(WITH_TALKS);
+  openTab(board, 'overview');
+  const line = WITH_TALKS.split('\n').indexOf('### R1 2026-11-04') + 1;
+  board.click({ dataset: { jump: String(line), stage: '0' }, matches: selector => selector === '[data-jump]' });
+  assert.ok(board.html.includes('tab-0'));
+  assert.deepEqual(board.located, [line]);
+});
+
+test('探讨中但尚无第 0 章时展示探讨空态，原文定位也映射到第 0 章', () => {
+  const empty = setupBoard(SAMPLE_MD.replace('> 状态：开发中', '> 状态：探讨中'));
+  assert.ok(empty.html.includes('tab-0'));
+  assert.ok(empty.html.includes('还没有探讨记录'));
+  const board = setupBoard(WITH_TALKS);
+  openTab(board, 'overview');
+  board.fb.revealLine(WITH_TALKS.split('\n').indexOf('### R1 2026-11-04') + 1);
+  assert.ok(board.html.includes('tab-0'));
+});
 
 test('左侧导航各阶段章节目录全部直接展开，不依赖当前选中的阶段', () => {
   const html = setupBoard().html.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/)[0];

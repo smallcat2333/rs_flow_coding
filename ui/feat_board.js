@@ -10,15 +10,21 @@ window.FeatBoard = (() => {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-  /** 阶段页签：k 为章节号；skill 为该章节的生成方，空章节显示其命令。§0 仅在档案有该章节时显示。 */
+  /**
+   * 左侧页签：overview 为无编号概览，其余 k 对齐档案 0–5 章节；name / en 为中英文名。
+   * 概览独立排第一；§0 探讨记录与待确认状态归入「0. 探讨 / Exp」。
+   */
   const STAGES = [
-    { k: '0', name: '探讨', skill: 'smallcat-feat-1-new' },
-    { k: '1', name: '需求', skill: 'smallcat-feat-1-new' },
-    { k: '2', name: '原型', skill: 'smallcat-feat-2-ui' },
-    { k: '3', name: '开发', skill: 'smallcat-feat-3-dev' },
-    { k: '4', name: '测试', skill: 'smallcat-feat-4-test' },
-    { k: '5', name: '发布', skill: 'smallcat-feat-5-close' },
+    { k: 'overview', name: '概览', en: 'Ovw' },
+    { k: '0', name: '探讨', en: 'Exp' },
+    { k: '1', name: '需求', en: 'Req' },
+    { k: '2', name: '原型', en: 'UI' },
+    { k: '3', name: '开发', en: 'Dev' },
+    { k: '4', name: '测试', en: 'Test' },
+    { k: '5', name: '发布', en: 'Rls' },
   ];
+  /** 页签名称：概览不带编号，章节显示编号、中文名与灰色英文缩写。 */
+  const stageName = (s) => `${s.k === 'overview' ? '' : `<span class="fb-stage-no">${s.k}.</span>`}<span class="fb-stage-zh">${s.name}</span><span class="fb-stage-en">/ ${s.en}</span>`;
   /** 档案头状态 → 样式类（§2.11.4 词表），词表外为 unknown。 */
   const STATUS_CLS = [['探讨中', 'talk'], ['需求整理中', 'req'], ['开发中', 'dev'], ['测试中', 'test'], ['已暂停', 'paused'], ['已关闭', 'closed'], ['已废弃', 'dropped']];
   /** 路线图状态词（与 progress.rs task_state 同序：先判「待用户确认」）。 */
@@ -278,7 +284,7 @@ window.FeatBoard = (() => {
   /** 档案当前阶段对应的页签：按档案头状态，暂停 / 废弃 / 词表外按已有内容推断（与 progress.rs 同口径）。 */
   function currentStage(d) {
     const s = d.status, ui = meaningful(body(d, '2.1')) > 0;
-    if (s.startsWith('探讨中')) return d.h2['0'] ? '0' : '1';
+    if (s.startsWith('探讨中')) return '0';
     if (s.startsWith('需求整理中')) return ui ? '2' : '1';
     if (s.startsWith('开发中')) return '3';
     if (s.startsWith('测试中')) return '4';
@@ -387,12 +393,11 @@ window.FeatBoard = (() => {
   }
 
   /**
-   * 阶段内的章节目录：§0 列 R 记录，§1–§4 列编号小节（去掉括号里的补充说明），§5 不列。
+   * 阶段内的章节目录：§1–§4 列编号小节（去掉括号里的补充说明）；§0 的 R 记录另用小块入口，其余不列。
    * 输出 [{ n: 标题行号（与卡片 data-line 一致）, title, filled: 是否有内容 }]。
    */
   function chapters(d, k) {
-    if (k === '0') return d.talks.map((r) => ({ n: r.n, title: r.title, filled: true }));
-    if (k === '5') return [];
+    if (k === 'overview' || k === '0' || k === '5') return [];
     return Object.values(d.sec).filter((s) => s.k.split('.')[0] === k).sort((a, b) => a.n - b.n)
       .map((s) => ({ n: s.n, title: s.title.replace(/[（(].*$/, '').trim(), filled: meaningful(s.body) > 0 }));
   }
@@ -408,37 +413,58 @@ window.FeatBoard = (() => {
   }
 
   /**
-   * 左侧阶段导航：顶部为档案头状态徽标与应用 / 创建 / 关闭，下方为竖向阶段轴（点 + 连线，已过为绿、当前为蓝）。
-   * 每个阶段一行名称 + 角标、一行摘要；点击切换右侧页面。角标在待确认时标黄，有不通过或未闭环问题时标红。
+   * 各页签的汇总，左侧导航与概览页共用：{ badge 角标, tone 角标色, sum 摘要, done / total 进度（无进度为空）}。
+   * 角标在待确认时标黄，有不通过或未闭环问题时标红；概览摘要为当前阶段，探讨角标只显示在第 0 章。
+   */
+  function stageInfo(d) {
+    const x = d.stats;
+    const controls = tables(d, body(d, '2.2'))[0]?.rows.length || 0;
+    const issues = x.manual.fail + x.auto.fail + x.issues.open, released = meaningful(d.h2['5']?.body);
+    const cur = STAGES.find((s) => s.k === d.stage);
+    const test = x.manual.total ? [x.manual.filled, x.manual.total] : x.auto.total ? [x.auto.pass, x.auto.total] : [];
+    return {
+      overview: { badge: '', tone: '', sum: cur ? `当前 ${cur.k}. ${cur.name}` : '档案总览' },
+      0: { badge: x.talks ? `${x.talks} 待确认` : '', tone: 'warn', sum: d.talks.length ? `记录 ${d.talks.length} 条` : '暂无记录' },
+      1: { badge: x.checks.total ? `${x.checks.done}/${x.checks.total}` : '', tone: '', sum: x.checks.total ? '验收标准' : '验收未写', done: x.checks.done, total: x.checks.total },
+      2: { badge: controls ? String(controls) : '', tone: '', sum: controls ? `控件 ${controls}` : meaningful(body(d, '2.1')) ? '已有总纲' : '未开始' },
+      3: { badge: x.tasks.total ? `${x.tasks.done}/${x.tasks.total}` : '', tone: x.tasks.waiting ? 'warn' : '', sum: x.tasks.total ? (x.tasks.waiting ? `待确认 ${x.tasks.waiting}` : x.tasks.done === x.tasks.total ? '任务完成' : `完成 ${x.tasks.done}/${x.tasks.total}`) : '未拆任务', done: x.tasks.done, total: x.tasks.total },
+      4: { badge: x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', tone: issues ? 'err' : x.manual.filled < x.manual.total ? 'warn' : '',
+        sum: x.manual.total + x.auto.total ? [x.manual.total ? '人工确认' : '程序自测', x.manual.fail + x.auto.fail ? `NG ${x.manual.fail + x.auto.fail}` : '', x.issues.open ? `问题 ${x.issues.open}` : ''].filter(Boolean).join(' · ') : '未开始',
+        done: test[0], total: test[1] },
+      5: { badge: released ? '✓' : '', tone: '', sum: released ? '已生成' : '未生成' },
+    };
+  }
+
+  /** 阶段位置：概览不参与进度轴，其余按档案当前阶段分为已过 / 当前 / 未到。 */
+  function stagePos(d, s) {
+    if (s.k === 'overview') return 'ovw';
+    const i = STAGES.indexOf(s), cur = STAGES.findIndex((x) => x.k === d.stage);
+    return i < cur ? 'past' : i === cur ? 'current' : 'future';
+  }
+
+  /**
+   * 左侧导航：顶部为档案头状态徽标与应用 / 创建 / 关闭；下方第一项为概览，再往下为竖向阶段轴
+   * （点 + 连线，已过为绿、当前为蓝）。首行完整显示「编号. 中文 / 英文」，次行放摘要与角标；点击切换右侧页面。
    */
   function rail(d) {
-    const x = d.stats, cur = STAGES.findIndex((s) => s.k === d.stage);
     const cls = (STATUS_CLS.find(([w]) => d.status.startsWith(w)) || [, 'unknown'])[1];
-    const controls = tables(d, body(d, '2.2'))[0]?.rows.length || 0;
-    const issues = x.manual.fail + x.auto.fail + x.issues.open;
-    /** 各阶段：[角标, 角标色, 摘要]。 */
-    const info = {
-      0: [x.talks ? `${x.talks} 待确认` : '', 'warn', d.talks.length ? `记录 ${d.talks.length} 条` : '无记录'],
-      1: [x.checks.total ? `${x.checks.done}/${x.checks.total}` : '', '', x.checks.total ? '验收标准' : '验收未写'],
-      2: [controls ? String(controls) : '', '', controls ? '控件' : meaningful(body(d, '2.1')) ? '已有总纲' : '未开始'],
-      3: [x.tasks.total ? `${x.tasks.done}/${x.tasks.total}` : '', x.tasks.waiting ? 'warn' : '', x.tasks.total ? (x.tasks.waiting ? `待确认 ${x.tasks.waiting}` : '任务完成') : '未拆任务'],
-      4: [x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', issues ? 'err' : x.manual.filled < x.manual.total ? 'warn' : '',
-        x.manual.total + x.auto.total ? [x.manual.total ? '人工确认' : '程序自测', x.manual.fail + x.auto.fail ? `NG ${x.manual.fail + x.auto.fail}` : '', x.issues.open ? `问题 ${x.issues.open}` : ''].filter(Boolean).join(' · ') : '未开始'],
-      5: [meaningful(d.h2['5']?.body) ? '✓' : '', '', meaningful(d.h2['5']?.body) ? '已生成' : '未生成'],
-    };
+    const info = stageInfo(d);
     const meta = [['应用', d.app], ['创建', d.created], ['关闭', d.closed]].filter(([, v]) => v)
       .map(([k, v]) => `<div class="fb-meta-item"><i>${k}</i>${esc(v)}</div>`).join('');
-    const stages = STAGES.filter((s) => s.k !== '0' || d.h2['0']).map((s) => {
-      const i = STAGES.indexOf(s), [b, tone, sum] = info[s.k];
-      const pos = i < cur ? 'past' : i === cur ? 'current' : 'future';
-      // 开发阶段常驻 T 状态小标签（点击跳到路线图对应节点）；左侧直接展开各阶段章节，无需点击即可查看与跳转。
-      const chips = s.k === '3' && d.tasks.length ? `<div class="fb-tchips">${d.tasks.map((t) => `<button class="fb-tchip t-${t.state}" data-tjump="${esc(t.id)}" title="${esc(`${t.id} ${t.title}\n${TASK_NAME[t.state]}${t.raw && t.raw !== TASK_NAME[t.state] ? '：' + t.raw : ''}`)}">${esc(t.id)}</button>`).join('')}</div>` : '';
+    const stages = STAGES.map((s) => {
+      const { badge: b, tone, sum } = info[s.k], pos = stagePos(d, s);
+      // 探讨 R 与开发 T 使用同尺寸小块；完整记录标题放在悬停提示，点击仍按原行号定位。
+      let chips = s.k === '3' && d.tasks.length ? `<div class="fb-tchips">${d.tasks.map((t) => `<button class="fb-tchip t-${t.state}" data-tjump="${esc(t.id)}" title="${esc(`${t.id} ${t.title}\n${TASK_NAME[t.state]}${t.raw && t.raw !== TASK_NAME[t.state] ? '：' + t.raw : ''}`)}">${esc(t.id)}</button>`).join('')}</div>` : '';
+      if (s.k === '0' && d.talks.length) chips = `<div class="fb-tchips fb-rchips">${d.talks.map((r) => {
+        const pending = r.items.some((it) => it.key.startsWith('待') && isPending(it.value));
+        return `<button class="fb-tchip${pending ? ' t-waiting' : ''}" data-jump="${r.n}" data-stage="0" title="${esc(r.title)}${pending ? '（待确认）' : ''}">${esc(r.title.match(/^R\d+/)[0])}</button>`;
+      }).join('')}</div>`;
       const toc = chapters(d, s.k);
       return `<div class="fb-stage-item ${pos}">
-        <button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
+        <button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${s.k === 'overview' ? '' : s.k + '. '}${s.name} / ${s.en}：${{ ovw: '档案概览', current: '当前阶段', past: '已过阶段', future: '未到阶段' }[pos]}">
         <span class="fb-stage-dot" aria-hidden="true"></span>
-        <span class="fb-stage-name">${s.name}${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</span>
-        <span class="fb-stage-sum">${esc(sum)}</span></button>
+        <span class="fb-stage-name">${stageName(s)}</span>
+        <span class="fb-stage-meta"><span class="fb-stage-sum" title="${esc(sum)}">${esc(sum)}</span>${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</span></button>
         ${chips}${toc.length ? `<ol class="fb-toc">${toc.map((c) => `<li><button class="${c.filled ? '' : 'blank'}" data-jump="${c.n}" data-stage="${s.k}" title="${esc(c.title)}${c.filled ? '' : '（未填写）'}">${esc(c.title)}</button></li>`).join('')}</ol>` : ''}
       </div>`;
     }).join('');
@@ -462,10 +488,32 @@ window.FeatBoard = (() => {
     }).join('')}</div>`;
   }
 
-  /** 探讨页（§0）。 */
+  /**
+   * 无编号概览页：汇总 1–5 阶段进度、§1.2 目标与 §1.4 流程图引用。
+   * 阶段格可进入对应章节，窄栏改纵向；探讨记录在独立的第 0 章查看。
+   */
+  function pageOverview(d) {
+    const info = stageInfo(d);
+    const tiles = STAGES.filter((s) => s.k !== 'overview' && s.k !== '0').map((s) => {
+      const it = info[s.k], pos = stagePos(d, s);
+      const tone = it.tone === 'err' ? 'err' : it.tone === 'warn' ? 'warn' : 'ok';
+      const mark = it.total ? ring(it.done, it.total, tone)
+        : `<span class="fb-pipe-mark" aria-hidden="true">${pos === 'past' ? '✓' : pos === 'current' ? '●' : s.k}</span>`;
+      return `<button class="fb-pipe-step ${pos}" data-tab="${s.k}" title="进入 ${s.k}. ${s.name} / ${s.en}">
+        ${mark}<span class="fb-pipe-text"><span class="fb-pipe-name">${stageName(s)}</span><span class="fb-pipe-sum">${esc(it.sum)}</span></span></button>`;
+    }).join('');
+    const pipe = `<section class="fb-card"><header class="fb-card-head"><h3>阶段进度</h3><span class="spacer"></span></header>
+      <div class="fb-pipe" role="list">${tiles}</div></section>`;
+    const flows = flowChips(d);
+    return `${pipe}
+      ${card(d, '1.2', '目标', mdBody(d, body(d, '1.2'), 'smallcat-feat-1-new'))}
+      ${flows ? card(d, '1.4', '影响的流程图', flows) : ''}`;
+  }
+
+  /** 第 0 章探讨页：按原记录行号展示 R 记录，无记录时给出建档命令；与概览页独立。 */
   function page0(d) {
-    const s = d.h2['0'];
-    return `<section class="fb-card" data-line="${s.n}"><header class="fb-card-head"><h3><span class="fb-no">§0</span>探讨记录</h3><span class="spacer"></span>${src(s.n)}</header>
+    const section = d.h2['0'];
+    return `<section class="fb-card" data-line="${section ? section.n : ''}"><header class="fb-card-head"><h3><span class="fb-no">§0</span>探讨记录</h3><span class="spacer"></span>${section ? src(section.n) : ''}</header>
       ${d.talks.length ? talkCards(d.talks) : empty('还没有探讨记录', 'smallcat-feat-1-new')}</section>`;
   }
 
@@ -870,7 +918,7 @@ window.FeatBoard = (() => {
       ${meaningful(lines) ? `<div class="fb-prose release">${md(lines.map((l) => l.t).join('\n'))}</div>` : empty('关闭 Feat 时生成', 'smallcat-feat-5-close')}</section>`;
   }
 
-  const PAGES = { 0: page0, 1: page1, 2: page2, 3: page3, 4: page4, 5: page5 };
+  const PAGES = { overview: pageOverview, 0: page0, 1: page1, 2: page2, 3: page3, 4: page4, 5: page5 };
 
   // ---------------- 主渲染 ----------------
 
@@ -895,7 +943,7 @@ window.FeatBoard = (() => {
     const d = model(api.text());
     const fresh = path !== st.path;
     if (fresh) Object.assign(st, { path, tab: d.stage, selectedT: '', onlyTodo: false, open: new Set(), openTouched: false });
-    if (!STAGES.some((s) => s.k === st.tab) || (st.tab === '0' && !d.h2['0'])) st.tab = d.stage;
+    if (!STAGES.some((s) => s.k === st.tab)) st.tab = d.stage;
     const key = st.focusKey || (box.contains(active) ? active.dataset.key : '');
     st.focusKey = '';
     const scroll = fresh ? 0 : box.scrollTop;
@@ -937,9 +985,33 @@ window.FeatBoard = (() => {
     if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }); }
   }
 
-  /** 事件委托：页签、动作、复制、定位原文、节点引用、§4.2 快捷键与备注提交。 */
+  /** 事件委托：正文滚动切章、页签、动作、复制、原文定位、节点引用与测试表单。 */
   function bind() {
     const box = $('feat-board');
+    let lastWheel = -Infinity, wheelTurned = false;
+    // 正文到边界后继续滚动才切相邻章；一次连续手势只切一章，向上切换落在上一章末尾。
+    box.addEventListener('wheel', (e) => {
+      if (!e.target.closest('.fb-main') || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      if (e.target.closest('input, textarea, select, [contenteditable="true"]') || (box.contains(document.activeElement) && document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))) return;
+      const now = performance.now();
+      if (now - lastWheel > 180) wheelTurned = false;
+      lastWheel = now;
+      if (wheelTurned) { e.preventDefault(); return; }
+      const down = e.deltaY > 0;
+      // 表格、代码等内部滚动区优先消费滚轮，避免在正文边界抢走它们的滚动。
+      for (let el = e.target; el && el !== box; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY) && (down ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 1)) return;
+      }
+      if (down ? box.scrollTop + box.clientHeight < box.scrollHeight - 1 : box.scrollTop > 1) return;
+      const next = STAGES[STAGES.findIndex((s) => s.k === st.tab) + (down ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      wheelTurned = true;
+      st.tab = next.k;
+      st.selectedT = '';
+      render();
+      box.scrollTop = down ? 0 : Math.max(0, box.scrollHeight - box.clientHeight);
+    }, { passive: false });
     box.addEventListener('click', (e) => {
       const jump = e.target.closest('[data-jump]');
       if (jump) {
