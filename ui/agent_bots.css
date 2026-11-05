@@ -22,12 +22,12 @@ html[data-theme="dark"] .fc-bot[data-state="has"] { --bs: #d0d7de; }
 @media (prefers-reduced-motion: reduce) { .fc-bot .hd { animation: none !important; } }
 /* ---------- Feat 控件页：任务卡片上的实时 Agent（agent_bots.js decorate） ---------- */
 /* 状态色：蓝 运行中、紫 多个 subagent、黄 等你确认、红 异常、灰 空闲（进程在但本轮已结束） */
-[data-fbx], .fbx-chip, .fbx-now { --fx: #8c959f; }
-[data-fbx="run"], .fbx-chip[data-state="run"], .fbx-now[data-state="run"] { --fx: #4c8dff; }
-[data-fbx="multi"], .fbx-chip[data-state="multi"], .fbx-now[data-state="multi"] { --fx: #a371f7; }
-[data-fbx="wait"], .fbx-chip[data-state="wait"], .fbx-now[data-state="wait"] { --fx: #d4a72c; }
-[data-fbx="err"], .fbx-chip[data-state="err"], .fbx-now[data-state="err"] { --fx: #cf222e; }
-[data-fbx="done"], .fbx-chip[data-state="done"], .fbx-now[data-state="done"] { --fx: #3fb950; }
+[data-fbx], .fbx-chip, .fbx-rbot { --fx: #8c959f; }
+[data-fbx="run"], .fbx-chip[data-state="run"], .fbx-rbot[data-state="run"] { --fx: #4c8dff; }
+[data-fbx="multi"], .fbx-chip[data-state="multi"], .fbx-rbot[data-state="multi"] { --fx: #a371f7; }
+[data-fbx="wait"], .fbx-chip[data-state="wait"], .fbx-rbot[data-state="wait"] { --fx: #d4a72c; }
+[data-fbx="err"], .fbx-chip[data-state="err"], .fbx-rbot[data-state="err"] { --fx: #cf222e; }
+[data-fbx="done"], .fbx-chip[data-state="done"], .fbx-rbot[data-state="done"] { --fx: #3fb950; }
 /* 发光：任务图卡片、阶段栏 T 小标、任务详情行 */
 #feat-board .fb-node.fbx-on { box-shadow: 0 0 0 2px var(--fx), 0 0 14px 3px color-mix(in srgb, var(--fx) 55%, transparent) !important; }
 #feat-board .fb-node.fbx-on:is([data-fbx="run"], [data-fbx="multi"]) { animation: fbx-live 1.4s ease-in-out infinite; }
@@ -43,12 +43,12 @@ html[data-theme="dark"] .fc-bot[data-state="has"] { --bs: #d0d7de; }
 .fbx-chip em { font-style: normal; font-family: Consolas, monospace; font-size: 10.5px; color: var(--fx); }
 .fbx-face { position: relative; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--fx) 20%, transparent); color: var(--fx); flex-shrink: 0; }
 .fbx-face svg { width: 13px; height: 13px; overflow: visible; }
-.fbx-face .hd, .fbx-face .an, .fbx-face .ar { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
-.fbx-face .ab, .fbx-face .ey { fill: currentColor; stroke: none; }
-.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face { animation: fbx-bob 1.3s ease-in-out infinite; }
-.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face::before { content: ""; position: absolute; inset: -3px; border: 2px solid transparent; border-top-color: var(--fx); border-radius: 50%; animation: fbx-spin 1.1s linear infinite; }
-.fbx-chip[data-state="wait"] .fbx-face::after { content: "!"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 12px; text-align: center; animation: fbx-blink .9s steps(2, jump-none) infinite; }
-.fbx-chip[data-state="err"] .fbx-face::after { content: "×"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 10px; font-weight: 700; line-height: 11px; text-align: center; }
+:is(.fbx-face, .fbx-rbot) :is(.hd, .an, .ar) { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+:is(.fbx-face, .fbx-rbot) :is(.ab, .ey) { fill: currentColor; stroke: none; }
+.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face, .fbx-rbot:is([data-state="run"], [data-state="multi"]) svg { animation: fbx-bob 1.3s ease-in-out infinite; }
+:is(.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face, .fbx-rbot:is([data-state="run"], [data-state="multi"]))::before { content: ""; position: absolute; inset: -3px; border: 2px solid transparent; border-top-color: var(--fx); border-radius: 50%; animation: fbx-spin 1.1s linear infinite; }
+:is(.fbx-chip[data-state="wait"] .fbx-face, .fbx-rbot[data-state="wait"])::after { content: "!"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 12px; text-align: center; animation: fbx-blink .9s steps(2, jump-none) infinite; }
+:is(.fbx-chip[data-state="err"] .fbx-face, .fbx-rbot[data-state="err"])::after { content: "×"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 10px; font-weight: 700; line-height: 11px; text-align: center; }
 /* 活动气泡：新活动冒出约 2.6 秒 */
 .fbx-say { position: absolute; right: 0; bottom: calc(100% + 6px); max-width: 22em; padding: 3px 8px; border-radius: 6px; background: var(--fg); color: var(--bg); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; animation: fbx-say 2.6s forwards; }
 .fbx-say.k-edit, .fbx-say.k-msg { background: #0969da; color: #fff; }
@@ -56,17 +56,33 @@ html[data-theme="dark"] .fc-bot[data-state="has"] { --bs: #d0d7de; }
 /* 任务详情行尾的机器人 */
 .fbx-inline { display: inline-flex; gap: 4px; align-self: center; margin-left: auto; }
 .fbx-inline .fbx-chip { box-shadow: none; }
-/* 栏顶「正在做」 */
-.fbx-now { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 340px; height: 24px; padding: 0 10px 0 3px; border: 1px solid var(--fx); border-radius: 12px; background: color-mix(in srgb, var(--fx) 10%, var(--bg)); color: var(--fg); font-size: 12px; white-space: nowrap; }
-.fbx-now b { font-family: Consolas, monospace; font-weight: 600; color: var(--fx); }
-.fbx-now .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); }
-.fbx-now:is([data-state="run"], [data-state="multi"]) .fbx-face { animation: fbx-bob 1.3s ease-in-out infinite; }
+/* 阶段轴机器人：站在档案当前阶段的圆点上（不透明底盖住圆点），开发阶段标了任务时缩小挪到 T 小标右上角。
+   坐标由脚本按目标元素算出，换位靠 left / top 过渡；.fbx-jump 时（换 Feat、首次出现）直接落位。 */
+.fbx-rbot { position: absolute; z-index: 3; display: grid; place-items: center; width: 20px; height: 20px; box-sizing: border-box;
+  border: 1.5px solid var(--fx); border-radius: 50%; background: color-mix(in srgb, var(--fx) 16%, var(--bg)); color: var(--fx);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fx) 22%, transparent), 0 2px 6px rgba(0, 0, 0, .18); transform: translate(-50%, -50%); cursor: pointer;
+  transition: left .55s cubic-bezier(.3, .7, .2, 1), top .55s cubic-bezier(.3, .7, .2, 1), width .3s, height .3s; }
+.fbx-rbot.on-t { width: 16px; height: 16px; }
+.fbx-rbot.fbx-jump { transition: none; }
+.fbx-rbot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#feat-board .fbx-rbot svg { width: 13px; height: 13px; overflow: visible; }
+#feat-board .fbx-rbot.on-t svg { width: 11px; height: 11px; }
+.fbx-rbot .fbx-say { left: -6px; right: auto; max-width: 18em; }
+/* 机器人所在阶段的摘要行换成最近活动 */
+.fbx-busy .fb-stage-sum { display: none; }
+.fbx-sum { min-width: 0; flex: 1 1 0; font-size: 11px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 窄栏时阶段轴放到上方且取消吸顶，改为相对定位以便机器人按阶段轴坐标落位 */
+@container board (max-width: 520px) {
+  #feat-board .fb-rail-in { position: relative; }
+  .fbx-rbot { width: 16px; height: 16px; }
+}
 @keyframes fbx-bob { 50% { transform: translateY(-1.5px); } }
 @keyframes fbx-spin { to { transform: rotate(360deg); } }
 @keyframes fbx-blink { 50% { opacity: .25; } }
 @keyframes fbx-say { 0% { opacity: 0; transform: translateY(4px); } 10%, 82% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  #feat-board .fb-node.fbx-on, .fbx-chip *, .fbx-chip *::before, .fbx-chip *::after, .fbx-say, .fbx-now * { animation: none !important; }
+  #feat-board .fb-node.fbx-on, .fbx-chip *, .fbx-chip *::before, .fbx-chip *::after, .fbx-say, .fbx-rbot, .fbx-rbot *, .fbx-rbot::before, .fbx-rbot::after { animation: none !important; }
+  .fbx-rbot { transition: none !important; }
 }
 
 /* 客：同一套颜色，后面跟「客 N」 */

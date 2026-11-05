@@ -95,36 +95,56 @@
   });
   document.getElementById('btn-flow-guest').addEventListener('click', () => open(urgent(flowParts(st.cur).guests)));
 
-  // ---------------- Feat 控件页：任务卡片上的实时 Agent ----------------
-  // 会话用 `flowctl focus <Feat档案>#T<n>` 标记正在做的任务（后端 live.task）；子任务 T3.1 显示在 T3 卡片上。
-  // 控件页每次重绘都替换 DOM，这里用 MutationObserver 在重绘后补上装饰：
-  // 任务图卡片发光 + 卡片右上角机器人（单击打开会话）+ 新活动气泡；阶段栏 T 小标与任务详情行同步发光。
-  // 栏顶「正在做」条显示本 Feat 运行中会话的最近一条活动。
+  // ---------------- Feat 控件页：阶段轴机器人与任务卡片上的实时 Agent ----------------
+  // 阶段轴：本 Feat 有运行中的会话（进程在）时，左侧阶段轴当前阶段的圆点上站一个机器人（多个会话取最紧急的，
+  //   其余列在悬停提示里），该阶段的摘要行换成它的最近活动，新活动从机器人上冒气泡。档案处于开发阶段、
+  //   且该会话用 `flowctl focus <Feat档案>#T<n>` 标了任务时，机器人挪到对应 T 小标右上角。
+  //   阶段推进或换 T 时机器人沿轴滑到新位置；单击打开该会话。
+  // 任务卡片：标了任务的会话在开发页任务图卡片上发光，卡片右上角显示机器人小卡（子任务 T3.1 显示在 T3 上），
+  //   阶段栏 T 小标与任务详情行同步发光；单击机器人小卡打开会话。
+  // 控件页每次重绘都替换 DOM，这里用 MutationObserver 在重绘后补上装饰。阶段轴机器人始终是同一个元素：
+  //   重绘后先按旧坐标放进新的阶段轴，再改到新坐标，所以由重绘引起的换位也有挪动过程。
   /** 会话 id → 最近一条活动。 */
   const lastAct = new Map();
   const KIND = { prompt: '提问', read: '读取', edit: '编辑', cmd: '命令', commit: '提交', worker: '派出', tool: '', msg: '协作', note: '通知', compact: '压缩' };
   const actText = (a) => (a ? [KIND[a.kind] ?? '', a.text].filter(Boolean).join(' ') : '');
   const escH = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  /** 排序比较：先按紧急程度，并列取最早创建。 */
+  const byUrgency = (a, b) => RANK[stateOf(a)] - RANK[stateOf(b)] || a.created - b.created;
   /** 运行中、正在处理当前 Feat 某个任务的会话，按紧急程度排序。 */
   function taskSessions(featPath) {
     const k = key(featPath);
-    return [...sessions.values()].filter((s) => s.running && s.task && key(s.task.feat) === k)
-      .sort((a, b) => RANK[stateOf(a)] - RANK[stateOf(b)] || a.created - b.created);
+    return [...sessions.values()].filter((s) => s.running && s.task && key(s.task.feat) === k).sort(byUrgency);
+  }
+  /** 运行中、属于当前 Feat（关联了该 Feat，或正在做它的某个任务）的会话，按紧急程度排序。 */
+  function featSessions(featPath) {
+    const k = key(featPath);
+    return [...sessions.values()].filter((s) => s.running && (key(s.feat) === k || (s.task && key(s.task.feat) === k))).sort(byUrgency);
+  }
+  /** 会话「正在做」的一行文字：等你确认 / 异常优先，其次最近活动，都没有时用状态名。 */
+  function doingText(s) {
+    const st0 = stateOf(s);
+    return st0 === 'wait' || st0 === 'err' ? TEXT[st0] : actText(lastAct.get(s.id)) || TEXT[st0];
   }
   const parentT = (t) => t.split('.')[0];
 
-  /** 清掉上一次的装饰（发光类与插入的元素），重绘后的新 DOM 本来就没有。 */
+  /** 清掉上一次的装饰（发光类、摘要替换与插入的元素），重绘后的新 DOM 本来就没有；阶段轴机器人由 placeRailBot 管。 */
   function clearBoard(board) {
     board.querySelectorAll('.fbx-on').forEach((el) => { el.classList.remove('fbx-on'); delete el.dataset.fbx; });
-    board.querySelectorAll('.fbx-layer, .fbx-inline').forEach((el) => el.remove());
+    board.querySelectorAll('.fbx-busy').forEach((el) => el.classList.remove('fbx-busy'));
+    board.querySelectorAll('.fbx-layer, .fbx-inline, .fbx-sum').forEach((el) => el.remove());
   }
 
-  /** 在控件页上画出正在处理任务的会话；输入为当前 Feat 路径，没有会话时只清理。 */
+  /**
+   * 在控件页上画出本 Feat 的会话：阶段轴机器人 + 正在处理任务的会话（卡片、T 小标、详情行）。
+   * 输入取当前 Feat 路径；没有会话时只清理。控件页未显示（取不到坐标）时记 pendingPlace，由轮询在显示后补画。
+   */
   function decorate() {
     const board = document.getElementById('feat-board');
     if (!board) return;
     observer.disconnect();
     try {
+      pendingPlace = false;
       const featPath = window.FeatPane?.curPath() || '';
       const list = featPath ? taskSessions(featPath) : [];
       clearBoard(board);
@@ -149,7 +169,7 @@
           dock.style.top = node.offsetTop + 'px';
           dock.innerHTML = ss.slice(0, 3).map((s) => chip(s, s.task.task !== t)).join('');
           layer.appendChild(dock);
-        }
+        } else if (node) pendingPlace = true;
         board.querySelectorAll(`.fb-tchip[data-tjump="${CSS.escape(t)}"]`).forEach(mark);
         // 任务详情列表：行内发光 + 行尾机器人
         for (const row of board.querySelectorAll('.fb-task-row')) {
@@ -161,7 +181,8 @@
           row.appendChild(inl);
         }
       }
-      renderNow(featPath, list);
+      placeRailBot(board, featPath, featPath ? featSessions(featPath) : []);
+      paintBubbles();
     } finally {
       observer.observe(board, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
     }
@@ -173,47 +194,109 @@
     return `<span class="fbx-chip" data-state="${st0}" data-sid="${escH(s.id)}" role="button" tabindex="0" title="${escH(tip)}">`
       + `<span class="fbx-face">${SVG}</span><span class="nm">${escH(s.title)}</span>${showSub ? `<em>${escH(s.task.task)}</em>` : ''}</span>`;
   }
-  /** 栏顶「正在做」：本 Feat 运行中的会话（优先在做任务的，其次主会话）的最近活动。 */
-  function renderNow(featPath, list) {
-    const el = document.getElementById('feat-agent-now');
-    const fm = featPath ? featMain(featPath) : null;
-    const s = list[0] || (fm && fm.running ? fm : null);
-    el.hidden = !s;
-    if (!s) return;
-    const a = lastAct.get(s.id), st0 = stateOf(s);
-    const doing = st0 === 'wait' ? '等你确认' : actText(a) || TEXT[st0];
-    const sig = [s.id, st0, s.task?.task, doing].join('|');
-    if (el.dataset.sig === sig) return;
-    el.dataset.sig = sig;
-    el.dataset.sid = s.id;
-    el.dataset.state = st0;
-    el.title = `「${s.title}」${s.task ? ' 正在做 ' + s.task.task : ''}：${TEXT[st0]}${a ? '\n最近：' + actText(a) : ''}\n点击打开会话`;
-    el.innerHTML = `<span class="fbx-face">${SVG}</span>${s.task ? `<b>${escH(s.task.task)}</b>` : ''}<span class="tx">${escH(doing)}</span>`;
+  /** 阶段轴机器人：重绘后复用同一元素，保留上次坐标作为挪动起点。 */
+  const rbot = document.createElement('span');
+  rbot.className = 'fbx-rbot';
+  rbot.setAttribute('role', 'button');
+  rbot.tabIndex = 0;
+  rbot.innerHTML = SVG;
+  /** 控件页未显示、取不到坐标时置位，由每秒轮询在显示后补画。 */
+  let pendingPlace = false;
+
+  /**
+   * 把阶段轴机器人放到位；输入为控件页根节点、当前 Feat 路径与本 Feat 运行中的会话（已按紧急程度排序）。
+   * 位置跟最紧急的会话走：档案当前阶段是开发、该会话标了本 Feat 的 T 且 T 小标可见 → T 小标右上角；
+   * 否则 → 档案当前阶段的圆点。机器人所在阶段的摘要行换成最近活动。
+   * 同一 Feat 内换位时从旧坐标过渡到新坐标；换 Feat 或首次出现直接落位。没有会话或没有阶段轴时移除。
+   */
+  function placeRailBot(board, featPath, list) {
+    const railIn = board.querySelector('.fb-rail-in');
+    const cur = railIn?.querySelector('.fb-stage-item.current');
+    const s = list[0];
+    if (!s || !cur) { rbot.remove(); delete rbot.dataset.feat; return; }
+    if (!railIn.getClientRects().length) { pendingPlace = true; return; }
+    const k = key(featPath);
+    let target = cur.querySelector('.fb-stage-dot'), onT = false;
+    if (s.task && key(s.task.feat) === k && cur.querySelector('.fb-stage[data-tab="3"]')) {
+      const tchip = cur.querySelector(`.fb-tchip[data-tjump="${CSS.escape(parentT(s.task.task))}"]`);
+      if (tchip?.getClientRects().length) { target = tchip; onT = true; }
+    }
+    // 摘要行：当前阶段项的摘要换成最近活动（窄栏时摘要行整体隐藏，只剩悬停提示）
+    cur.classList.add('fbx-busy');
+    const sum = document.createElement('span');
+    sum.className = 'fbx-sum';
+    sum.textContent = (onT ? s.task.task + ' ' : '') + doingText(s);
+    sum.title = sum.textContent;
+    cur.querySelector('.fb-stage-meta').prepend(sum);
+
+    const st0 = stateOf(s);
+    if (rbot.dataset.sid !== s.id) rbot.querySelector(':scope > .fbx-say')?.remove();
+    const lines = list.map((x) => {
+      const a = lastAct.get(x.id), t = x.task && key(x.task.feat) === k ? ' ' + x.task.task : '';
+      return `「${x.title}」${t}：${TEXT[stateOf(x)]}${a ? '，最近：' + actText(a) : ''}`;
+    });
+    rbot.dataset.state = st0;
+    rbot.dataset.sid = s.id;
+    rbot.title = `${lines.join('\n')}\n点击打开「${s.title}」`;
+    rbot.setAttribute('aria-label', `${s.title}：${TEXT[st0]}，点击打开会话`);
+
+    const r0 = railIn.getBoundingClientRect(), r = target.getBoundingClientRect();
+    const x = Math.round((onT ? r.right - 2 : r.left + r.width / 2) - r0.left);
+    const y = Math.round((onT ? r.top + 2 : r.top + r.height / 2) - r0.top);
+    const jump = rbot.dataset.feat !== k;
+    if (rbot.parentNode !== railIn) railIn.appendChild(rbot);
+    rbot.classList.toggle('fbx-jump', jump);
+    // 先让浏览器按旧坐标算一次样式，随后改坐标才会触发过渡（重绘后重新插入的元素也一样）
+    rbot.getBoundingClientRect();
+    rbot.classList.toggle('on-t', onT);
+    rbot.style.left = x + 'px';
+    rbot.style.top = y + 'px';
+    if (jump) { rbot.getBoundingClientRect(); rbot.classList.remove('fbx-jump'); rbot.dataset.feat = k; }
   }
-  /** 新活动：在对应机器人上冒一个气泡（约 2.6 秒淡出）。 */
+  /** 会话 id → 显示期内的活动气泡 { text, kind, t0 }：重绘会重建任务卡片小卡，气泡按已过时间续上，不从头播放。 */
+  const bubbles = new Map();
+  const SAY_MS = 2800;
+  /** 把显示期内的气泡画到对应机器人上（任务卡片小卡与阶段轴机器人），已过期的移除。 */
+  function paintBubbles() {
+    const now = performance.now();
+    for (const [id, b] of bubbles) {
+      const elapsed = now - b.t0, hosts = [...document.querySelectorAll(`#feat-board .fbx-layer .fbx-chip[data-sid="${CSS.escape(id)}"]`)];
+      if (rbot.isConnected && rbot.dataset.sid === id) hosts.push(rbot);
+      if (elapsed >= SAY_MS) bubbles.delete(id);
+      for (const c of hosts) {
+        const old = c.querySelector(':scope > .fbx-say');
+        if (elapsed >= SAY_MS) { old?.remove(); continue; }
+        if (old?.dataset.t0 === String(b.t0)) continue;
+        old?.remove();
+        const el = document.createElement('span');
+        el.className = 'fbx-say k-' + b.kind;
+        el.dataset.t0 = b.t0;
+        el.textContent = b.text;
+        el.style.animationDelay = -elapsed + 'ms';
+        c.appendChild(el);
+      }
+    }
+  }
+  /** 新活动：在对应机器人上冒一个气泡（约 2.6 秒淡出），到期后清掉。 */
   function say(id, a) {
     const text = actText(a);
     if (!text) return;
-    for (const c of document.querySelectorAll(`#feat-board .fbx-layer .fbx-chip[data-sid="${CSS.escape(id)}"]`)) {
-      c.querySelector('.fbx-say')?.remove();
-      const b = document.createElement('span');
-      b.className = 'fbx-say k-' + a.kind;
-      b.textContent = text.length > 40 ? text.slice(0, 40) + '…' : text;
-      c.appendChild(b);
-      setTimeout(() => b.remove(), 2800);
-    }
+    bubbles.set(id, { text: text.length > 40 ? text.slice(0, 40) + '…' : text, kind: a.kind, t0: performance.now() });
+    paintBubbles();
+    setTimeout(paintBubbles, SAY_MS + 50);
   }
   let queued = false;
   const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; decorate(); }); } };
-  const observer = new MutationObserver(schedule);
+  /** 变动只发生在本脚本插入的装饰里（气泡出现 / 消失等）时不重画，否则重画会立刻清掉刚冒出的气泡。 */
+  const ours = (n) => !!n.closest?.('.fbx-layer, .fbx-inline, .fbx-rbot, .fbx-sum');
+  const observer = new MutationObserver((muts) => { if (muts.some((m) => !ours(m.target))) schedule(); });
   document.getElementById('feat-board').addEventListener('click', (e) => {
-    const c = e.target.closest('.fbx-chip');
+    const c = e.target.closest('.fbx-chip, .fbx-rbot');
     if (!c) return;
     e.stopPropagation();
     e.preventDefault();
     open(sessions.get(c.dataset.sid));
   }, true);
-  document.getElementById('feat-agent-now').addEventListener('click', (e) => open(sessions.get(e.currentTarget.dataset.sid)));
   window.addEventListener('resize', schedule);
 
   invoke('agent_list').then((list) => {
@@ -224,16 +307,15 @@
   listen('agent-removed', (e) => { sessions.delete(e.payload.id); lastAct.delete(e.payload.id); render(); schedule(); });
   listen('agent-act', (e) => {
     lastAct.set(e.payload.id, e.payload.act);
-    const s = sessions.get(e.payload.id);
-    if (s?.task && key(s.task.feat) === key(window.FeatPane?.curPath() || '')) { decorate(); say(e.payload.id, e.payload.act); }
-    else if (s && s.feat && key(s.feat) === key(window.FeatPane?.curPath() || '')) renderNow(FeatPane.curPath(), taskSessions(FeatPane.curPath()));
+    const s = sessions.get(e.payload.id), k = key(window.FeatPane?.curPath() || '');
+    if (s && k && (key(s.feat) === k || (s.task && key(s.task.feat) === k))) { decorate(); say(e.payload.id, e.payload.act); }
   });
-  // 当前图 / Feat 切换没有统一事件，按秒轮询；内容不变时 paint / renderNow 不改 DOM
+  // 当前图 / Feat 切换没有统一事件，按秒轮询；内容不变时 paint 不改 DOM。控件页从隐藏变为显示时补画（pendingPlace）
   let lastFeat = '';
   setInterval(() => {
     render();
     const f = window.FeatPane?.curPath() || '';
-    if (f !== lastFeat) { lastFeat = f; schedule(); }
+    if (f !== lastFeat || pendingPlace) { lastFeat = f; schedule(); }
   }, 1000);
   render();
 })();
