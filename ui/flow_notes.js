@@ -12,19 +12,41 @@
     var panelTarget = null;
     var panelRoot = null;
     var panelEnabled = null;
+    var OPEN_KEY = 'fc-notes-open';
+    var ANCHOR_KEY = 'fc-notes-anchored';
+    var panelWanted = localStorage.getItem(OPEN_KEY) === '1'; // 用户全局开关，不随宿主节点销毁而关闭。
+    var panelAnchored = localStorage.getItem(ANCHOR_KEY) === '1'; // 与浮窗开关独立，跨图和重启保留。
+    var PANEL_GAP = 12; // 与画布右下角缩略导航的边缘留白一致。
 
-    /** 将悬浮卡限制在应用视口内；拖动和窗口缩小时保留可操作的标题栏。 */
+    /** 停靠时相对画布右上定位并留白；浮动时限制在应用视口内。 */
     function placePanel(left, top) {
-      var bounds = panelRoot.getBoundingClientRect();
-      panelRoot.style.left = Math.max(8, Math.min(left, window.innerWidth - bounds.width - 8)) + 'px';
-      panelRoot.style.top = Math.max(8, Math.min(top, window.innerHeight - bounds.height - 8)) + 'px';
+      panelRoot.classList.toggle('is-anchored', panelAnchored);
+      if (panelAnchored) {
+        var canvas = graph.container.getBoundingClientRect();
+        panelRoot.style.maxWidth = Math.max(0, graph.container.clientWidth - PANEL_GAP * 2) + 'px';
+        panelRoot.style.maxHeight = Math.max(0, graph.container.clientHeight - PANEL_GAP * 2) + 'px';
+        var width = panelRoot.getBoundingClientRect().width;
+        panelRoot.style.left = canvas.left + graph.container.clientWidth - width - PANEL_GAP + 'px';
+        panelRoot.style.top = canvas.top + PANEL_GAP + 'px';
+      } else {
+        panelRoot.style.maxWidth = '';
+        panelRoot.style.maxHeight = '';
+        var bounds = panelRoot.getBoundingClientRect();
+        panelRoot.style.left = Math.max(8, Math.min(left, window.innerWidth - bounds.width - 8)) + 'px';
+        panelRoot.style.top = Math.max(8, Math.min(top, window.innerHeight - bounds.height - 8)) + 'px';
+      }
       panelRoot.style.right = 'auto';
     }
-    window.addEventListener('resize', function () {
+    /** 画布或格式面板尺寸变化时跟随定位；未打开注释卡时不做布局操作。 */
+    function repositionPanel() {
       if (!panelRoot) return;
       var bounds = panelRoot.getBoundingClientRect();
       placePanel(bounds.left, bounds.top);
-    });
+    }
+    window.addEventListener('resize', repositionPanel);
+    new ResizeObserver(repositionPanel).observe(graph.container);
+    ui.addListener('formatWidthChanged', repositionPanel);
+    ui.addListener('sidebarWidthChanged', repositionPanel);
 
     function isNote(cell) {
       return !!cell && model.isVertex(cell) && /(?:^|;)(?:shape=note|note)(?:;|$)/.test(model.getStyle(cell) || '');
@@ -67,10 +89,13 @@
       '.fc-notes-head{display:flex;align-items:center;gap:8px;cursor:move;touch-action:none;user-select:none;margin-bottom:4px}' +
       '.fc-notes h2{flex:1;min-width:0;font-size:15px;margin:0;overflow-wrap:anywhere}' +
       '.fc-notes-head .geBtn{margin:0;min-width:28px;padding:2px 7px;cursor:pointer}' +
+      '.fc-notes-head .fc-notes-anchor[aria-pressed=true]{background:light-dark(#dbeafe,#243d58);border-color:#4493f8;color:light-dark(#174a8b,#b9d9ff);box-shadow:inset 0 0 0 1px #4493f8}' +
+      '.fc-notes.is-anchored .fc-notes-head{cursor:default}' +
       '.fc-notes-empty{padding:12px 0;opacity:.7}' +
       '.fc-notes-summary{opacity:.7;font-size:12px;margin-bottom:12px}' +
       '.fc-notes-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}' +
       '.fc-note-card{border-top:1px solid light-dark(#d0d7de,#505050);padding:12px 0}' +
+      '.fc-note-located{background:light-dark(#fff8e8,#332b1c);outline:1px solid #b7791f;outline-offset:-1px}' +
       '.fc-note-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}' +
       '.fc-note-caption{font-size:11px;opacity:.65;min-width:0}' +
       '.fc-note-content{overflow-wrap:anywhere;max-height:300px;overflow:auto;white-space:normal}' +
@@ -118,12 +143,18 @@
         });
       } finally { model.endUpdate(); }
     }
-    /** 关闭应用内卡片并释放引用，不影响 draw.io 自己的对话框。 */
-    function closePanel() {
+    /** 临时隐藏卡片并保存草稿，切图或宿主失效时不改变用户的全局打开偏好。 */
+    function hidePanel() {
       savePanelEdits();
       if (panelRoot) panelRoot.remove();
       panelRoot = null;
       panelTarget = null;
+    }
+    /** 用户主动关闭（含卡内 Esc）才记为全局关闭，固定开关独立保留。 */
+    function closePanel() {
+      panelWanted = false;
+      localStorage.setItem(OPEN_KEY, '0');
+      hidePanel();
     }
     function validPair(note, target) {
       return editable(note) && editable(target) && isNote(note) && isTarget(target) &&
@@ -185,6 +216,10 @@
     /** 在同一张悬浮卡中显示宿主注释；切换不抢画布焦点，添加时才聚焦编辑器。 */
     function open(target, editing, discardEdits) {
       if (!model.contains(target) || !isTarget(target)) return;
+      if (!panelWanted) {
+        panelWanted = true;
+        localStorage.setItem(OPEN_KEY, '1');
+      }
       if (!discardEdits) savePanelEdits();
       var root = panelRoot;
       panelEnabled = graph.isEnabled();
@@ -208,6 +243,18 @@
       var title = document.createElement('h2');
       title.textContent = (model.isEdge(target) ? '连线注释' : '节点注释') + ' · ' + target.id;
       header.appendChild(title);
+      var anchor = button('↗', function () {
+        panelAnchored = !panelAnchored;
+        localStorage.setItem(ANCHOR_KEY, panelAnchored ? '1' : '0');
+        anchor.setAttribute('aria-pressed', String(panelAnchored));
+        anchor.title = panelAnchored ? '解除右上固定' : '固定到画布右上角';
+        repositionPanel();
+      });
+      anchor.classList.add('fc-notes-anchor');
+      anchor.setAttribute('aria-label', '固定到画布右上角');
+      anchor.setAttribute('aria-pressed', String(panelAnchored));
+      anchor.title = panelAnchored ? '解除右上固定' : '固定到画布右上角';
+      header.appendChild(anchor);
       if (editable(target)) {
         var add = button('+', function () { addNote(target); });
         add.setAttribute('aria-label', '添加注释');
@@ -220,7 +267,7 @@
       header.appendChild(close);
       // 只拖标题空白/文字，按钮仍保持正常点击；捕获指针防止拖出卡片后中断。
       header.addEventListener('pointerdown', function (ev) {
-        if (ev.button !== 0 || ev.target.closest('button')) return;
+        if (panelAnchored || ev.button !== 0 || ev.target.closest('button')) return;
         var bounds = root.getBoundingClientRect();
         var dx = ev.clientX - bounds.left, dy = ev.clientY - bounds.top;
         header.setPointerCapture(ev.pointerId);
@@ -293,7 +340,7 @@
         });
         if (editable(note) && editable(target)) {
           actions.appendChild(button('编辑', edit));
-          actions.appendChild(button('解绑', function () { closePanel(); detach(note); }));
+          actions.appendChild(button('解绑', function () { hidePanel(); detach(note); }));
           actions.appendChild(button('删除', function () {
             if (!editable(note) || !editable(target)) return;
             graph.removeCells([note]);
@@ -308,13 +355,43 @@
       if (focusEditor) focusEditor();
     }
 
-    // 空白点击不关闭卡片；选中另一个节点/连线时直接复用卡片，并保存当前草稿。
-    graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
-      if (!panelRoot) return;
+    /** 定位挂载注释正文：打开宿主卡片并标出指定注释，不进入编辑或修改图文件。 */
+    function reveal(note) {
+      if (!attached(note)) return;
+      open(model.getParent(note));
+      var body = Array.from(panelRoot.querySelectorAll('.fc-note-content')).find(function (el) {
+        return el.dataset.noteId === note.id;
+      });
+      var card = body.closest('.fc-note-card');
+      card.classList.add('fc-note-located');
+      card.scrollIntoView({ block: 'nearest' });
+    }
+
+    /** 全局开关打开时跟随所选节点或连线；没有可展示的宿主时等待选中，不记忆具体节点。 */
+    function followSelection() {
+      if (!panelWanted) return;
       var target = graph.getSelectionCell();
       if (attached(target)) target = model.getParent(target);
       if (!isTarget(target) || target === panelTarget) return;
       open(target);
+    }
+    // 空白点击不关闭卡片；选点自动恢复/切换，保存当前草稿。
+    graph.getSelectionModel().addListener(mxEvent.CHANGE, followSelection);
+    // 同源主窗口、独立窗口与历史画布共用开关，其他窗口改变时同步当前已选宿主。
+    window.addEventListener('storage', function (ev) {
+      if (ev.key === OPEN_KEY) {
+        panelWanted = ev.newValue === '1';
+        if (panelWanted) followSelection();
+        else hidePanel();
+      } else if (ev.key === ANCHOR_KEY) {
+        panelAnchored = ev.newValue === '1';
+        if (panelRoot) {
+          var anchor = panelRoot.querySelector('.fc-notes-anchor');
+          anchor.setAttribute('aria-pressed', String(panelAnchored));
+          anchor.title = panelAnchored ? '解除右上固定' : '固定到画布右上角';
+          repositionPanel();
+        }
+      }
     });
 
     function cancelPick() {
@@ -407,13 +484,14 @@
         if (!seen[id]) { graph.removeCellOverlay(marks[id].cell, marks[id].overlay); delete marks[id]; }
       });
       if (pending && (!model.contains(pending) || !editable(pending))) cancelPick();
-      if (panelTarget && !model.contains(panelTarget)) closePanel();
-      else if (panelRoot && panelEnabled !== graph.isEnabled()) open(panelTarget);
+      if (panelTarget && !model.contains(panelTarget)) hidePanel();
+      if (!panelRoot) followSelection();
+      else if (panelEnabled !== graph.isEnabled()) open(panelTarget);
     }
     // setGraphXml/切页会更换根；可见性覆盖必须在首次读取 cell state 前安装。
     graph.refresh();
     refresh();
-    return { refresh: refresh, attach: attach, detach: detach, open: open, add: addNote, pick: pick,
+    return { refresh: refresh, attach: attach, detach: detach, open: open, reveal: reveal, add: addNote, pick: pick,
       close: closePanel, isOpen: function () { return !!panelRoot; },
       cancelPick: cancelPick, isPicking: function () { return !!pending; }, isAttached: attached, notesOf: notesOf, marks: marks };
   };
