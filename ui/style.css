@@ -309,6 +309,17 @@ body.pane-dragging .splitter { background: var(--accent); }
 .floating-status.success { color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 45%, transparent); }
 .floating-status::backdrop { background: transparent; pointer-events: none; }
 
+/* 区域气泡仍在 popover 顶层，用原生锚点跟随内容区的缩放、分栏、悬浮移动与全屏布局。 */
+#editor-wrap { anchor-name: --flow-status-area; }
+#feat-body { anchor-name: --feat-status-area; }
+#readonly-mask { anchor-name: --flow-readonly; }
+#md-mask { anchor-name: --feat-readonly; }
+#flow-floating-status, #feat-floating-status { bottom: auto; top: calc(anchor(bottom) - 12px); left: anchor(center); transform: translate(-50%, -100%); position-visibility: anchors-visible; }
+#flow-floating-status { position-anchor: --flow-status-area; max-width: min(640px, calc(anchor-size(--flow-status-area width) - 24px)); }
+#feat-floating-status { position-anchor: --feat-status-area; max-width: min(640px, calc(anchor-size(--feat-status-area width) - 24px)); }
+#readonly-mask:not([hidden]) ~ #flow-floating-status { top: calc(anchor(--flow-readonly top) - 8px); }
+#md-mask:not([hidden]) ~ #feat-floating-status { top: calc(anchor(--feat-readonly top) - 8px); }
+
 /* 独立窗口（?solo=flow|feat）：只显示一栏，隐藏侧栏与弹出/关闭按钮 */
 body.solo #side, body.solo #side-splitter, body.solo .no-solo { display: none !important; }
 body:not(.solo) .solo-only { display: none !important; }

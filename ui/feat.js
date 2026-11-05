@@ -151,10 +151,10 @@ window.FeatPane = (() => {
   };
   applyTocVisible(localStorage.getItem('fc-toc') !== '0');
 
-  /** 与主窗口共用气泡，操作提示不占用档案标题空间。 */
+  /** 操作提示进入 Feat 内容区域，不占档案标题空间；清空时取消该区域旧提示。 */
   function setState(text, isError) {
     $('md-state').textContent = '';
-    if (text) floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info');
+    floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info', 'feat');
   }
 
   /** 同步当前档案：只替换变化片段，让滚动快照和光标随文字映射；外部改动不进撤销历史。 */
@@ -261,10 +261,8 @@ window.FeatPane = (() => {
    */
   function copyFeatPath() {
     if (!st.path) return;
-    const btn = $('btn-copy-feat-path');
     navigator.clipboard.writeText(st.path).then(() => {
-      btn.title = '已复制档案绝对路径';
-      setTimeout(() => { btn.title = '复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理'; }, 1200);
+      setState('已复制档案绝对路径');
     }, (error) => setState('复制失败：' + error, true));
   }
   $('btn-copy-feat-path').onclick = copyFeatPath;
@@ -415,6 +413,7 @@ window.FeatPane = (() => {
   async function close() {
     await flush();
     await release();
+    setState('');
     Sidebar.deselect(st.path);
     st.path = null;
     st.id = '';

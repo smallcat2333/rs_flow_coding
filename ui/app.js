@@ -103,16 +103,20 @@ function renderStatusStats(counts) {
   }).join('');
 }
 
-let floatingStatusTimer = 0;
-/** 非交互状态统一浮在窗口底部；新提示重置计时，原文按纯文本显示，六秒后收起且不抢焦点。 */
-function floatingStatus(text, tone = 'error') {
-  const el = $('floating-status');
-  clearTimeout(floatingStatusTimer);
+const floatingStatusTimers = new Map();
+/** 按 global / flow / feat 复用各自气泡与计时器；纯文本显示，六秒后收起，清空只影响本区域。 */
+function floatingStatus(text, tone = 'error', area = 'global') {
+  const el = $(area === 'global' ? 'floating-status' : `${area}-floating-status`);
+  clearTimeout(floatingStatusTimers.get(area));
+  floatingStatusTimers.delete(area);
   el.textContent = text || '';
   el.className = `floating-status ${tone}`;
   if (!text) { el.hidePopover(); return; }
   el.showPopover();
-  floatingStatusTimer = setTimeout(() => el.hidePopover(), 6000);
+  floatingStatusTimers.set(area, setTimeout(() => {
+    el.hidePopover();
+    floatingStatusTimers.delete(area);
+  }, 6000));
 }
 
 /** 侧栏操作结果改为悬浮提示；原节点仅保留结果文本，供设置页识别扫描失败。 */
@@ -121,10 +125,10 @@ function sideMsg(msg, success = false) {
   if (msg) floatingStatus(msg, success ? 'success' : 'error');
 }
 
-/** 操作提示统一走气泡，保存与复制结果均不占标题栏空间。 */
+/** 流程图操作提示进入画布区域，保存与复制结果均不占标题栏；清空时取消该区域旧提示。 */
 function saveState(text, isError) {
   $('save-state').textContent = '';
-  if (text) floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info');
+  floatingStatus(text, isError ? 'error' : /已复制|已保存|完成/.test(text) ? 'success' : 'info', 'flow');
 }
 
 /** 简易输入对话框，返回 Promise<string|null>。 */
@@ -674,10 +678,8 @@ $('btn-copy-ref').onclick = () => copyRefs(selCells.map((c) => c.id));
  */
 function copyFlowPath() {
   if (!st.cur) return;
-  const btn = $('btn-copy-flow-path');
   navigator.clipboard.writeText(st.cur).then(() => {
-    btn.title = '已复制流程图绝对路径';
-    setTimeout(() => { btn.title = '复制当前流程图的绝对路径，可发给 Agent 继续处理'; }, 1200);
+    saveState('已复制流程图绝对路径');
   }, (error) => saveState('复制失败：' + error, true));
 }
 $('btn-copy-flow-path').onclick = copyFlowPath;
@@ -1113,6 +1115,7 @@ const EMPTY_TEXT = '从左侧选择一张流程图，在这里查看和编辑';
 /** 关闭当前流程图并释放锁；空位或首页提示由布局规则统一决定，msg 用于空位说明。 */
 async function closeFlow(msg) {
   await releaseNow();
+  saveState('');
   st.cur = null;
   if (!SOLO) Tabs.note('flow', '');
   // 图还在载入时关闭：结束这次导航，否则后续打开图（含切页签）会一直等载入完成。
