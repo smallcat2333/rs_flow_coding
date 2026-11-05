@@ -197,28 +197,12 @@ async function startSession(id) {
   finally { startingSessions.delete(id); }
 }
 
-// ---------------- 总览：需要处理的事项 + 按 APP 列出会话与 Feat、节点的关系 ----------------
-function renderOverview() {
-  const items = attnItems(), byApp = new Map();
-  for (const s of list().sort(byUrgency)) {
-    if (!byApp.has(s.app)) byApp.set(s.app, []);
-    byApp.get(s.app).push(s);
-  }
-  const blocks = [...byApp.entries()].sort((a, b) => byUrgency(a[1][0], b[1][0])).map(([app, ss]) => {
-    const run = ss.filter((s) => s.running).length;
-    return `<section class="ovapp"><h3>${esc(app)}<small>${ss.length} 个会话${run ? `，${run} 个运行中` : ''}</small></h3>${ss.map((s) => {
-      const f = s.feat && featEntry(s.feat), ws = (s.workers || []).filter((w) => w.running);
-      return `<div class="ovrow v-${vs(s)}" data-open="${s.id}">${bot()}<span title="${esc(s.title)}">${esc(s.title)}</span>
-        <span class="f">${s.feat ? esc((s.feat_code || '') + ' ' + (f?.title || '')) : '未关联 Feat'}</span>
-        <span class="n">${refsOf(s).map((r) => `<button class="lk lf" data-ref="${esc(r.flow)}" data-node="${esc(r.node)}">${r.cur ? '● ' : ''}${esc(refLabel(r))}</button>`).join('') || '<span class="muted">未关联节点</span>'}</span>
-        <span class="s">${stText(s)} <span data-tk="${s.id}">${esc(timeText(s))}</span></span>
-        ${ws.length ? `<div class="wkl">${ws.map((w) => `<span>↳ worker：${esc(w.desc)}，${w.uses} 次调用</span>`).join('')}</div>` : ''}</div>`;
-    }).join('')}</section>`;
-  }).join('');
-  $('#ov').innerHTML = `<div class="attn"><span class="attn-l">${items.length ? '需要你处理' : '目前没有需要你处理的会话'}</span>${items.join('')}</div>
-    ${blocks || '<div class="ovempty">还没有会话。点左侧「新建会话」启动 Claude Code；在主窗口点流程图节点或打开 Feat，这里会切到对应的会话。</div>'}
-    <p class="hint">会话处理某个节点时运行 flowctl focus 标记位置，主窗口画布上该节点旁会出现它的机器人；等你确认、异常退出、60 秒没有活动、两个会话改了同一个文件都会列在上面。</p>`;
-}
+// ---------------- 总览：需要处理的事项与实时关系图 ----------------
+/** 总览关系图复用当前会话和 APP 数据，几何与交互由独立模块维护。 */
+function renderOverview() { AgentOverview.render(); }
+AgentOverview.init();
+listen('flow-changed', () => AgentOverview.invalidate());
+listen('md-changed', async () => { await loadApps(); AgentOverview.invalidate(); });
 
 // ---------------- 主窗口联动 ----------------
 /** 主窗口选中节点或打开 Feat：找直接关联的会话 → 5 分钟内处理过它的会话 → 节点所属 Feat 的会话 → 提示新建。 */
@@ -256,7 +240,8 @@ async function onMainSelect(p) {
     toast(`主窗口切到「${label}」，当前已锁定，没有跟着切换`);
   }
   renderRows();
-  if (active !== 'OV') renderHead(S.get(active));
+  if (active === 'OV') renderOverview();
+  else renderHead(S.get(active));
 }
 function locate(flow, node) {
   emit('agent-locate', { path: flow, node });
@@ -304,6 +289,7 @@ listen('agent-act', (e) => {
   addTick(s, a);
   renderTicker();
   if (a.kind === 'edit' || a.kind === 'msg' || a.kind === 'worker') refreshAll();
+  AgentOverview.activity(s, a);
 });
 listen('agent-removed', (e) => {
   S.delete(e.payload.id);

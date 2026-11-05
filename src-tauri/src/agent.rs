@@ -80,6 +80,8 @@ pub struct Act {
     pub flow: String,
     pub node: String,
     pub worker: String,
+    /// 协作消息的对方会话 ID；其他活动为空，不通过显示名称推断关系。
+    pub peer: String,
 }
 
 /// worker：Claude Code 通过 Task / Agent 工具派出的 subagent。
@@ -738,12 +740,21 @@ fn push_act(e: &mut Entry, kind: &str, text: String, path: String) -> Act {
         flow: pos.as_ref().map(|p| p.flow.clone()).unwrap_or_default(),
         node: pos.map(|p| p.node).unwrap_or_default(),
         worker,
+        peer: String::new(),
     };
     e.acts.push_back(a.clone());
     while e.acts.len() > ACTS_MAX {
         e.acts.pop_front();
     }
     e.live.beat = t;
+    a
+}
+
+/// 记录协作消息并保留对方的会话 ID；更新活动队列中的同一条记录，供重开窗口回放关系。
+fn push_message(e: &mut Entry, peer: &str, text: String) -> Act {
+    let mut a = push_act(e, "msg", text, String::new());
+    a.peer = peer.to_string();
+    *e.acts.back_mut().unwrap() = a.clone();
     a
 }
 
@@ -1003,10 +1014,10 @@ fn send(id: &str, to: &str, text: &str) -> Result<Value, String> {
         }
     };
     let to_title = e.meta.title.clone();
-    let b = push_act(e, "msg", cut(&format!("来自「{from}」：{text}"), 80), String::new());
+    let b = push_message(e, id, cut(&format!("来自「{from}」：{text}"), 80));
     emit_act(&target, &b);
     emit_update(e);
-    let a = push_act(map.get_mut(id).unwrap(), "msg", cut(&format!("发给「{to_title}」：{text}"), 80), String::new());
+    let a = push_message(map.get_mut(id).unwrap(), &target, cut(&format!("发给「{to_title}」：{text}"), 80));
     emit_act(id, &a);
     emit_update(&map[id]);
     Ok(json!({ "result": state }))
@@ -1361,6 +1372,18 @@ mod tests {
         assert!(main_conflict(&map, "new", "", &link(r"E:\p\flow\x.drawio")).is_ok());
         assert!(main_conflict(&map, "b", "", &link(r"E:\p\flow\y.drawio")).is_ok());
         assert!(main_conflict(&map, "a", r"E:\p\Feat_1.md", &[]).is_ok());
+    }
+
+    /// 协作活动在即时事件和缓冲回放中保留相同 peer，普通活动不携带对方身份。
+    #[test]
+    fn message_peer_survives_buffer() {
+        let meta = Meta { id: "sender".into(), title: "同名".into(), cwd: String::new(), app: String::new(), feat: String::new(), feat_code: String::new(), links: vec![], pinned: false, pin_at: 0, created: 0, started: false };
+        let mut e = Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false };
+        let a = push_message(&mut e, "exact-peer-id", "协作消息".into());
+        assert_eq!(a.peer, "exact-peer-id");
+        assert_eq!(e.acts.back().unwrap().peer, a.peer);
+        assert_eq!(serde_json::to_value(&a).unwrap()["peer"], "exact-peer-id");
+        assert!(push_act(&mut e, "read", "file".into(), String::new()).peer.is_empty());
     }
 
     /// 等到会话状态满足条件或超时，返回最后一次看到的状态。
