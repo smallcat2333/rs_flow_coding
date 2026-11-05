@@ -162,19 +162,27 @@ test('探讨导航只展示 R 小块，完整标题留在提示中并保留待�
   assert.ok(!nav.match(/<ol class="fb-toc">[\s\S]*?R1 2026-11-04/));
 });
 
-test('正文中间正常滚动，到底后向下切下一章并从顶部阅读', () => {
+test('正文中间正常滚动，边界前两次不切章，第三次才进入下一章顶部', () => {
   const board = setupBoard();
   board.mockBox.scrollTop = 100;
   assert.equal(board.wheel(120), false);
   assert.ok(board.html.includes('tab-3'));
   board.mockBox.scrollTop = 700;
   assert.equal(board.wheel(120), true);
+  assert.ok(board.html.includes('tab-3'));
+  assert.equal(board.wheel(120), true);
+  assert.ok(board.html.includes('tab-3'));
+  assert.equal(board.wheel(120), true);
   assert.ok(board.html.includes('tab-4'));
   assert.equal(board.mockBox.scrollTop, 0);
 });
 
-test('顶部向上切上一章并落在该章末尾，概览与发布不循环', () => {
+test('顶部第三次上滚才切上一章末尾，概览与发布不循环', () => {
   const board = setupBoard();
+  board.wheel(-120);
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(-120);
+  assert.ok(board.html.includes('tab-3'));
   assert.equal(board.wheel(-120), true);
   assert.ok(board.html.includes('tab-2'));
   assert.equal(board.mockBox.scrollTop, 700);
@@ -188,15 +196,69 @@ test('顶部向上切上一章并落在该章末尾，概览与发布不循环',
   assert.ok(board.html.includes('tab-5'));
 });
 
-test('连续滚轮手势只切一章，停顿后允许再次切章', () => {
+test('同一手势的惯性不累计次数，切章后新边界重新累计三次', () => {
   const board = setupBoard();
   board.mockBox.scrollTop = 700;
   board.wheel(120);
+  for (let i = 0; i < 10; i++) board.wheel(30, { gap: 20 });
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-4'));
   board.mockBox.scrollTop = 700;
   assert.equal(board.wheel(90, { gap: 20 }), true);
   assert.ok(board.html.includes('tab-4'));
-  board.wheel(90, { gap: 200 });
+  board.wheel(90);
+  board.wheel(90);
+  assert.ok(board.html.includes('tab-4'));
+  board.wheel(90);
   assert.ok(board.html.includes('tab-5'));
+});
+
+test('回到正文滚动后清空边界计数', () => {
+  const board = setupBoard();
+  board.mockBox.scrollTop = 700;
+  board.wheel(120);
+  board.wheel(120);
+  board.mockBox.scrollTop = 100;
+  board.wheel(120);
+  board.mockBox.scrollTop = 700;
+  board.wheel(120);
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-4'));
+});
+
+test('反向滚动重新累计，短页面也不沿用另一方向的次数', () => {
+  const board = setupBoard();
+  board.mockBox.scrollHeight = board.mockBox.clientHeight;
+  board.wheel(120);
+  board.wheel(120);
+  board.wheel(-120);
+  board.wheel(120);
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-4'));
+});
+
+test('长时间停顿或点击章节后，边界计数清零', () => {
+  const board = setupBoard();
+  board.mockBox.scrollTop = 700;
+  board.wheel(120);
+  board.wheel(120);
+  board.wheel(120, { gap: 1300 });
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-3'));
+  openTab(board, '3');
+  board.mockBox.scrollTop = 700;
+  board.wheel(120);
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-3'));
+  board.wheel(120);
+  assert.ok(board.html.includes('tab-4'));
 });
 
 test('侧栏、横向滚动、缩放手势与内部仍可滚动的区域不触发切章', () => {

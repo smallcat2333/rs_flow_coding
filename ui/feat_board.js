@@ -989,23 +989,32 @@ window.FeatBoard = (() => {
   function bind() {
     const box = $('feat-board');
     let lastWheel = -Infinity, wheelTurned = false;
-    // 正文到边界后继续滚动才切相邻章；一次连续手势只切一章，向上切换落在上一章末尾。
+    let edgeKey = '', edgeTurns = 0, edgeCounted = false;
+    // 边界处连续三次独立滚动才切章；同一手势的惯性不累加，离开边界、反向或停顿后重新累计。
     box.addEventListener('wheel', (e) => {
       if (!e.target.closest('.fb-main') || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
       if (e.target.closest('input, textarea, select, [contenteditable="true"]') || (box.contains(document.activeElement) && document.activeElement.matches('input, textarea, select, [contenteditable="true"]'))) return;
       const now = performance.now();
-      if (now - lastWheel > 180) wheelTurned = false;
+      if (now - lastWheel > 180) { wheelTurned = false; edgeCounted = false; }
+      if (now - lastWheel > 1200) { edgeKey = ''; edgeTurns = 0; }
       lastWheel = now;
       if (wheelTurned) { e.preventDefault(); return; }
       const down = e.deltaY > 0;
       // 表格、代码等内部滚动区优先消费滚轮，避免在正文边界抢走它们的滚动。
       for (let el = e.target; el && el !== box; el = el.parentElement) {
-        if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY) && (down ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 1)) return;
+        if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY) && (down ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 1)) { edgeKey = ''; edgeTurns = 0; edgeCounted = false; return; }
       }
-      if (down ? box.scrollTop + box.clientHeight < box.scrollHeight - 1 : box.scrollTop > 1) return;
+      if (down ? box.scrollTop + box.clientHeight < box.scrollHeight - 1 : box.scrollTop > 1) { edgeKey = ''; edgeTurns = 0; edgeCounted = false; return; }
       const next = STAGES[STAGES.findIndex((s) => s.k === st.tab) + (down ? 1 : -1)];
-      if (!next) return;
+      if (!next) { edgeKey = ''; edgeTurns = 0; edgeCounted = false; return; }
       e.preventDefault();
+      const key = `${st.path}:${st.tab}:${down}`;
+      if (key !== edgeKey) { edgeKey = key; edgeTurns = 0; edgeCounted = false; }
+      if (edgeCounted) return;
+      edgeCounted = true;
+      if (++edgeTurns < 3) return;
+      edgeKey = '';
+      edgeTurns = 0;
       wheelTurned = true;
       st.tab = next.k;
       st.selectedT = '';
@@ -1013,6 +1022,11 @@ window.FeatBoard = (() => {
       box.scrollTop = down ? 0 : Math.max(0, box.scrollHeight - box.clientHeight);
     }, { passive: false });
     box.addEventListener('click', (e) => {
+      edgeKey = '';
+      edgeTurns = 0;
+      edgeCounted = false;
+      wheelTurned = false;
+      lastWheel = -Infinity;
       const jump = e.target.closest('[data-jump]');
       if (jump) {
         const stage = jump.dataset.stage;
