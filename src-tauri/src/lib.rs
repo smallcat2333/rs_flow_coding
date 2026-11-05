@@ -13,6 +13,7 @@ pub mod paths;
 pub mod progress;
 pub mod scan;
 pub mod rename;
+mod window_state;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -528,7 +529,11 @@ pub fn run() {
             }
         }))
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
-        .setup(|app| { float::init(app.handle()); Ok(()) })
+        .setup(|app| {
+            window_state::init(app.handle())?;
+            float::init(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, remove_directory, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
@@ -539,6 +544,7 @@ pub fn run() {
             float::get_float_enabled, float::set_float_enabled, float::float_activate
         ])
         .on_window_event(|window, event| {
+            if let Err(e) = window_state::on_event(window, event) { eprintln!("保存主窗口状态失败: {e}"); }
             // 悬浮窗：App 窗口焦点变化或弹出窗口关闭后，重新判定 App 是否还在前台
             match event {
                 tauri::WindowEvent::Focused(focused) => float::on_focus(window.app_handle(), window.label(), *focused),

@@ -117,7 +117,7 @@ fn create(app: &AppHandle) -> Result<(), String> {
 }
 
 /// 坐标左上角附近 40px 落在任一显示器内才算有效（拔掉外接屏后不把窗口放到看不见的地方）。
-fn on_screen(app: &AppHandle, x: i32, y: i32) -> bool {
+pub(crate) fn on_screen(app: &AppHandle, x: i32, y: i32) -> bool {
     app.available_monitors().unwrap_or_default().iter().any(|m| {
         let (p, s) = (m.position(), m.size());
         x + 40 >= p.x && y + 40 >= p.y && x + 40 <= p.x + s.width as i32 && y + 40 <= p.y + s.height as i32
