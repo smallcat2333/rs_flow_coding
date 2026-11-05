@@ -75,7 +75,7 @@ def main() -> None:
 
 
 def patch_index() -> None:
-    """在 draw.io index.html 的 bootstrap.js 之前注入 Flow Coding 桥接脚本（ui/flow_bridge.js）。
+    """在 draw.io index.html 的 bootstrap.js 之前注入 Flow Coding 桥接脚本（ui/flow_bridge.js）与画布 Agent 层（ui/flow_agents.js）。
 
     桥接脚本包装 App.main 拿到编辑器实例，实现选中节点通知、按标签高亮与挂标签。
     注入点找不到时直接报错（draw.io 版本变化需要人工核对）。
@@ -85,7 +85,7 @@ def patch_index() -> None:
     anchor = '<script src="js/bootstrap.js"></script>'
     if anchor not in html:
         raise SystemExit("index.html 中找不到 bootstrap.js，无法注入桥接脚本")
-    html = html.replace(anchor, '<script src="../flow_bridge.js"></script>\n\t' + anchor, 1)
+    html = html.replace(anchor, '<script src="../flow_bridge.js"></script>\n\t<script src="../flow_agents.js"></script>\n\t' + anchor, 1)
     index.write_text(html, encoding="utf-8")
 
 

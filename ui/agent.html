@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent - Flow Coding</title>
+  <!-- 主题尽早生效（与主窗口共用 localStorage 的 fc-theme），避免深色模式下先闪一帧浅色 -->
+  <script>
+    (() => {
+      const t = localStorage.getItem('fc-theme') || 'auto';
+      const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    })();
+  </script>
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
+  <link rel="stylesheet" href="agent.css">
+</head>
+<body>
+<div class="app">
+  <aside class="left">
+    <section class="pulse" aria-label="会话活动">
+      <header class="ph">
+        <h1>Agent</h1>
+        <span class="today" id="today"></span>
+        <label class="follow" title="开启后，主窗口选中节点或打开 Feat 时，这里切到对应会话">
+          <input type="checkbox" id="follow"><span class="sw" aria-hidden="true"></span><span id="followText">跟随主窗口</span>
+        </label>
+      </header>
+      <div class="mix" id="mix"></div>
+      <div class="lanes" id="lanes"></div>
+      <div class="axis" aria-hidden="true"><span></span><div><span>5 分钟前</span><span class="lg"><span><i class="l-edit"></i>编辑</span><span><i class="l-cmd"></i>命令</span><span><i class="l-read"></i>读取</span><span><i class="l-commit"></i>提交</span><span><i class="l-msg"></i>协作</span></span><span>现在</span></div><span></span></div>
+      <div class="ticker" id="ticker"></div>
+    </section>
+    <section class="roster" aria-label="CLI 会话">
+      <div class="rh">
+        <input class="search" id="q" type="search" placeholder="搜索会话、APP、Feat、流程图或最近活动（Ctrl+K）" aria-label="搜索会话" autocomplete="off">
+        <button class="newbtn" id="newBtn" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 14 14" stroke="currentColor" stroke-width="1.6"><path d="M7 2v10M2 7h10"/></svg>新建会话</button>
+      </div>
+      <div class="newwrap" id="newwrap"><div>
+        <div class="newbox" id="newbox">
+          <div class="nb-t">新建 Claude Code 会话</div>
+          <label for="nbName">名称</label><input type="text" id="nbName" placeholder="留空则用关联的 Feat 名，或叫「新会话」" autocomplete="off">
+          <label for="nbApp">目录</label><select id="nbApp"></select>
+          <label for="nbLink">关联</label>
+          <div class="nb-links" id="nbLinks"><span id="nbChips"></span><input id="nbLink" placeholder="搜索 Feat 或流程图，可留空" autocomplete="off"></div>
+          <div class="drop" id="nbDrop" hidden></div>
+          <div class="nb-opt"><label><input type="checkbox" id="nbPin">置顶</label><span class="muted">关联的 Feat 档案与节点会写进会话的系统提示</span></div>
+          <div class="nb-act"><button class="btn" data-nb="cancel">取消</button><button class="btn primary" data-nb="ok">启动</button></div>
+        </div>
+      </div></div>
+      <ul class="rows" id="rows"></ul>
+    </section>
+  </aside>
+  <main class="work">
+    <div class="bar"><div class="tabs" id="tabs" role="tablist" aria-label="会话页签"></div></div>
+    <div class="pane" id="pane">
+      <div id="head"></div>
+      <div class="ov" id="ov"></div>
+      <div class="terms" id="terms" hidden></div>
+    </div>
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
+<script src="vendor/xterm/addon-unicode11.js"></script>
+<script src="agent_core.js"></script>
+<script src="agent.js"></script>
+</body>
+</html>

@@ -11,13 +11,19 @@
 //!   flowctl check <feat.md>           Feat 关闭门槛：挂了该 Feat 的节点全部无色才退出码 0，否则 3
 //!   flowctl links <file|dir>...       校验图间链接（link="图.drawio[#节点id]"）：目标文件与节点都存在才退出码 0，有坏链接退出码 3
 //!
+//! Agent 窗口会话内可用（依赖 Flow Coding 下发的 FLOW_AGENT_* 环境变量）：
+//!   flowctl focus <图文件>#<节点id>     标记当前处理的节点，主窗口在该节点上显示本会话；--clear 清除
+//!   flowctl peers                     列出同 APP 的其他会话
+//!   flowctl send <会话名> <消息>       给同 APP 会话发协作消息（对方运行中则排队到它本轮结束）
+//!   flowctl agent-hook <事件>          Claude Code hook 回报（stdin 为 hook JSON），始终退出码 0
+//!
 //! 约定：Agent 修改流程图或 Feat 档案必须 `lock → 编辑 → unlock`；编辑超 10 分钟需重新 lock 刷新。
 //! 节点关联 Feat：在 `<object>` 上写 `tags="Feat_YYMMDD_N"`（可多个，空格分隔）。
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use flow_coding_lib::{db, feat, flow, links, lock, paths, scan, write_atomic};
+use flow_coding_lib::{agent, db, feat, flow, links, lock, paths, scan, write_atomic};
 
 /// 打印错误并返回退出码 1。
 fn fail(msg: impl std::fmt::Display) -> ExitCode {
@@ -207,6 +213,32 @@ fn cmd_links(args: &[String]) -> Result<ExitCode, String> {
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(3) })
 }
 
+/// agent-hook：读 stdin 的 hook JSON 转发给 App。任何失败都忽略并退出码 0，不能拖住 Claude Code。
+fn cmd_agent_hook(args: &[String]) -> ExitCode {
+    use std::io::Read;
+    let mut text = String::new();
+    let _ = std::io::stdin().read_to_string(&mut text);
+    let payload: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let event = args.get(2).cloned().unwrap_or_default();
+    let _ = agent::client(serde_json::json!({ "op": "hook", "event": event, "payload": payload }));
+    ExitCode::SUCCESS
+}
+
+/// focus / peers / send：转发给 App 并输出结果 JSON。
+fn cmd_agent(args: &[String]) -> Result<ExitCode, String> {
+    let req = match args[1].as_str() {
+        "focus" => {
+            let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            serde_json::json!({ "op": "focus", "ref": arg(args, 2, "图文件#节点id")?, "cwd": cwd })
+        }
+        "peers" => serde_json::json!({ "op": "peers" }),
+        _ => serde_json::json!({ "op": "send", "to": arg(args, 2, "会话名")?, "text": args.get(3..).map(|a| a.join(" ")).unwrap_or_default() }),
+    };
+    let v = agent::client(req)?;
+    println!("{}", serde_json::to_string_pretty(&v).unwrap());
+    Ok(ExitCode::SUCCESS)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let r = match args.get(1).map(String::as_str) {
@@ -224,7 +256,9 @@ fn main() -> ExitCode {
         Some("feat") => cmd_feat(&args),
         Some("check") => cmd_check(&args),
         Some("links") => cmd_links(&args),
-        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check|links> ...（详见源码顶部说明）".into()),
+        Some("agent-hook") => return cmd_agent_hook(&args),
+        Some("focus" | "peers" | "send") => cmd_agent(&args),
+        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check|links|focus|peers|send> ...（详见源码顶部说明）".into()),
     };
     r.unwrap_or_else(fail)
 }

@@ -1,6 +1,7 @@
 //! flow_coding 库：Tauri App 与 flowctl CLI 共用的流程图解析、加锁、历史与扫描能力，
 //! 以及 App 的 Tauri 命令与文件监听。
 
+pub mod agent;
 pub mod db;
 pub mod feat;
 pub mod float;
@@ -532,6 +533,7 @@ pub fn run() {
         .setup(|app| {
             window_state::init(app.handle())?;
             float::init(app.handle());
+            agent::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -541,9 +543,12 @@ pub fn run() {
             rename::rename_entry,
             lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar,
             maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache,
-            float::get_float_enabled, float::set_float_enabled, float::float_activate
+            float::get_float_enabled, float::set_float_enabled, float::float_activate,
+            agent::agent_list, agent::agent_create, agent::agent_start, agent::agent_stop, agent::agent_write,
+            agent::agent_resize, agent::agent_buffer, agent::agent_update, agent::agent_remove, agent::open_agent_window
         ])
         .on_window_event(|window, event| {
+            if window.label() == agent::LABEL { agent::on_window_event(window, event); }
             if let Err(e) = window_state::on_event(window, event) { eprintln!("保存主窗口状态失败: {e}"); }
             // 悬浮窗：App 窗口焦点变化或弹出窗口关闭后，重新判定 App 是否还在前台
             match event {
@@ -556,6 +561,7 @@ pub fn run() {
                 if label == "main" {
                     // 主窗口关闭即退出：释放本 App 持有的全部用户锁，弹出窗口一并关闭
                     release_all_user_locks();
+                    agent::shutdown();
                     window.app_handle().exit(0);
                 } else if let Some(kind) = label.strip_prefix("pop-") {
                     // 弹出窗口关闭：通知主窗口恢复该栏的路由（弹出窗口自己的锁已在关闭前由前端释放）

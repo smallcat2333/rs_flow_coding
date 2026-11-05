@@ -1,6 +1,6 @@
 {
   "identifier": "main-capability",
-  "windows": ["main", "pop-*", "float"],
+  "windows": ["main", "pop-*", "float", "agent"],
   "permissions": [
     "core:default",
     "core:event:default",
