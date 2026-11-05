@@ -545,7 +545,8 @@ pub fn run() {
             maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache,
             float::get_float_enabled, float::set_float_enabled, float::float_activate,
             agent::agent_list, agent::agent_create, agent::agent_start, agent::agent_stop, agent::agent_write,
-            agent::agent_resize, agent::agent_buffer, agent::agent_update, agent::agent_remove, agent::open_agent_window
+            agent::agent_resize, agent::agent_buffer, agent::agent_update, agent::agent_remove, agent::open_agent_window,
+            agent::agent_get_settings, agent::agent_set_settings
         ])
         .on_window_event(|window, event| {
             if window.label() == agent::LABEL { agent::on_window_event(window, event); }

@@ -120,6 +120,15 @@ window.Settings = (() => {
     });
   }
 
+  /** 填入 Claude Code 启动项；found 为按当前设置实际会启动的 claude，找不到时显示原因。 */
+  function showClaude(v) {
+    $('settings-claude-path').value = v.claudePath;
+    $('settings-claude-args').value = v.extraArgs;
+    const note = $('settings-claude-found');
+    note.textContent = v.found ? `将启动：${v.found}` : v.error;
+    note.style.color = v.found ? '' : 'var(--danger)';
+  }
+
   /** 显示设置并读取最新配置；多个窗口编辑后也以磁盘最新项目根为准。 */
   async function open() {
     $('settings-theme').value = themeSetting();
@@ -131,6 +140,8 @@ window.Settings = (() => {
     $('settings-force-split').checked = forceSplit();
     $('settings-tab-lifetime').value = tabLifetime();
     $('settings-float').checked = await invoke('get_float_enabled');
+    // 设置文件损坏时只在本栏提示，不挡住整个设置页
+    try { showClaude(await invoke('agent_get_settings')); } catch (error) { $('settings-claude-found').textContent = String(error); }
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -144,6 +155,8 @@ window.Settings = (() => {
   /** 初始化设置入口与设置行为；关闭复用原生 dialog 焦点管理。 */
   function init() {
     $('btn-settings').onclick = open;
+    // 侧栏工具入口：打开（或置前）独立的 Agent 窗口
+    $('btn-agent').onclick = () => invoke('open_agent_window', { focus: null }).catch((e) => floatingStatus(String(e)));
     $('settings-close').onclick = () => $('settings-dialog').close();
     $('settings-dialog').addEventListener('cancel', (e) => { if (busy) e.preventDefault(); });
     $('settings-nav').addEventListener('click', (e) => {
@@ -206,6 +219,11 @@ window.Settings = (() => {
       $('excluded-roots-text').value = (cfg.excluded_dirs || []).join('\n');
       if (!await refresh(true)) throw new Error($('side-msg').textContent);
       return '项目目录已保存并扫描';
+    });
+    /** Claude Code 启动项：后端校验路径与参数，失败时保留输入并提示原因。 */
+    $('settings-claude-save').onclick = (e) => act(e.currentTarget, async () => {
+      showClaude(await invoke('agent_set_settings', { claudePath: $('settings-claude-path').value, extraArgs: $('settings-claude-args').value }));
+      return 'Claude Code 设置已保存，之后启动的会话生效';
     });
     $('btn-rescan').onclick = (e) => act(e.currentTarget, async () => {
       if (!await refresh(true)) throw new Error($('side-msg').textContent);

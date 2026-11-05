@@ -287,9 +287,78 @@ enum Exe {
     Cmd(PathBuf),
 }
 
-/// 查找 claude：环境变量 FLOW_CLAUDE 优先；其次 PATH 中的 claude.exe；npm 安装的 claude.cmd 优先换成
-/// 包内的 claude.exe（参数不经 cmd.exe 二次解析）；最后是 ~/.local/bin/claude.exe。都没有则报错。
-fn find_claude() -> Result<Exe, String> {
+impl Exe {
+    /// 实际启动的文件路径（设置页展示用）。
+    fn path(&self) -> &Path {
+        match self {
+            Exe::Direct(p) | Exe::Cmd(p) => p,
+        }
+    }
+}
+
+/// 设置页「Claude Code」的启动项，存 `<数据目录>/agent/settings.json`。
+/// - `claude_path`：claude 可执行文件，空 = 自动查找；`.cmd` 结尾经 cmd.exe 启动；
+/// - `extra_args`：追加到每次启动（新建与续接）的命令行参数，空格分隔，含空格的值用双引号括起。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClaudeSettings {
+    #[serde(default)]
+    pub claude_path: String,
+    #[serde(default)]
+    pub extra_args: String,
+}
+
+/// 读启动项：文件不存在用默认（自动查找、无额外参数）；文件损坏直接报错，避免带着错误配置静默启动。
+fn load_settings() -> Result<ClaudeSettings, String> {
+    let f = dir()?.join("settings.json");
+    match std::fs::read_to_string(&f) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("Agent 设置文件损坏 {}: {e}", f.display())),
+        Err(_) => Ok(ClaudeSettings::default()),
+    }
+}
+
+/// 把额外参数文本拆成参数列表：空白分隔，双引号内的空白保留，引号本身去掉；引号未闭合报错。
+fn split_args(text: &str) -> Result<Vec<String>, String> {
+    let (mut out, mut cur, mut quoted, mut has) = (Vec::new(), String::new(), false, false);
+    for ch in text.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                has = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if has {
+                    out.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("额外参数中的双引号没有闭合".into());
+    }
+    if has {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
+/// 查找 claude：设置页指定的路径优先（不存在报错，不回退）；其次环境变量 FLOW_CLAUDE；再次 PATH 中的
+/// claude.exe；npm 安装的 claude.cmd 优先换成包内的 claude.exe（参数不经 cmd.exe 二次解析）；
+/// 最后是 ~/.local/bin/claude.exe。都没有则报错。
+fn find_claude(set: &ClaudeSettings) -> Result<Exe, String> {
+    let custom = set.claude_path.trim();
+    if !custom.is_empty() {
+        let p = PathBuf::from(custom);
+        if !p.is_file() {
+            return Err(format!("设置中的 Claude Code 路径不存在：{custom}"));
+        }
+        let cmd = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+        return Ok(if cmd { Exe::Cmd(p) } else { Exe::Direct(p) });
+    }
     if let Some(p) = std::env::var_os("FLOW_CLAUDE") {
         return Ok(Exe::Direct(PathBuf::from(p)));
     }
@@ -314,7 +383,7 @@ fn find_claude() -> Result<Exe, String> {
             return Ok(Exe::Direct(exe));
         }
     }
-    Err("找不到 Claude Code（claude.exe），请先安装，或用环境变量 FLOW_CLAUDE 指定路径".into())
+    Err("找不到 Claude Code（claude.exe），请先安装，或在设置 → Claude Code 中指定路径".into())
 }
 
 /// 与 App 同目录的 flowctl.exe（hooks 回报和系统提示里的命令都用它），环境变量 FLOW_CTL 可指定（测试用）；
@@ -391,7 +460,9 @@ fn spawn(id: &str) -> Result<(), String> {
     }
     let flowctl = flowctl_path()?;
     let settings = hooks_file(&flowctl)?;
-    let mut cmd = match find_claude()? {
+    let set = load_settings()?;
+    let extra = split_args(&set.extra_args)?;
+    let mut cmd = match find_claude(&set)? {
         Exe::Direct(p) => CommandBuilder::new(p),
         Exe::Cmd(p) => {
             let mut c = CommandBuilder::new("cmd.exe");
@@ -410,6 +481,7 @@ fn spawn(id: &str) -> Result<(), String> {
     cmd.arg(&settings);
     cmd.arg("--append-system-prompt");
     cmd.arg(system_prompt(&meta, &flowctl));
+    cmd.args(&extra);
     cmd.cwd(&meta.cwd);
     // 从另一个 Claude Code 会话（含 Claude Desktop）里启动 App 时，会继承宿主注入的变量，子 CLI 会按宿主托管认证、
     // 以子会话身份运行而登录失败。检测到 CLAUDECODE 时去掉这批宿主变量；用户自己配置的 Git Bash 路径保留。
@@ -1011,6 +1083,34 @@ pub fn agent_remove(id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 设置页展示用：当前启动项，以及按它实际会用的 claude 路径（找不到时为错误文本）。
+fn settings_view(set: &ClaudeSettings) -> Value {
+    let (found, error) = match find_claude(set) {
+        Ok(e) => (e.path().to_string_lossy().into_owned(), String::new()),
+        Err(e) => (String::new(), e),
+    };
+    json!({ "claudePath": set.claude_path, "extraArgs": set.extra_args, "found": found, "error": error })
+}
+
+/// 读取 Claude Code 启动项（设置页打开时调用）。
+#[tauri::command]
+pub fn agent_get_settings() -> Result<Value, String> {
+    Ok(settings_view(&load_settings()?))
+}
+
+/// 保存 Claude Code 启动项：路径非空时必须是存在的文件，额外参数必须能拆分；校验不过不写盘。
+/// 只影响之后启动或续接的会话，正在运行的会话不变。
+#[tauri::command]
+pub fn agent_set_settings(claude_path: String, extra_args: String) -> Result<Value, String> {
+    let set = ClaudeSettings { claude_path: claude_path.trim().to_string(), extra_args: extra_args.trim().to_string() };
+    if !set.claude_path.is_empty() && !Path::new(&set.claude_path).is_file() {
+        return Err(format!("文件不存在：{}", set.claude_path));
+    }
+    split_args(&set.extra_args)?;
+    crate::write_atomic(&dir()?.join("settings.json"), &serde_json::to_string_pretty(&set).unwrap())?;
+    Ok(settings_view(&set))
+}
+
 /// 打开（或置前）Agent 窗口；focus 为要切到的会话 id。
 /// 窗口位置、尺寸记在 `<数据目录>/agent/window.json`，副屏上的位置下次照旧。
 /// Windows 的 WebView2 创建必须离开同步 IPC 线程，所以是 async 命令。
@@ -1084,6 +1184,16 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 额外参数拆分：空白分隔、双引号保留空白、空引号得到空参数、未闭合报错。
+    #[test]
+    fn split_args_rules() {
+        assert_eq!(split_args("").unwrap(), Vec::<String>::new());
+        assert_eq!(split_args("  --model opus   --permission-mode acceptEdits ").unwrap(), ["--model", "opus", "--permission-mode", "acceptEdits"]);
+        assert_eq!(split_args(r#"--add-dir "E:\My Dir" -x"#).unwrap(), ["--add-dir", r"E:\My Dir", "-x"]);
+        assert_eq!(split_args(r#"--a "" b"#).unwrap(), ["--a", "", "b"]);
+        assert!(split_args(r#"--a "b"#).is_err());
+    }
 
     /// 等到会话状态满足条件或超时，返回最后一次看到的状态。
     fn wait_for(id: &str, secs: u64, f: impl Fn(&Entry) -> bool) -> String {
