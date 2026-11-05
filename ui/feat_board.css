@@ -141,6 +141,8 @@
 .fb-ring.err circle.v { stroke: var(--fb-err); }
 .fb-ring b { position: relative; font-size: 11px; font-variant-numeric: tabular-nums; }
 .fb-ring b i { font-style: normal; color: var(--muted); font-weight: 400; }
+.fb-ring b.stack { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.fb-ring b.stack i { font-size: 8.5px; margin-top: 1px; }
 
 /* §0 / §2.1 探讨记录 */
 .fb-timeline { display: flex; flex-direction: column; gap: 8px; }
@@ -199,7 +201,8 @@
 .fb-graph marker.muted path { fill: var(--border); }
 .fb-node { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 7px 10px; border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 6px; background: var(--bg); text-align: left; overflow: hidden; transition: opacity .15s, box-shadow .15s; }
 .fb-node:hover:not(:disabled) { background: var(--bg); box-shadow: 0 2px 10px var(--shadow); }
-.fb-node.on { box-shadow: 0 0 0 2px var(--accent-bd); }
+.fb-node-sub { padding: 0 5px; border-radius: 8px; font-size: 11px; line-height: 16px; color: var(--fg2); background: var(--bg2); border: 1px solid var(--border2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fb-node-sub.all { color: var(--fb-ok); }
 .fb-node-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .fb-node-head b { font-family: Consolas, monospace; }
 .fb-node-st { margin-left: auto; font-size: 11px; color: var(--fg2); }
@@ -219,6 +222,9 @@
 .fb-graph .fb-edge.hi { stroke-width: 2.4; }
 .fb-node.hi-dep { box-shadow: 0 0 0 2px var(--warn-bd); }
 .fb-node.hi-of { box-shadow: 0 0 0 2px var(--accent-bd); }
+/* 当前节点（悬停中或已选中）紫色描边加淡紫底，与前置（黄）、后续（蓝）区分；写在后面以覆盖前置 / 后续色。 */
+.fb-graph .fb-node.hi-self, .fb-graph .fb-node.on { box-shadow: 0 0 0 2px var(--group-fg), 0 2px 10px var(--shadow); background: color-mix(in srgb, var(--group-fg) 10%, var(--bg)); }
+.fb-graph .fb-node.hi-self .fb-node-head b, .fb-graph .fb-node.on .fb-node-head b { color: var(--group-fg); }
 .fb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 8px; font-size: 12px; color: var(--fg2); }
 .fb-legend i { display: inline-block; width: 18px; height: 0; margin-right: 5px; vertical-align: middle; border-top: 2px solid; }
 .fb-legend i.done { border-color: color-mix(in srgb, var(--fb-ok) 70%, transparent); }
@@ -278,7 +284,10 @@
 .fb-autos li.v-fail { border-left-color: var(--fb-err); background: color-mix(in srgb, var(--fb-err) 6%, transparent); }
 .fb-idx { min-width: 22px; height: 22px; padding: 0 4px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--bg2); border: 1px solid var(--border2); color: var(--fg2); flex-shrink: 0; }
 .fb-auto-title { flex: 1 1 180px; min-width: 0; }
-.fb-auto-note { display: inline-flex; align-items: center; gap: 2px; color: var(--fg2); font-size: 12px; font-family: Consolas, "Microsoft YaHei UI", monospace; overflow-wrap: anywhere; }
+.fb-auto-note { display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; color: var(--fg2); font-size: 12px; font-family: Consolas, "Microsoft YaHei UI", monospace; overflow-wrap: anywhere; }
+.fb-auto-note > .fb-md { min-width: 0; }
+/* 自测「方式」多为无空格的测试路径：允许收缩，超出行宽单行省略，全文见悬停明细。 */
+.fb-autos .fb-type { align-self: center; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-switch { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--fg2); cursor: pointer; }
 
 .fb-accs { display: flex; flex-direction: column; gap: 8px; }

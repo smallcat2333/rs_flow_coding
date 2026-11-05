@@ -326,7 +326,9 @@ window.FeatBoard = (() => {
   /** 进度环：done / total，total 为 0 时显示空环。 */
   function ring(done, total, tone = 'ok') {
     const r = 15, c = 2 * Math.PI * r, p = total ? done / total : 0;
-    return `<span class="fb-ring ${tone}" role="img" aria-label="${done} / ${total}"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="${r}"/><circle class="v" cx="18" cy="18" r="${r}" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}"/></svg><b>${done}<i>/${total}</i></b></span>`;
+    // 圆环内径约 26px：「6/7」这类短文本单行；超过 3 个字符（如 21/23）改为上下两行，避免数字超出圆环。
+    const stack = `${done}/${total}`.length > 3 ? ' class="stack"' : '';
+    return `<span class="fb-ring ${tone}" role="img" aria-label="${done} / ${total}" title="${done} / ${total}"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="${r}"/><circle class="v" cx="18" cy="18" r="${r}" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}"/></svg><b${stack}>${done}<i>/${total}</i></b></span>`;
   }
 
   /** 状态药丸：cls 决定颜色，text 为显示文字，title 为完整原文。 */
@@ -547,10 +549,21 @@ window.FeatBoard = (() => {
       edges.push(`<path class="fb-edge ${tone}" data-from="${esc(p)}" data-to="${esc(t.id)}" data-source="${j}" data-target="${i}" marker-end="url(#fb-arrow-${tone})"/>`);
     }));
     const marker = (tone) => `<marker id="fb-arrow-${tone}" class="${tone}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8z"/></marker>`;
+    // 子任务登记在 §3.2 开发记录的子任务表里（T3.1 归 T3），同一子号以最后一次记录为准，与任务详情同口径。
+    const subsOf = new Map();
+    for (const r of d.devs) for (const s of r.subs) {
+      const owner = s.id.replace(/\.\d+$/, ''), m = subsOf.get(owner) || new Map();
+      m.delete(s.id);
+      m.set(s.id, s);
+      subsOf.set(owner, m);
+    }
     const nodes = list.map((t, i) => {
-      const tip = [`${t.id} ${t.title}`, `状态：${t.raw || '未填'}`, t.depRaw && t.depRaw !== '-' ? `依赖：${t.depRaw}` : '无依赖', '点击查看任务详情，再点取消选中'].join('\n');
+      const subs = [...(subsOf.get(t.id)?.values() || [])], done = subs.filter((s) => s.state === 'done').length;
+      const tip = [`${t.id} ${t.title}`, `状态：${t.raw || '未填'}`, t.depRaw && t.depRaw !== '-' ? `依赖：${t.depRaw}` : '无依赖',
+        ...(subs.length ? [`子任务 ${done}/${subs.length}：`, ...subs.map((s) => `  ${s.id} ${s.goal.replace(/`/g, '')} · ${s.raw || TASK_NAME[s.state]}`)] : []),
+        '点击查看任务详情，再点取消选中'].join('\n');
       return `<button class="fb-node t-${t.state}${st.selectedT === t.id ? ' on' : ''}" data-level="${depth[i]}" data-node="${esc(t.id)}" data-deps="${esc(t.deps.join(' '))}" data-line="${t.n}" data-key="task-${esc(t.id)}" aria-pressed="${st.selectedT === t.id}" title="${esc(tip)}" ${act(() => selectTask(t.id))}>
-        <span class="fb-node-head"><b>${esc(t.id)}</b><span class="fb-node-st">${TASK_NAME[t.state]}</span></span>
+        <span class="fb-node-head"><b>${esc(t.id)}</b>${subs.length ? `<span class="fb-node-sub${done === subs.length ? ' all' : ''}">子 ${done}/${subs.length}</span>` : ''}<span class="fb-node-st">${TASK_NAME[t.state]}</span></span>
         <span class="fb-node-title">${esc(t.title)}</span></button>`;
     }).join('');
     return `<div class="fb-graph" role="group" aria-label="任务依赖关系图"><div class="fb-graph-in">
@@ -572,8 +585,13 @@ window.FeatBoard = (() => {
     return `${d} L${last[0]} ${last[1]}`;
   }
 
+  /** 跨层线束：通道中心距、最多并排的通道数（超出循环复用）、最外侧通道离图边、最内侧通道与节点之间的留空。 */
+  const WIRE = { pitch: 5, max: 10, edge: 4, clear: 14 };
+
   /**
    * 用实际图宽重排节点与连线：横向能放下全部依赖层时从左到右，否则从上到下，同一层按宽度折为多行。
+   * 跨层依赖走左侧（横向图为上侧）预留的线束带：同一前置发出的线并成一束共用通道，按跨度由短到长分到最内侧的
+   * 空闲通道，层层嵌套不交叉；线束带宽度按实际通道数留出，与节点之间保持空白。
    * 只更新几何，不重建控件或改变选中状态；ResizeObserver 和每次渲染后调用。隐藏或零宽度时等下次可见再排。
    */
   function layoutGraph() {
@@ -583,22 +601,62 @@ window.FeatBoard = (() => {
     const levels = [];
     nodes.forEach((node, i) => (levels[Number(node.dataset.level)] ||= []).push(i));
     const horizontal = levels.length * G.w + (levels.length - 1) * G.gap + G.pad * 2 <= width;
-    const cols = Math.max(1, Math.min(3, Math.floor((width - G.pad * 2 + G.rowGap) / (150 + G.rowGap))));
-    const nodeW = horizontal ? G.w : Math.min(300, (width - G.pad * 2 - (cols - 1) * G.rowGap) / cols);
-    const positions = [];
-    let y = G.pad, height = 0;
-    levels.forEach((level, li) => {
-      if (!level) return;
-      level.forEach((i, order) => {
-        if (horizontal) positions[i] = { x: G.pad + li * (G.w + G.gap), y: G.pad + order * (G.h + G.rowGap) };
-        else {
-          const row = Math.floor(order / cols), inRow = Math.min(cols, level.length - row * cols);
-          const left = (width - inRow * nodeW - (inRow - 1) * G.rowGap) / 2;
-          positions[i] = { x: left + (order % cols) * (nodeW + G.rowGap), y: y + row * (G.h + G.rowGap) };
-        }
+    const level = (i) => Number(nodes[i].dataset.level);
+    const edges = [...graph.querySelectorAll('.fb-edge')].map((el) => ({ el, s: Number(el.dataset.source), t: Number(el.dataset.target) }));
+
+    /** 给定线束带宽度排节点：纵向图在带右侧的剩余宽度内居中折行，横向图整体下移；返回坐标与节点宽度。 */
+    const place = (band) => {
+      const start = Math.max(G.pad, band), avail = width - G.pad - start;
+      const cols = Math.max(1, Math.min(3, Math.floor((avail + G.rowGap) / (150 + G.rowGap))));
+      const nodeW = horizontal ? G.w : Math.min(300, (avail - (cols - 1) * G.rowGap) / cols);
+      const positions = [];
+      let y = G.pad;
+      levels.forEach((lv, li) => {
+        if (!lv) return;
+        lv.forEach((i, order) => {
+          if (horizontal) positions[i] = { x: G.pad + li * (G.w + G.gap), y: start + order * (G.h + G.rowGap) };
+          else {
+            const row = Math.floor(order / cols), inRow = Math.min(cols, lv.length - row * cols);
+            const left = start + (avail - inRow * nodeW - (inRow - 1) * G.rowGap) / 2;
+            positions[i] = { x: left + (order % cols) * (nodeW + G.rowGap), y: y + row * (G.h + G.rowGap) };
+          }
+        });
+        if (!horizontal) y += Math.ceil(lv.length / cols) * (G.h + G.rowGap) - G.rowGap + G.gap;
       });
-      if (!horizontal) y += Math.ceil(level.length / cols) * (G.h + G.rowGap) - G.rowGap + G.gap;
-    });
+      return { positions, nodeW };
+    };
+
+    /** 跨层线按前置分束，记下沿主方向占用的区间（出口到最远目标），按跨度由短到长贪心分配不重叠的通道。 */
+    const bundle = ({ positions, nodeW }) => {
+      const groups = new Map();
+      edges.filter((e) => level(e.t) - level(e.s) > 1).forEach((e) => {
+        const a = positions[e.s], b = positions[e.t];
+        const from = horizontal ? a.x + nodeW : a.y + G.h, to = horizontal ? b.x : b.y;
+        const g = groups.get(e.s) || { from, to, lane: 0 };
+        g.to = Math.max(g.to, to);
+        groups.set(e.s, g);
+      });
+      const lanes = [];
+      [...groups.values()].sort((p, q) => (p.to - p.from) - (q.to - q.from)).forEach((g) => {
+        let k = lanes.findIndex((spans) => spans.every((s) => g.to < s.from - 1 || g.from > s.to + 1));
+        if (k < 0) { k = lanes.length; lanes.push([]); }
+        lanes[k].push(g);
+        g.lane = k;
+      });
+      return { groups, count: lanes.length };
+    };
+
+    // 线束带宽度依赖通道数，通道数又依赖折行后的坐标：重排到宽度稳定（最多三轮）。
+    let band = 0, laid = place(0), wires = bundle(laid);
+    for (let pass = 0; pass < 3; pass++) {
+      const want = wires.count ? WIRE.edge + (Math.min(wires.count, WIRE.max) - 1) * WIRE.pitch + WIRE.clear : 0;
+      if (want === band) break;
+      band = want;
+      laid = place(band);
+      wires = bundle(laid);
+    }
+    const { positions, nodeW } = laid;
+    let height = 0;
     nodes.forEach((node, i) => {
       const p = positions[i];
       Object.assign(node.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${nodeW}px`, height: `${G.h}px` });
@@ -609,23 +667,28 @@ window.FeatBoard = (() => {
     svg.setAttribute('width', width);
     svg.setAttribute('height', height);
     graph.dataset.direction = horizontal ? 'horizontal' : 'vertical';
-    // 4px 中心距让 2.4px 高亮线仍留出 1px 以上空隙；边缘通道用满后循环复用。
-    const lanePitch = 4, laneCount = Math.floor((G.pad - 4) / lanePitch) + 1;
-    let crossLane = 0;
-    graph.querySelectorAll('.fb-edge').forEach((edge) => {
-      const a = positions[Number(edge.dataset.source)], b = positions[Number(edge.dataset.target)];
+    // 主方向上节点的起点，用于求出口后方 / 入口前方真正空着的间隙（同层折行时只有行距）。
+    const starts = positions.map((p) => (horizontal ? p.x : p.y)), size = horizontal ? nodeW : G.h;
+    const after = (edge) => { const next = Math.min(...starts.filter((s) => s >= edge)); return Number.isFinite(next) ? next - edge : G.gap; };
+    const before = (edge) => { const prev = Math.max(...starts.map((s) => s + size).filter((e) => e <= edge)); return Number.isFinite(prev) ? edge - prev : G.gap; };
+    const shown = Math.min(wires.count, WIRE.max);
+    /** 第 lane 条通道在宽 space 的间隙内的拐弯位置：各通道错开，挤不下时缩小间距，始终留在间隙内。 */
+    const lead = (space, lane) => space / 2 + (lane - (shown - 1) / 2) * Math.min(WIRE.pitch, Math.max(0, space - 8) / Math.max(1, shown - 1));
+    edges.forEach(({ el, s, t }) => {
+      const a = positions[s], b = positions[t];
       const x1 = horizontal ? a.x + nodeW : a.x + nodeW / 2, y1 = horizontal ? a.y + G.h / 2 : a.y + G.h;
       const x2 = horizontal ? b.x - 3 : b.x + nodeW / 2, y2 = horizontal ? b.y + G.h / 2 : b.y - 3;
       const bend = Math.max(16, (horizontal ? x2 - x1 : y2 - y1) / 2);
-      // 跨层依赖共用左侧（横向图为上侧）通道，圆角接入与转出，避开中间节点。
-      const skip = Number(nodes[Number(edge.dataset.target)].dataset.level) - Number(nodes[Number(edge.dataset.source)].dataset.level) > 1;
-      if (skip) {
-        const lane = crossLane++ % laneCount;
-        const lead = G.gap / 2 + (lane - (laneCount - 1) / 2) * lanePitch, rail = 2 + lane * lanePitch;
-        edge.setAttribute('d', roundedRoute(horizontal
-          ? [[x1, y1], [x1 + lead, y1], [x1 + lead, rail], [x2 - lead, rail], [x2 - lead, y2], [x2, y2]]
-          : [[x1, y1], [x1, y1 + lead], [rail, y1 + lead], [rail, y2 - lead], [x2, y2 - lead], [x2, y2]]));
-      } else edge.setAttribute('d', horizontal ? `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
+      const group = level(t) - level(s) > 1 && wires.groups.get(s);
+      if (group) {
+        // 内侧通道最靠近节点；出口与入口的拐弯都落在相邻两行之间的空隙里，不压到其他节点。
+        const lane = group.lane % WIRE.max, rail = Math.max(2, band - WIRE.clear - lane * WIRE.pitch);
+        const exit = horizontal ? x1 : y1, entry = horizontal ? b.x : b.y;
+        const out = exit + lead(after(exit), lane), inn = entry - lead(before(entry), lane);
+        el.setAttribute('d', roundedRoute(horizontal
+          ? [[x1, y1], [out, y1], [out, rail], [inn, rail], [inn, y2], [x2, y2]]
+          : [[x1, y1], [x1, out], [rail, out], [rail, inn], [x2, inn], [x2, y2]]));
+      } else el.setAttribute('d', horizontal ? `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`
         : `M${x1} ${y1} C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}`);
     });
   }
@@ -715,7 +778,11 @@ window.FeatBoard = (() => {
       ${card(d, '3.2', '开发记录', recs, pill('muted', `全部 ${d.devs.length} 条`))}`;
   }
 
-  /** §4.1 自测：只读列表，结果色块，备注像路径时带复制按钮。 */
+  /**
+   * §4.1 自测：只读列表，结果色块，备注像路径时带复制按钮。
+   * 「方式」常是不含空格的测试路径，超宽时单行省略；方式与备注悬停显示整行明细（自测项 / 方式 / 结果 / 备注全文，
+   * 去掉 Markdown 反引号），卡片内不出现横向滚动。
+   */
   function autoList(d) {
     const t = d.auto;
     if (!t || !t.rows.length) return empty('还没有程序自测项', 'smallcat-feat-4-test');
@@ -723,9 +790,11 @@ window.FeatBoard = (() => {
     return `<ul class="fb-autos">${t.rows.map((r) => {
       const c = (i) => (i >= 0 && r.cells[i]?.text) || '';
       const v = verdict(c(ri)), note = c(ni);
+      const tip = esc([`${c(0)}. ${c(ti)}`, c(wi) && `方式：${c(wi)}`, `结果：${c(ri) || '未填'}`, note && `备注：${note}`]
+        .filter(Boolean).join('\n').replace(/`/g, ''));
       return `<li class="v-${v || 'none'}" data-line="${r.n}"><span class="fb-idx">${esc(c(0))}</span><span class="fb-auto-title">${cell(c(ti))}</span>
-        ${c(wi) ? `<span class="fb-type">${esc(c(wi))}</span>` : ''}${pill('v-' + (v || 'none'), c(ri) || '未填', c(ri))}
-        ${note ? `<span class="fb-auto-note">${cell(note)}${/[\\/]|\.\w{1,4}\b/.test(note) ? `<button class="fb-icon" data-copy="${esc(note)}" title="复制备注（测试文件路径）" aria-label="复制备注">${ICON_COPY}</button>` : ''}</span>` : ''}</li>`;
+        ${c(wi) ? `<span class="fb-type" title="${tip}">${esc(c(wi))}</span>` : ''}${pill('v-' + (v || 'none'), c(ri) || '未填', c(ri))}
+        ${note ? `<span class="fb-auto-note" title="${tip}">${cell(note)}${/[\\/]|\.\w{1,4}\b/.test(note) ? `<button class="fb-icon" data-copy="${esc(note)}" title="复制备注（测试文件路径）" aria-label="复制备注">${ICON_COPY}</button>` : ''}</span>` : ''}</li>`;
     }).join('')}</ul>`;
   }
 
