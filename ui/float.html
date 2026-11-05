@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <title>Flow Coding 悬浮窗</title>
+  <link rel="stylesheet" href="float.css">
+</head>
+<body>
+  <main id="card" role="button" tabindex="0" aria-label="回到 Flow Coding" title="单击回到 Flow Coding，拖动移动位置">
+    <header>
+      <svg id="logo" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2.5" width="7" height="5" rx="1.5"/><rect x="11" y="12.5" width="7" height="5" rx="1.5"/><path d="M5.5 7.5v5.5h5.5"/></svg>
+      <div class="where">
+        <strong id="app">Flow Coding</strong>
+        <span id="chart">等待主窗口数据</span>
+      </div>
+    </header>
+    <section class="court">
+      <div class="side" id="side-user">
+        <b class="num" id="n-user">0</b>
+        <span class="who">等你审核</span>
+        <span class="chips" id="c-user"></span>
+      </div>
+      <div class="side" id="side-agent">
+        <b class="num" id="n-agent">0</b>
+        <span class="who">等 Agent 处理</span>
+        <span class="chips" id="c-agent"></span>
+      </div>
+    </section>
+    <footer id="live"><i class="pulse" aria-hidden="true"></i><span id="live-text">暂无 Agent 动态</span></footer>
+  </main>
+  <script src="float.js"></script>
+</body>
+</html>

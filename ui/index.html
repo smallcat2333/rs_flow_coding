@@ -202,6 +202,7 @@
             <li role="treeitem" data-settings-tab="sidebar" aria-selected="false" tabindex="-1"><span class="settings-node">侧栏</span></li>
             <li role="treeitem" data-settings-tab="links" aria-selected="false" tabindex="-1"><span class="settings-node">链接与页签</span></li>
             <li role="treeitem" data-settings-tab="updates" aria-selected="false" tabindex="-1"><span class="settings-node">内容更新</span></li>
+            <li role="treeitem" data-settings-tab="float" aria-selected="false" tabindex="-1"><span class="settings-node">悬浮窗</span></li>
           </ul>
         </li>
         <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">项目</span>
@@ -236,6 +237,10 @@
           <h3>内容更新</h3><p>Agent 或外部修改当前文件时，控制同步后的显示位置。</p>
           <div class="settings-well"><label class="settings-check"><input id="settings-keep-flow-view" type="checkbox" checked>图内容更新时维持原有缩放与位置</label><p>默认开启。关闭后，图内容更新时自动适应视图。</p></div>
           <div class="settings-well"><label class="settings-check"><input id="settings-keep-feat-position" type="checkbox" checked>Feat 内容更新时保留原位置</label><p>默认开启。关闭后，Feat 内容更新时回到顶部。</p></div>
+        </section>
+        <section data-settings-panel="float" aria-label="悬浮窗" hidden>
+          <h3>悬浮窗</h3><p>切到其他程序时，在屏幕角落留一张磨砂信息卡，不抢当前程序的焦点。</p>
+          <div class="settings-well"><label class="settings-check"><input id="settings-float" type="checkbox" checked>Flow Coding 不在最前时显示悬浮窗</label><p>默认开启。卡片显示当前 APP 中等你审核和等 Agent 处理的节点数，以及 Agent 正在编辑或最近修改的文件。单击卡片回到 Flow Coding，拖动可移动位置，位置会被记住。回到 Flow Coding 后卡片自动隐藏。</p></div>
         </section>
         <section data-settings-panel="projects" aria-label="项目目录" hidden>
           <h3>项目目录</h3><p>扫描各项目中的 docs/flow 和 docs/feat，按 APP 汇总。</p>
@@ -379,6 +384,7 @@ flowctl unlock &lt;文件&gt;</pre>
   <script src="tabs.js"></script>
   <script src="app.js"></script>
   <script src="timeline.js"></script>
+  <script src="float_feed.js"></script>
   <script src="settings.js"></script>
   <script src="live_markdown.js"></script>
   <script src="progress.js"></script>

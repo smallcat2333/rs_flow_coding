@@ -158,6 +158,7 @@ async function refresh(full = false) {
   }
   renderTree();
   renderCurrentBar();
+  window.FloatFeed?.push();
   return true;
 }
 

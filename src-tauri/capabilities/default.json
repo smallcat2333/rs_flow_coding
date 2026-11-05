@@ -1,11 +1,12 @@
 {
   "identifier": "main-capability",
-  "windows": ["main", "pop-*"],
+  "windows": ["main", "pop-*", "float"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:window:allow-destroy",
     "core:window:allow-close",
-    "core:window:allow-set-fullscreen"
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-start-dragging"
   ]
 }

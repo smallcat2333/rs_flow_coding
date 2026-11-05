@@ -1,0 +1,82 @@
+/* 悬浮窗：窗口本身是桌面合成 Acrylic 磨砂，这里只铺一层半透明底色与文字；尺寸固定 380×184。
+   两侧竖线取协作色的描边色：左侧黄（等你审），右侧绿（等 Agent 实现），零值时变淡。 */
+:root {
+  --glass: rgba(28, 30, 36, .44);
+  --edge: rgba(255, 255, 255, .12);
+  --edge-hover: rgba(255, 255, 255, .26);
+  --fg: #f3f4f6;
+  --dim: rgba(243, 244, 246, .64);
+  --faint: rgba(243, 244, 246, .32);
+  --rule: rgba(255, 255, 255, .10);
+  --user: #d6b656;
+  --agent: #82b366;
+  --live: #3fb950;
+}
+[data-theme="light"] {
+  --glass: rgba(248, 249, 251, .52);
+  --edge: rgba(0, 0, 0, .08);
+  --edge-hover: rgba(0, 0, 0, .2);
+  --fg: #1c1f24;
+  --dim: rgba(28, 31, 36, .62);
+  --faint: rgba(28, 31, 36, .3);
+  --rule: rgba(0, 0, 0, .08);
+  --user: #b8962e;
+  --agent: #5f9a45;
+  --live: #1f883d;
+}
+
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+body {
+  font: 13px/1.4 "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  color: var(--fg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#card {
+  position: absolute; inset: 0;
+  display: grid; grid-template-rows: auto 1fr auto;
+  padding: 14px 18px 12px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color .15s;
+}
+#card:hover, #card:focus-visible { border-color: var(--edge-hover); }
+
+header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#logo { flex: 0 0 18px; width: 18px; height: 18px; fill: none; stroke: var(--dim); stroke-width: 1.4; stroke-linejoin: round; }
+.where { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#app { font-weight: 600; white-space: nowrap; flex: 0 0 auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+#chart { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.court { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: center; }
+.side { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; padding-left: 12px; border-left: 3px solid var(--user); min-width: 0; }
+#side-agent { border-left-color: var(--agent); }
+.side.zero, #side-agent.zero { border-left-color: var(--rule); }
+.num {
+  grid-row: 1 / 3;
+  font: 600 38px/1 "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.5px;
+  align-self: center;
+}
+.side.zero .num { color: var(--faint); }
+.who { font-size: 12px; color: var(--dim); align-self: end; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 2px 8px; align-self: start; font-size: 12px; line-height: 17px; font-variant-numeric: tabular-nums; min-height: 17px; }
+.chip { white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 4px; }
+.sw { width: 9px; height: 9px; border: 1px solid rgba(0, 0, 0, .28); border-radius: 2px; }
+/* 删除类与画布一致用灰白斜线；9px 太小画不出虚线，改用描边灰 + 斜线区分。 */
+.sw.dash { border-color: #666; background-image: repeating-linear-gradient(45deg, #9aa0a6 0 1px, transparent 1px 3px); }
+
+footer { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--dim); min-width: 0; }
+#live-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pulse { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+footer.live { color: var(--fg); }
+footer.live .pulse { background: var(--live); animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { footer.live .pulse { animation: none; } }

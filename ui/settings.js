@@ -130,6 +130,7 @@ window.Settings = (() => {
     $('settings-projects-new-tab').checked = projectsNewTab();
     $('settings-force-split').checked = forceSplit();
     $('settings-tab-lifetime').value = tabLifetime();
+    $('settings-float').checked = await invoke('get_float_enabled');
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -179,6 +180,15 @@ window.Settings = (() => {
       localStorage.setItem('fc-tab-lifetime', input.value);
       Tabs.checkExpiry();
       $('settings-msg').textContent = '页签存活时间已保存';
+    };
+    /** 悬浮窗开关存在 Rust 侧（窗口焦点判定在后端），失败时复位勾选并提示。 */
+    $('settings-float').onchange = (e) => {
+      const box = e.currentTarget;
+      act(box, async () => {
+        try { await invoke('set_float_enabled', { enabled: box.checked }); }
+        catch (error) { box.checked = !box.checked; throw error; }
+        return box.checked ? '已开启悬浮窗，切到其他程序时显示' : '已关闭悬浮窗';
+      });
     };
     $('settings-projects-new-tab').onchange = (e) => {
       localStorage.setItem('fc-projects-new-tab', e.currentTarget.checked ? '1' : '0');

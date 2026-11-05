@@ -3,6 +3,7 @@
 
 pub mod db;
 pub mod feat;
+pub mod float;
 pub mod flow;
 pub mod links;
 pub mod lock;
@@ -527,15 +528,23 @@ pub fn run() {
             }
         }))
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
+        .setup(|app| { float::init(app.handle()); Ok(()) })
         .invoke_handler(tauri::generate_handler![
             get_config, set_roots, remove_directory, summary, read_diagram, save_diagram, release_lock,
             lock_status, history, diff, snapshot_xml, restore, create_diagram,
             read_md, save_md, tagged_nodes, feat_progress, create_feat, open_popout, resolve_flow_link,
             rename::rename_entry,
             lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar,
-            maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache
+            maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache,
+            float::get_float_enabled, float::set_float_enabled, float::float_activate
         ])
         .on_window_event(|window, event| {
+            // 悬浮窗：App 窗口焦点变化或弹出窗口关闭后，重新判定 App 是否还在前台
+            match event {
+                tauri::WindowEvent::Focused(focused) => float::on_focus(window.app_handle(), window.label(), *focused),
+                tauri::WindowEvent::Destroyed => float::on_focus(window.app_handle(), window.label(), false),
+                _ => {}
+            }
             if let tauri::WindowEvent::Destroyed = event {
                 let label = window.label();
                 if label == "main" {
