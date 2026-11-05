@@ -431,15 +431,15 @@ window.FeatBoard = (() => {
     const stages = STAGES.filter((s) => s.k !== '0' || d.h2['0']).map((s) => {
       const i = STAGES.indexOf(s), [b, tone, sum] = info[s.k];
       const pos = i < cur ? 'past' : i === cur ? 'current' : 'future';
-      // 开发阶段常驻 T 状态小标签（点击跳到路线图对应节点）；当前选中的阶段下列出章节，点击滚动到该卡片。
+      // 开发阶段常驻 T 状态小标签（点击跳到路线图对应节点）；左侧直接展开各阶段章节，无需点击即可查看与跳转。
       const chips = s.k === '3' && d.tasks.length ? `<div class="fb-tchips">${d.tasks.map((t) => `<button class="fb-tchip t-${t.state}" data-tjump="${esc(t.id)}" title="${esc(`${t.id} ${t.title}\n${TASK_NAME[t.state]}${t.raw && t.raw !== TASK_NAME[t.state] ? '：' + t.raw : ''}`)}">${esc(t.id)}</button>`).join('')}</div>` : '';
-      const toc = st.tab === s.k ? chapters(d, s.k) : [];
+      const toc = chapters(d, s.k);
       return `<div class="fb-stage-item ${pos}">
         <button class="fb-stage ${pos}${st.tab === s.k ? ' on' : ''}" role="tab" aria-selected="${st.tab === s.k}" data-tab="${s.k}" title="${pos === 'current' ? '当前阶段' : pos === 'past' ? '已过阶段' : '未到阶段'}">
         <span class="fb-stage-dot" aria-hidden="true"></span>
         <span class="fb-stage-name">${s.name}${b ? `<span class="fb-badge ${tone}">${esc(b)}</span>` : ''}</span>
         <span class="fb-stage-sum">${esc(sum)}</span></button>
-        ${chips}${toc.length ? `<ol class="fb-toc">${toc.map((c) => `<li><button class="${c.filled ? '' : 'blank'}" data-jump="${c.n}" title="${esc(c.title)}${c.filled ? '' : '（未填写）'}">${esc(c.title)}</button></li>`).join('')}</ol>` : ''}
+        ${chips}${toc.length ? `<ol class="fb-toc">${toc.map((c) => `<li><button class="${c.filled ? '' : 'blank'}" data-jump="${c.n}" data-stage="${s.k}" title="${esc(c.title)}${c.filled ? '' : '（未填写）'}">${esc(c.title)}</button></li>`).join('')}</ol>` : ''}
       </div>`;
     }).join('');
     // 外层撑满高度画背景与分隔线，内层吸顶：内容区滚动时导航保持可见。
@@ -941,10 +941,19 @@ window.FeatBoard = (() => {
   function bind() {
     const box = $('feat-board');
     box.addEventListener('click', (e) => {
+      const jump = e.target.closest('[data-jump]');
+      if (jump) {
+        const stage = jump.dataset.stage;
+        if (stage && stage !== st.tab) {
+          st.tab = stage;
+          st.selectedT = '';
+          render();
+        }
+        flashTo(box.querySelector(`.fb-page [data-line="${jump.dataset.jump}"]`), 'start');
+        return;
+      }
       const tab = e.target.closest('[data-tab]');
       if (tab) { st.tab = tab.dataset.tab; st.selectedT = ''; render(); box.scrollTop = 0; return; }
-      const jump = e.target.closest('[data-jump]');
-      if (jump) { flashTo(box.querySelector(`.fb-page [data-line="${jump.dataset.jump}"]`), 'start'); return; }
       const tj = e.target.closest('[data-tjump]');
       if (tj) {
         st.tab = '3';

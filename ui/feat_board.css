@@ -82,7 +82,7 @@
 .fb-tchip.t-waiting { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); font-weight: 700; }
 .fb-tchip.t-todo { border-style: dashed; }
 .fb-tchip.t-paused, .fb-tchip.t-cancelled, .fb-tchip.t-unknown { color: var(--muted); border-style: dotted; }
-/* 当前阶段的章节目录 */
+/* 各阶段章节目录默认直接展开。 */
 .fb-toc { list-style: none; margin: 0; padding: 2px 0 4px 26px; display: flex; flex-direction: column; }
 .fb-toc button { display: block; width: 100%; padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fg2); font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-toc button:hover { background: var(--hover); color: var(--accent); }
@@ -333,18 +333,17 @@
   .fb-nexts { padding: 12px 12px 0; }
   .fb-card { padding: 10px; }
 }
-/* 更窄时阶段导航放到上方自动换行，只保留当前阶段的章节入口。 */
+/* 更窄时导航放到上方，各阶段与章节仍全部直接展开。 */
 @container board (max-width: 520px) {
   .fb-shell { flex-direction: column; }
   .fb-rail { flex: none; border-right: 0; border-bottom: 1px solid var(--border); }
   .fb-rail-in { position: static; padding: 8px 12px; gap: 6px; }
   .fb-rail-head, .fb-meta { display: none; }
-  .fb-stages { flex-direction: row; flex-wrap: wrap; }
+  .fb-stages { flex-direction: column; }
   .fb-stage { width: auto; grid-template-columns: 8px auto; column-gap: 6px; padding: 4px 6px; }
   .fb-stage-item::after, .fb-stage-sum, .fb-tchips { display: none; }
   .fb-stage-dot { grid-row: auto; margin-top: 0; width: 8px; height: 8px; }
-  .fb-stage-item:has(.on) { display: contents; }
-  .fb-stage-item:has(.on) .fb-toc { order: 1; display: flex; flex: 0 0 100%; flex-direction: row; flex-wrap: wrap; gap: 2px 6px; padding: 4px 0 0; border-top: 1px solid var(--border2); }
+  .fb-stage-item .fb-toc { display: flex; flex-direction: row; flex-wrap: wrap; gap: 2px 6px; padding: 4px 0 0; border-top: 1px solid var(--border2); }
   .fb-toc button { font-size: 11px; }
   .fb-stage .fb-badge { padding: 0 4px; }
   .fb-acc-fields, .fb-note { margin-left: 0; padding-left: 0; }
