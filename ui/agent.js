@@ -47,6 +47,12 @@ function openSession(id) {
   const t = $(`.tab[data-tab="${id}"]`);
   if (t) { t.scrollIntoView({ block: 'nearest', inline: 'nearest' }); t.classList.add('flash'); }
 }
+/** 机器人指定的会话：先显示终端，未运行时自动启动或续接；普通页签切换不触发。 */
+function openFocusedSession(id) {
+  if (!S.has(id)) return;
+  openSession(id);
+  if (!S.get(id).running) startSession(id);
+}
 function closeTab(id) {
   const i = openTabs.indexOf(id);
   openTabs.splice(i, 1);
@@ -181,8 +187,14 @@ function fitTerm(id, force) {
     invoke('agent_resize', { id, cols, rows }).catch(() => {});
   }
 }
+// 同一会话启动请求未完成时不重复发送，避免连续点击机器人或续接按钮重复启动。
+const startingSessions = new Set();
+/** 启动或续接会话；已运行和正在启动时跳过，失败显示原因并允许重试。 */
 async function startSession(id) {
+  if (S.get(id)?.running || startingSessions.has(id)) return;
+  startingSessions.add(id);
   try { await invoke('agent_start', { id }); } catch (e) { toast('启动失败：' + e); }
+  finally { startingSessions.delete(id); }
 }
 
 // ---------------- 总览：需要处理的事项 + 按 APP 列出会话与 Feat、节点的关系 ----------------
@@ -317,7 +329,7 @@ listen('agent-reset', (e) => {
   t.cols = 0;
   requestAnimationFrame(() => fitTerm(e.payload.id, true));
 });
-listen('agent-focus', (e) => openSession(e.payload.id));
+listen('agent-focus', (e) => openFocusedSession(e.payload.id));
 // 主窗口机器人：Feat / 流程图还没有会话时，打开预填好的新建面板
 listen('agent-prefill', (e) => openNewBox(e.payload));
 listen('agent-main-select', (e) => onMainSelect(e.payload));
@@ -530,7 +542,7 @@ new ResizeObserver(() => {
   } catch (e) { toast('读取会话失败：' + e); }
   const params = new URLSearchParams(location.search), focus = params.get('focus'), prefill = params.get('new');
   renderMix(); renderToday(); renderLanes(); renderTicker();
-  if (focus && S.has(focus)) openSession(focus);
+  if (focus && S.has(focus)) openFocusedSession(focus);
   else { renderTabs(); renderPane(); renderRows(); }
   if (prefill) openNewBox(JSON.parse(prefill));
   requestAnimationFrame(frame);

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Flow Coding",
-  "version": "0.2.4",
+  "version": "0.2.9",
   "identifier": "com.smallcat.rs-flow-coding",
   "build": {
     "frontendDist": "../ui"
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Flow Coding V.0.2.4",
+        "title": "Flow Coding V.0.2.9",
         "width": 1500,
         "height": 920,
         "minWidth": 900,
