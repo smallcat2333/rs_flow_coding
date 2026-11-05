@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="progress.css">
   <link rel="stylesheet" href="feat_board.css">
   <link rel="stylesheet" href="timeline.css">
+  <link rel="stylesheet" href="agent_bots.css">
 </head>
 <body>
   <aside id="side">
@@ -79,6 +80,8 @@
           <button id="btn-ids" title="显示 / 隐藏节点左上角的 ID 小卡">ID</button>
           <button id="btn-history" disabled>历史对比</button>
           <div class="pane-tools" role="group" aria-label="流程图工具">
+          <button id="btn-flow-bot" class="pane-tool fc-bot" data-state="none" disabled></button>
+          <button id="btn-flow-guest" class="pane-tool fc-bot fc-guest" data-state="none" hidden></button>
           <button id="btn-copy-flow-path" class="pane-tool" title="复制当前流程图的绝对路径，可发给 Agent 继续处理" aria-label="复制流程图路径" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 16h6"/></svg></button>
           <button id="btn-flow-full" class="pane-tool" title="全屏显示流程图（F11，Esc 退出）" aria-label="全屏显示流程图" aria-pressed="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
           <button class="pane-float pane-tool no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M9 3h12v12"/></svg></button>
@@ -135,6 +138,7 @@
           <button id="btn-feat-nodes" class="pane-tool" title="显示 / 隐藏关联节点" aria-label="关联节点" aria-controls="fs-nodes" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="6" rx="1"/><path d="M12 8v5M5 13h14M5 13v3M19 13v3"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/></svg><span id="feat-node-count" hidden>0</span></button>
           <button id="btn-feat-prog" class="pane-tool" title="显示 / 隐藏本 Feat 的推进树" aria-label="推进" aria-controls="fs-prog" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M5 6h5M5 12h5M5 18h5m3-13 2 2 4-4M13 12h6M13 18h6"/></svg></button>
           <div class="pane-tools" role="group" aria-label="Feat 工具">
+          <button id="btn-feat-bot" class="pane-tool fc-bot" data-state="none" disabled></button>
           <button id="btn-copy-feat-path" class="pane-tool" title="复制当前 Feat 档案的绝对路径，可发给 Agent 继续处理" aria-label="复制 Feat 路径" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="18" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 11h6M9 16h6"/></svg></button>
           <button class="pane-float pane-tool no-solo" title="悬浮" aria-label="悬浮或固定此栏" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M9 3h12v12"/></svg></button>
           <button id="btn-feat-pop" class="pane-tool no-solo" title="在独立窗口打开 Feat" aria-label="在独立窗口打开 Feat"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="13" height="13" rx="1"/><rect x="8" y="3" width="13" height="13" rx="1"/></svg></button>
@@ -404,6 +408,7 @@ flowctl unlock &lt;文件&gt;</pre>
   <script src="progress.js"></script>
   <script src="feat_board.js"></script>
   <script src="feat.js"></script>
+  <script src="agent_bots.js"></script>
   <script src="rename.js"></script>
   <script src="guide.js"></script>
 </body>

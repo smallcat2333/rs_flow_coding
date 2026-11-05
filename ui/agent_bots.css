@@ -1,0 +1,25 @@
+/* 栏顶 Agent 机器人（agent_bots.js）：颜色只表示会话状态，见脚本头部说明。
+   头部填充 = 状态色，描边取同色系深一档，保证白 / 灰在浅色与深色主题下都看得清。 */
+.fc-bot { --bf: #d0d4d9; --bs: #8c959f; --be: #8c959f; gap: 4px; }
+.fc-bot svg { overflow: visible; }
+.fc-bot .hd { fill: var(--bf); stroke: var(--bs); stroke-width: 1.2; }
+.fc-bot .an, .fc-bot .ar { fill: none; stroke: var(--bs); stroke-width: 1.2; stroke-linecap: round; }
+.fc-bot .ab { fill: var(--bs); stroke: none; }
+.fc-bot .ey { fill: var(--be); stroke: none; }
+.fc-bot[data-state="none"] { --bf: transparent; --bs: var(--muted); --be: var(--muted); }
+.fc-bot[data-state="has"] { --bf: #ffffff; --bs: #57606a; --be: #24292f; }
+.fc-bot[data-state="run"] { --bf: #4c8dff; --bs: #1f5fcc; --be: #fff; }
+.fc-bot[data-state="done"] { --bf: #3fb950; --bs: #1a7f37; --be: #fff; }
+.fc-bot[data-state="multi"] { --bf: #a371f7; --bs: #6e40c9; --be: #fff; }
+.fc-bot[data-state="wait"] { --bf: #f2c744; --bs: #9a6700; --be: #24292f; }
+.fc-bot[data-state="err"] { --bf: #f85149; --bs: #a40e26; --be: #fff; }
+html[data-theme="dark"] .fc-bot[data-state="has"] { --bs: #d0d7de; }
+/* 运行中轻微呼吸，等你确认闪烁；减少动态效果时都关闭 */
+.fc-bot[data-state="run"] .hd, .fc-bot[data-state="multi"] .hd { animation: fc-bot-breathe 1.8s ease-in-out infinite; }
+.fc-bot[data-state="wait"] .hd { animation: fc-bot-blink 1s steps(2, jump-none) infinite; }
+@keyframes fc-bot-breathe { 50% { opacity: .55; } }
+@keyframes fc-bot-blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .fc-bot .hd { animation: none !important; } }
+/* 客：同一套颜色，后面跟「客 N」 */
+.fc-bot.fc-guest { width: auto; padding: 4px 8px 4px 6px; font-size: 12px; color: var(--fg2); white-space: nowrap; }
+.fc-bot.fc-guest svg { width: 13px; height: 13px; }

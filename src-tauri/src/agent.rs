@@ -99,6 +99,10 @@ pub struct Live {
     pub focus: Option<NodeRef>,
     pub workers: Vec<Worker>,
     pub exit_code: Option<u32>,
+    /// 最近一轮结束（Stop）的时间；大于 seen 表示「运行完成、你还没看」。
+    pub done: i64,
+    /// 最近一次在 Agent 窗口打开该会话页签的时间。
+    pub seen: i64,
 }
 
 /// 运行中的 PTY 进程句柄。
@@ -184,7 +188,7 @@ fn hub() -> Result<&'static Hub, String> {
 
 /// 未运行状态的初始 Live。
 fn idle_live() -> Live {
-    Live { status: "off".into(), since: now(), turn: 0, beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), focus: None, workers: Vec::new(), exit_code: None }
+    Live { status: "off".into(), since: now(), turn: 0, beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), focus: None, workers: Vec::new(), exit_code: None, done: 0, seen: 0 }
 }
 
 /// 读会话元数据文件；不存在返回空表，损坏直接报错（不覆盖用户数据）。
@@ -824,6 +828,7 @@ fn on_hook(id: &str, event: &str, p: &Value) {
         }
         "Stop" => {
             set_status(e, "idle");
+            e.live.done = t;
             e.live.tool.clear();
             e.live.wait_text.clear();
             e.live.beat = t;
@@ -973,7 +978,34 @@ pub fn agent_list() -> Result<Vec<Value>, String> {
     Ok(list.into_iter().map(|e| view(e, true)).collect())
 }
 
-/// 新建会话并立即启动。title 为空时叫「新会话」；cwd 必须存在。
+/// 路径比较用的归一形式：反斜杠统一为正斜杠、不区分大小写（Windows 路径）。
+fn path_key(p: &str) -> String {
+    p.replace('\\', "/").to_lowercase()
+}
+
+/// 一个 Feat、一张流程图各只能有一个主会话：
+/// - 关联了 Feat 的会话是该 Feat 的主会话；
+/// - 没有 Feat 的会话，是它关联的每张流程图（整图或其中节点）的主会话。
+/// 与其他会话冲突时返回 `DUP:<已有会话 id>:<说明>`，前端据此提示并切到已有会话。
+fn main_conflict(map: &HashMap<String, Entry>, me: &str, feat: &str, links: &[NodeRef]) -> Result<(), String> {
+    let others = || map.values().filter(|e| e.meta.id != me);
+    if !feat.is_empty() {
+        let k = path_key(feat);
+        if let Some(o) = others().find(|e| path_key(&e.meta.feat) == k) {
+            return Err(format!("DUP:{}:这个 Feat 已由会话「{}」负责", o.meta.id, o.meta.title));
+        }
+        return Ok(());
+    }
+    for l in links {
+        let k = path_key(&l.flow);
+        if let Some(o) = others().find(|e| e.meta.feat.is_empty() && e.meta.links.iter().any(|x| path_key(&x.flow) == k)) {
+            return Err(format!("DUP:{}:{} 已由会话「{}」负责", o.meta.id, base(&l.flow), o.meta.title));
+        }
+    }
+    Ok(())
+}
+
+/// 新建会话并立即启动。title 为空时叫「新会话」；cwd 必须存在；Feat / 流程图已有主会话时拒绝（见 main_conflict）。
 #[tauri::command]
 pub fn agent_create(title: String, cwd: String, app: String, feat: String, feat_code: String, links: Vec<NodeRef>, pinned: bool) -> Result<Value, String> {
     if !Path::new(&cwd).is_dir() {
@@ -986,6 +1018,7 @@ pub fn agent_create(title: String, cwd: String, app: String, feat: String, feat_
     let meta = Meta { id: id.clone(), title, cwd, app, feat, feat_code, links, pinned, pin_at: if pinned { t } else { 0 }, created: t, started: false };
     {
         let mut map = h.entries.lock().unwrap();
+        main_conflict(&map, &id, &meta.feat, &meta.links)?;
         map.insert(id.clone(), Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false });
         save_metas(&map)?;
     }
@@ -1032,6 +1065,18 @@ pub fn agent_resize(id: String, cols: u16, rows: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// Agent 窗口打开了该会话的页签：记为已查看，主窗口机器人的「运行完成」绿色随之恢复为白色。
+#[tauri::command]
+pub fn agent_seen(id: String) -> Result<(), String> {
+    let mut map = hub()?.entries.lock().unwrap();
+    let e = map.get_mut(&id).ok_or("会话不存在")?;
+    if e.live.done > e.live.seen {
+        e.live.seen = now();
+        emit_update(e);
+    }
+    Ok(())
+}
+
 /// 当前保留的终端输出与序号（页签打开时回放，之后只接序号更大的输出）。
 #[tauri::command]
 pub fn agent_buffer(id: String) -> Result<Value, String> {
@@ -1041,9 +1086,19 @@ pub fn agent_buffer(id: String) -> Result<Value, String> {
 }
 
 /// 修改会话：名称、置顶、关联 Feat 与节点（patch 中出现的字段才改）。
+/// 改关联后与其他会话争同一个 Feat / 流程图的主会话时拒绝，整个 patch 都不生效。
 #[tauri::command]
 pub fn agent_update(id: String, patch: Value) -> Result<Value, String> {
     let mut map = hub()?.entries.lock().unwrap();
+    if patch.get("feat").is_some() || patch.get("links").is_some() {
+        let cur = &map.get(&id).ok_or("会话不存在")?.meta;
+        let feat = patch["feat"].as_str().map(str::to_string).unwrap_or_else(|| cur.feat.clone());
+        let links: Vec<NodeRef> = match patch.get("links") {
+            Some(l) => serde_json::from_value(l.clone()).map_err(|e| e.to_string())?,
+            None => cur.links.clone(),
+        };
+        main_conflict(&map, &id, &feat, &links)?;
+    }
     let e = map.get_mut(&id).ok_or("会话不存在")?;
     if let Some(t) = patch["title"].as_str() {
         if !t.trim().is_empty() {
@@ -1111,11 +1166,13 @@ pub fn agent_set_settings(claude_path: String, extra_args: String) -> Result<Val
     Ok(settings_view(&set))
 }
 
-/// 打开（或置前）Agent 窗口；focus 为要切到的会话 id。
+/// 打开（或置前）Agent 窗口；focus 为要切到的会话 id；prefill 为新建面板的预填内容
+/// （`{root, feat, links}`，主窗口机器人在 Feat / 流程图还没有会话时传入）。
+/// 窗口已开时经事件转交，未开时放进 URL 参数，由页面启动时读取。
 /// 窗口位置、尺寸记在 `<数据目录>/agent/window.json`，副屏上的位置下次照旧。
 /// Windows 的 WebView2 创建必须离开同步 IPC 线程，所以是 async 命令。
 #[tauri::command]
-pub async fn open_agent_window(app: AppHandle, focus: Option<String>) -> Result<(), String> {
+pub async fn open_agent_window(app: AppHandle, focus: Option<String>, prefill: Option<Value>) -> Result<(), String> {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.unminimize();
         let _ = w.show();
@@ -1123,9 +1180,20 @@ pub async fn open_agent_window(app: AppHandle, focus: Option<String>) -> Result<
         if let Some(id) = focus {
             let _ = app.emit_to(LABEL, "agent-focus", json!({ "id": id }));
         }
+        if let Some(p) = prefill {
+            let _ = app.emit_to(LABEL, "agent-prefill", p);
+        }
         return Ok(());
     }
-    let q = focus.map(|f| format!("?focus={f}")).unwrap_or_default();
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let mut q = Vec::new();
+    if let Some(f) = focus {
+        q.push(format!("focus={}", utf8_percent_encode(&f, NON_ALPHANUMERIC)));
+    }
+    if let Some(p) = prefill {
+        q.push(format!("new={}", utf8_percent_encode(&p.to_string(), NON_ALPHANUMERIC)));
+    }
+    let q = if q.is_empty() { String::new() } else { format!("?{}", q.join("&")) };
     let w = tauri::WebviewWindowBuilder::new(&app, LABEL, tauri::WebviewUrl::App(format!("agent.html{q}").into()))
         .title("Agent - Flow Coding")
         .inner_size(1500.0, 940.0)
@@ -1193,6 +1261,26 @@ mod tests {
         assert_eq!(split_args(r#"--add-dir "E:\My Dir" -x"#).unwrap(), ["--add-dir", r"E:\My Dir", "-x"]);
         assert_eq!(split_args(r#"--a "" b"#).unwrap(), ["--a", "", "b"]);
         assert!(split_args(r#"--a "b"#).is_err());
+    }
+
+    /// 主会话唯一：同一 Feat 只能一个会话；无 Feat 的会话按流程图互斥（路径不分大小写和斜杠）；
+    /// 有 Feat 的会话碰到同一张图不算冲突（它是这张图的客会话）；排除自己。
+    #[test]
+    fn main_session_is_unique() {
+        let entry = |id: &str, feat: &str, flow: &str| {
+            let links = if flow.is_empty() { vec![] } else { vec![NodeRef { flow: flow.into(), node: "n1".into() }] };
+            let meta = Meta { id: id.into(), title: id.into(), cwd: String::new(), app: String::new(), feat: feat.into(), feat_code: String::new(), links, pinned: false, pin_at: 0, created: 0, started: false };
+            (id.to_string(), Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false })
+        };
+        let map: HashMap<String, Entry> = [entry("a", r"E:\p\Feat_1.md", r"E:\p\flow\x.drawio"), entry("b", "", r"E:\p\flow\y.drawio")].into_iter().collect();
+        let link = |f: &str| vec![NodeRef { flow: f.into(), node: String::new() }];
+        let err = main_conflict(&map, "new", "e:/P/feat_1.md", &[]).unwrap_err();
+        assert!(err.starts_with("DUP:a:"), "{err}");
+        assert!(main_conflict(&map, "new", r"E:\p\Feat_2.md", &link(r"E:\p\flow\y.drawio")).is_ok());
+        assert!(main_conflict(&map, "new", "", &link("e:/p/flow/Y.drawio")).unwrap_err().starts_with("DUP:b:"));
+        assert!(main_conflict(&map, "new", "", &link(r"E:\p\flow\x.drawio")).is_ok());
+        assert!(main_conflict(&map, "b", "", &link(r"E:\p\flow\y.drawio")).is_ok());
+        assert!(main_conflict(&map, "a", r"E:\p\Feat_1.md", &[]).is_ok());
     }
 
     /// 等到会话状态满足条件或超时，返回最后一次看到的状态。

@@ -347,7 +347,19 @@ async function createSession() {
     enterId = v.id;
     closeNewBox();
     openSession(v.id);
-  } catch (e) { toast('启动失败：' + e); }
+  } catch (e) {
+    if (!dupToast(e)) toast('启动失败：' + e);
+  }
+}
+
+/** 后端拒绝「同一 Feat / 流程图第二个主会话」时（错误为 DUP:<id>:<说明>），提示并给出切到已有会话的按钮。
+ *  返回是否是这类错误。 */
+function dupToast(e) {
+  const m = /^DUP:([^:]+):(.*)$/s.exec(String(e));
+  if (!m) return false;
+  if (S.has(m[1])) toast(m[2], '切换', () => { closeNewBox(); openSession(m[1]); });
+  else toast(m[2]);
+  return true;
 }
 
 // ---------------- 提示 ----------------

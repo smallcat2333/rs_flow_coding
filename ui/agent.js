@@ -32,7 +32,14 @@ function activate(id) {
   renderTabs();
   renderPane();
   renderRows();
+  markSeen();
 }
+/** 当前页签的会话「运行完成」且窗口在前台时记为已查看，主窗口机器人的绿色随之变白。 */
+function markSeen() {
+  const s = S.get(active);
+  if (s && s.done > s.seen && document.hasFocus()) invoke('agent_seen', { id: s.id }).catch(() => {});
+}
+window.addEventListener('focus', markSeen);
 function openSession(id) {
   if (!S.has(id)) return;
   if (!openTabs.includes(id)) openTabs.push(id);
@@ -81,11 +88,12 @@ function renderHead(s) {
       <span class="muted" title="${esc(s.id)}">会话 ${esc(s.id.slice(0, 8))}</span></div>
   </header>`;
 }
-function termTheme() {
-  const dark = document.documentElement.dataset.theme === 'dark';
-  return dark
-    ? { background: '#0d1117', foreground: '#e6edf3', cursor: '#e6edf3', selectionBackground: '#264f78' }
-    : { background: '#ffffff', foreground: '#24292f', cursor: '#24292f', selectionBackground: '#add6ff', black: '#24292f', brightBlack: '#57606a', white: '#6e7781', brightWhite: '#8c959f' };
+function termTheme() { return window.TerminalThemes.resolve(); }
+/** 仅更新调色板，不重建终端或回放输出，保留选择、滚动位置与输入。 */
+function applyTerminalTheme() {
+  const theme = termTheme();
+  $('#terms').style.setProperty('--t-bg', theme.background);
+  for (const x of terms.values()) x.term.options.theme = theme;
 }
 /** 创建会话终端：回放保留的输出，键盘输入写回 PTY；未运行时按 Enter 启动 / 续接。 */
 function ensureTerm(id) {
@@ -247,7 +255,7 @@ function openFeatInMain(s) {
   toast(`已在主窗口打开 ${s.feat_code || base(s.feat)}`);
 }
 async function patchSession(id, patch) {
-  try { upsert(await invoke('agent_update', { id, patch })); refreshAll(); return true; } catch (e) { toast(String(e)); return false; }
+  try { upsert(await invoke('agent_update', { id, patch })); refreshAll(); return true; } catch (e) { if (!dupToast(e)) toast(String(e)); return false; }
 }
 
 // ---------------- 数据同步 ----------------
@@ -273,6 +281,7 @@ listen('agent-update', (e) => {
   const was = S.get(e.payload.id);
   upsert(e.payload);
   if (was && !was.running && e.payload.running) requestAnimationFrame(() => fitTerm(e.payload.id, true));
+  if (e.payload.id === active) markSeen();
   refreshAll();
 });
 listen('agent-act', (e) => {
@@ -309,6 +318,8 @@ listen('agent-reset', (e) => {
   requestAnimationFrame(() => fitTerm(e.payload.id, true));
 });
 listen('agent-focus', (e) => openSession(e.payload.id));
+// 主窗口机器人：Feat / 流程图还没有会话时，打开预填好的新建面板
+listen('agent-prefill', (e) => openNewBox(e.payload));
 listen('agent-main-select', (e) => onMainSelect(e.payload));
 window.addEventListener('storage', (e) => {
   if (e.key !== 'fc-theme') return;
@@ -517,10 +528,11 @@ new ResizeObserver(() => {
     const [vs0] = await Promise.all([invoke('agent_list'), loadApps()]);
     vs0.forEach((v) => S.set(v.id, v));
   } catch (e) { toast('读取会话失败：' + e); }
-  const focus = new URLSearchParams(location.search).get('focus');
+  const params = new URLSearchParams(location.search), focus = params.get('focus'), prefill = params.get('new');
   renderMix(); renderToday(); renderLanes(); renderTicker();
   if (focus && S.has(focus)) openSession(focus);
   else { renderTabs(); renderPane(); renderRows(); }
+  if (prefill) openNewBox(JSON.parse(prefill));
   requestAnimationFrame(frame);
   let lastSig = '';
   setInterval(() => {
