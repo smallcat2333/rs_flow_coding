@@ -32,8 +32,8 @@
       <nav aria-label="工具入口">
         <button id="btn-search" class="icon-button" title="搜索名称或 Feat 编号" aria-label="搜索" aria-controls="tree-filter" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
         <button id="btn-layout" class="icon-button" title="排布方式" aria-label="排布方式" aria-haspopup="true" aria-controls="layout-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M10.5 4.5v15M10.5 12h10"/></svg></button>
-        <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
         <button id="btn-agent" class="icon-button" title="Agent 窗口" aria-label="Agent 窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M10.5 4h3M9.5 12.5v1.5M14.5 12.5v1.5M3 12v3M21 12v3"/></svg></button>
+        <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
         <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
       </nav>
       <div id="layout-menu" role="group" aria-label="布局" hidden>
@@ -213,12 +213,12 @@
             <li role="treeitem" data-settings-tab="projects" aria-selected="false" tabindex="-1"><span class="settings-node">项目目录</span></li>
           </ul>
         </li>
-        <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">数据维护</span>
         <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">Agent</span>
           <ul role="group">
             <li role="treeitem" data-settings-tab="claude" aria-selected="false" tabindex="-1"><span class="settings-node">Claude Code</span></li>
           </ul>
         </li>
+        <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">数据维护</span>
           <ul role="group">
             <li role="treeitem" data-settings-tab="database" aria-selected="false" tabindex="-1"><span class="settings-node">数据库</span></li>
             <li role="treeitem" data-settings-tab="cache" aria-selected="false" tabindex="-1"><span class="settings-node">目录缓存</span></li>
@@ -258,13 +258,13 @@
           <h3>发现新 APP</h3><p>新增 APP 后重新遍历项目。日常刷新只读取已发现的目录。</p>
           <div class="settings-well"><button id="btn-rescan">全量扫描</button></div>
         </section>
-        <section data-settings-panel="database" aria-label="数据库" hidden>
         <section data-settings-panel="claude" aria-label="Claude Code" hidden>
           <h3>Claude Code</h3><p>Agent 窗口用这里的设置启动会话。模型、权限模式等未在额外参数中指定的配置，仍读取 Claude Code 自己的 settings.json。</p>
           <div class="settings-well"><label for="settings-claude-path">claude 路径</label><input id="settings-claude-path" type="text" spellcheck="false" placeholder="留空自动查找"><p id="settings-claude-found"></p></div>
           <div class="settings-well"><label for="settings-claude-args">额外启动参数</label><input id="settings-claude-args" type="text" spellcheck="false" placeholder="例如 --model opus --permission-mode acceptEdits"><p>追加到每次新建和续接的启动命令，空格分隔，含空格的值用双引号括起。只影响之后启动的会话，运行中的会话停止后重新启动才生效。</p></div>
           <div class="settings-actions"><button id="settings-claude-save">保存</button></div>
         </section>
+        <section data-settings-panel="database" aria-label="数据库" hidden>
           <div class="storage-heading"><h3>数据库</h3><button data-storage-refresh>更新统计</button></div><p id="storage-path"></p>
           <div class="settings-well"><dl class="storage-values"><div><dt>文件占用（含 WAL）</dt><dd id="storage-size">—</dd></div><div><dt>流程图登记</dt><dd id="storage-diagrams">—</dd></div><div><dt>历史快照</dt><dd id="storage-snapshots">—</dd></div><div><dt>可清理旧快照</dt><dd id="storage-old">—</dd></div><div><dt>快照节点记录</dt><dd id="storage-nodes">—</dd></div></dl><p>清理后每张图保留最新快照，更早的对比与回滚记录永久删除。</p><button id="database-clean" class="danger">清理旧历史并回收空间</button></div>
         </section>
