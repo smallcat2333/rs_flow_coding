@@ -117,7 +117,8 @@ test('恢复旧的异 APP 组合时拆开两项，保留颜色和活动页签', 
   assert.equal(result.saved.tabs[1].feat, 'b/feat.md');
   assert.equal(result.saved.tabs[1].color, 'blue');
   assert.equal(result.saved.active, 0);
-  assert.ok(result.html.indexOf('id="tab-new"') < result.html.indexOf('class="tab '));
+  assert.ok(result.html.indexOf('id="tab-new"') > result.html.lastIndexOf('class="tab '));
+  assert.equal((result.html.match(/id="tab-new"/g) || []).length, 1);
 });
 
 test('同 APP 组合不拆开；前方旧混配拆分后仍保持原活动页签', async () => {

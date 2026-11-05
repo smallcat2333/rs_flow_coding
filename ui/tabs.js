@@ -100,14 +100,14 @@ window.Tabs = (() => {
     if (!api || drag?.moved) return;
     closeMenu();
     const bar = $('tabbar');
-    bar.innerHTML = '<button id="tab-new" title="新建空白页签" aria-label="新建空白页签">＋</button>' + tabs.map((t, i) => {
+    bar.innerHTML = tabs.map((t, i) => {
       const parts = [t.flow && part('flow', t.flow), t.feat && part('feat', t.feat)].filter(Boolean);
       const unseen = Sidebar.isUnseen(t.flow) || Sidebar.isUnseen(t.feat);
       const title = ([t.flow, t.feat].filter(Boolean).join('\n') || '空白页签：在左侧点图或 Feat 填入') + (unseen ? '\n有未查看更新' : '');
       return `<div class="tab ${i === active ? 'active' : ''} ${unseen ? 'unseen' : ''}" data-tab="${i}"${t.color ? ` data-color="${t.color}"` : ''}>
         <button class="tab-main" role="tab" aria-selected="${i === active}" data-i="${i}" title="${esc(title)}">${parts.join('<span class="tab-join">+</span>') || '<span class="tab-empty">新页签</span>'}</button>
         <button class="tab-close" data-close="${i}" title="关闭页签（中键单击页签也可关闭）" aria-label="关闭页签">×</button></div>`;
-    }).join('');
+    }).join('') + '<button id="tab-new" title="新建空白页签" aria-label="新建空白页签">＋</button>';
     bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     for (const kind of ['flow', 'feat']) $('btn-' + kind + '-tab').disabled = !canSplit(kind);
   }
