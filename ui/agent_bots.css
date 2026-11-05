@@ -20,6 +20,55 @@ html[data-theme="dark"] .fc-bot[data-state="has"] { --bs: #d0d7de; }
 @keyframes fc-bot-breathe { 50% { opacity: .55; } }
 @keyframes fc-bot-blink { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .fc-bot .hd { animation: none !important; } }
+/* ---------- Feat 控件页：任务卡片上的实时 Agent（agent_bots.js decorate） ---------- */
+/* 状态色：蓝 运行中、紫 多个 subagent、黄 等你确认、红 异常、灰 空闲（进程在但本轮已结束） */
+[data-fbx], .fbx-chip, .fbx-now { --fx: #8c959f; }
+[data-fbx="run"], .fbx-chip[data-state="run"], .fbx-now[data-state="run"] { --fx: #4c8dff; }
+[data-fbx="multi"], .fbx-chip[data-state="multi"], .fbx-now[data-state="multi"] { --fx: #a371f7; }
+[data-fbx="wait"], .fbx-chip[data-state="wait"], .fbx-now[data-state="wait"] { --fx: #d4a72c; }
+[data-fbx="err"], .fbx-chip[data-state="err"], .fbx-now[data-state="err"] { --fx: #cf222e; }
+[data-fbx="done"], .fbx-chip[data-state="done"], .fbx-now[data-state="done"] { --fx: #3fb950; }
+/* 发光：任务图卡片、阶段栏 T 小标、任务详情行 */
+#feat-board .fb-node.fbx-on { box-shadow: 0 0 0 2px var(--fx), 0 0 14px 3px color-mix(in srgb, var(--fx) 55%, transparent) !important; }
+#feat-board .fb-node.fbx-on:is([data-fbx="run"], [data-fbx="multi"]) { animation: fbx-live 1.4s ease-in-out infinite; }
+#feat-board .fb-tchip.fbx-on { box-shadow: 0 0 0 2px var(--fx), 0 0 6px 1px var(--fx); }
+#feat-board .fb-task-row.fbx-on { box-shadow: inset 3px 0 0 var(--fx); background: color-mix(in srgb, var(--fx) 8%, transparent); }
+@keyframes fbx-live { 50% { box-shadow: 0 0 0 2px var(--fx), 0 0 22px 6px color-mix(in srgb, var(--fx) 70%, transparent); } }
+/* 任务图上方的独立层：卡片 overflow:hidden，机器人挂在卡片右上角外侧 */
+.fbx-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 3; pointer-events: none; }
+.fbx-dock { position: absolute; display: flex; flex-direction: row-reverse; gap: 4px; transform: translate(calc(-100% + 10px), -60%); }
+.fbx-chip { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 2px; border: 1px solid var(--fx); border-radius: 11px; background: var(--bg); color: var(--fg); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); font-size: 11.5px; white-space: nowrap; cursor: pointer; pointer-events: auto; }
+.fbx-chip:hover { background: color-mix(in srgb, var(--fx) 12%, var(--bg)); }
+.fbx-chip .nm { max-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+.fbx-chip em { font-style: normal; font-family: Consolas, monospace; font-size: 10.5px; color: var(--fx); }
+.fbx-face { position: relative; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--fx) 20%, transparent); color: var(--fx); flex-shrink: 0; }
+.fbx-face svg { width: 13px; height: 13px; overflow: visible; }
+.fbx-face .hd, .fbx-face .an, .fbx-face .ar { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.fbx-face .ab, .fbx-face .ey { fill: currentColor; stroke: none; }
+.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face { animation: fbx-bob 1.3s ease-in-out infinite; }
+.fbx-chip:is([data-state="run"], [data-state="multi"]) .fbx-face::before { content: ""; position: absolute; inset: -3px; border: 2px solid transparent; border-top-color: var(--fx); border-radius: 50%; animation: fbx-spin 1.1s linear infinite; }
+.fbx-chip[data-state="wait"] .fbx-face::after { content: "!"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 12px; text-align: center; animation: fbx-blink .9s steps(2, jump-none) infinite; }
+.fbx-chip[data-state="err"] .fbx-face::after { content: "×"; position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--fx); color: #fff; font-size: 10px; font-weight: 700; line-height: 11px; text-align: center; }
+/* 活动气泡：新活动冒出约 2.6 秒 */
+.fbx-say { position: absolute; right: 0; bottom: calc(100% + 6px); max-width: 22em; padding: 3px 8px; border-radius: 6px; background: var(--fg); color: var(--bg); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; animation: fbx-say 2.6s forwards; }
+.fbx-say.k-edit, .fbx-say.k-msg { background: #0969da; color: #fff; }
+.fbx-say.k-commit { background: #1a7f37; color: #fff; }
+/* 任务详情行尾的机器人 */
+.fbx-inline { display: inline-flex; gap: 4px; align-self: center; margin-left: auto; }
+.fbx-inline .fbx-chip { box-shadow: none; }
+/* 栏顶「正在做」 */
+.fbx-now { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 340px; height: 24px; padding: 0 10px 0 3px; border: 1px solid var(--fx); border-radius: 12px; background: color-mix(in srgb, var(--fx) 10%, var(--bg)); color: var(--fg); font-size: 12px; white-space: nowrap; }
+.fbx-now b { font-family: Consolas, monospace; font-weight: 600; color: var(--fx); }
+.fbx-now .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg2); }
+.fbx-now:is([data-state="run"], [data-state="multi"]) .fbx-face { animation: fbx-bob 1.3s ease-in-out infinite; }
+@keyframes fbx-bob { 50% { transform: translateY(-1.5px); } }
+@keyframes fbx-spin { to { transform: rotate(360deg); } }
+@keyframes fbx-blink { 50% { opacity: .25; } }
+@keyframes fbx-say { 0% { opacity: 0; transform: translateY(4px); } 10%, 82% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #feat-board .fb-node.fbx-on, .fbx-chip *, .fbx-chip *::before, .fbx-chip *::after, .fbx-say, .fbx-now * { animation: none !important; }
+}
+
 /* 客：同一套颜色，后面跟「客 N」 */
 .fc-bot.fc-guest { width: auto; padding: 4px 8px 4px 6px; font-size: 12px; color: var(--fg2); white-space: nowrap; }
 .fc-bot.fc-guest svg { width: 13px; height: 13px; }

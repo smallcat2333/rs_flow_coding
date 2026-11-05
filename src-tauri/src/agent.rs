@@ -38,6 +38,14 @@ pub struct NodeRef {
     pub node: String,
 }
 
+/// Feat 任务引用：Feat 档案绝对路径 + 任务编号（T3，或子任务 T3.1）。
+/// 由 `flowctl focus <Feat档案>#T<n>` 标记，Feat 控件页据此在对应任务卡片上显示会话。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TaskRef {
+    pub feat: String,
+    pub task: String,
+}
+
 /// 持久化的会话元数据。feat 为空表示未关联 Feat；links 为关联的流程图节点。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
@@ -97,6 +105,8 @@ pub struct Live {
     pub tool_since: i64,
     pub wait_text: String,
     pub focus: Option<NodeRef>,
+    /// 正在处理的 Feat 任务（进程退出时清除）。
+    pub task: Option<TaskRef>,
     pub workers: Vec<Worker>,
     pub exit_code: Option<u32>,
     /// 最近一轮结束（Stop）的时间；大于 seen 表示「运行完成、你还没看」。
@@ -188,7 +198,7 @@ fn hub() -> Result<&'static Hub, String> {
 
 /// 未运行状态的初始 Live。
 fn idle_live() -> Live {
-    Live { status: "off".into(), since: now(), turn: 0, beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), focus: None, workers: Vec::new(), exit_code: None, done: 0, seen: 0 }
+    Live { status: "off".into(), since: now(), turn: 0, beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), focus: None, task: None, workers: Vec::new(), exit_code: None, done: 0, seen: 0 }
 }
 
 /// 读会话元数据文件；不存在返回空表，损坏直接报错（不覆盖用户数据）。
@@ -441,6 +451,7 @@ fn system_prompt(m: &Meta, flowctl: &str) -> String {
     }
     s += &format!(
         "开始处理某个流程图节点对应的业务时，运行 '{f}' focus <图文件路径>#<节点id> 标记位置，主窗口会在该节点上显示你；\
+         开始做 Feat 路线图中的某个任务时，运行 '{f}' focus <Feat档案路径>#T<编号>（子任务如 #T3.1），Feat 控件页会在该任务卡片上显示你，换任务时重新运行；\
          '{f}' peers 列出同 APP 的其他会话；'{f}' send <会话名> <消息> 给对方发协作消息（对方运行中会排队到它本轮结束）。\
          和同 APP 的会话改同一个文件前先用 send 协调。",
         f = flowctl
@@ -604,6 +615,7 @@ fn spawn(id: &str) -> Result<(), String> {
         e.live.since = now();
         e.live.exit_code = Some(code);
         e.live.tool.clear();
+        e.live.task = None;
         e.queue.clear();
         let t = now();
         for w in e.live.workers.iter_mut().filter(|w| w.running) {
@@ -871,17 +883,70 @@ fn resolve_flow(e: &Entry, file: &str, cwd: &str) -> Option<PathBuf> {
     cands.into_iter().find(|p| p.is_file()).and_then(|p| crate::paths::norm(&p).ok())
 }
 
-/// flowctl focus：标记会话当前处理的节点（`--clear` 清除）。节点必须存在于该图。
+/// 任务编号是否合法：T 加数字，可带一级子号（T3、T3.1）。
+fn is_task_id(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('T') else { return false };
+    let mut parts = rest.split('.');
+    let num = |p: Option<&str>| p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    let ok = num(parts.next());
+    match (parts.next(), parts.next()) {
+        (None, _) => ok,
+        (Some(sub), None) => ok && num(Some(sub)),
+        _ => false,
+    }
+}
+
+/// 档案正文中是否出现该任务编号（前后不是数字或「.数字」，避免 T1 误中 T12、T1.2）。
+fn doc_has_task(text: &str, task: &str) -> bool {
+    text.match_indices(task).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = &text[i + task.len()..];
+        let mut it = after.chars();
+        let next = it.next();
+        let sub = next == Some('.') && it.next().is_some_and(|c| c.is_ascii_digit());
+        !before.is_some_and(|c| c.is_ascii_alphanumeric()) && !next.is_some_and(|c| c.is_ascii_digit()) && !sub
+    })
+}
+
+/// 解析 focus 里的 Feat 档案：绝对路径或相对 cwd 的路径；只写文件名时按会话关联的 Feat 匹配。
+fn resolve_feat(e: &Entry, file: &str, cwd: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(file);
+    let mut cands = vec![if p.is_absolute() { p } else { Path::new(cwd).join(file) }];
+    if !e.meta.feat.is_empty() && base(&e.meta.feat).eq_ignore_ascii_case(&base(file)) {
+        cands.push(PathBuf::from(&e.meta.feat));
+    }
+    cands.into_iter().find(|p| p.is_file()).and_then(|p| crate::paths::norm(&p).ok())
+}
+
+/// flowctl focus：`<图文件>#<节点id>` 标记当前处理的流程图节点（节点必须存在于该图）；
+/// `<Feat档案.md>#T<n>` 标记当前处理的 Feat 任务（编号必须出现在档案中）；`--clear` 两者都清除。
 fn focus(id: &str, r: &str, cwd: &str) -> Result<Value, String> {
     let h = hub()?;
     let mut map = h.entries.lock().unwrap();
     let e = map.get_mut(id).ok_or("会话不存在")?;
     if r == "--clear" {
         e.live.focus = None;
+        e.live.task = None;
         emit_update(e);
-        return Ok(json!({ "focus": null }));
+        return Ok(json!({ "focus": null, "task": null }));
     }
-    let (file, node) = r.rsplit_once('#').ok_or("格式应为 <图文件>#<节点id>")?;
+    let (file, node) = r.rsplit_once('#').ok_or("格式应为 <图文件>#<节点id> 或 <Feat档案>#T<编号>")?;
+    if file.to_lowercase().ends_with(".md") {
+        if !is_task_id(node) {
+            return Err(format!("任务编号应为 T<数字>，如 T3、T3.1：{node}"));
+        }
+        let path = resolve_feat(e, file, cwd).ok_or_else(|| format!("找不到 Feat 档案 {file}"))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        if !doc_has_task(&text, node) {
+            return Err(format!("{} 中没有任务 {node}", base(&path.to_string_lossy())));
+        }
+        let tr = TaskRef { feat: path.to_string_lossy().into_owned(), task: node.to_string() };
+        e.live.task = Some(tr.clone());
+        let a = push_act(e, "tool", format!("开始 {node}"), String::new());
+        emit_act(id, &a);
+        emit_update(e);
+        return Ok(json!({ "task": tr }));
+    }
     let path = resolve_flow(e, file, cwd).ok_or_else(|| format!("找不到流程图 {file}"))?;
     let xml = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let nodes = crate::flow::parse(&xml)?;
@@ -1261,6 +1326,21 @@ mod tests {
         assert_eq!(split_args(r#"--add-dir "E:\My Dir" -x"#).unwrap(), ["--add-dir", r"E:\My Dir", "-x"]);
         assert_eq!(split_args(r#"--a "" b"#).unwrap(), ["--a", "", "b"]);
         assert!(split_args(r#"--a "b"#).is_err());
+    }
+
+    /// Feat 任务编号：格式只认 T<数字>[.<数字>]；正文匹配有边界，T1 不会命中 T12、T1.2。
+    #[test]
+    fn task_focus_rules() {
+        for ok in ["T1", "T12", "T3.1"] {
+            assert!(is_task_id(ok), "{ok}");
+        }
+        for bad in ["", "T", "t1", "T1.", "T1.2.3", "TA", "3"] {
+            assert!(!is_task_id(bad), "{bad}");
+        }
+        let doc = "| T12 | 甲 |\n| T1.2 | 乙 |\n依赖 T3、T4";
+        assert!(!doc_has_task(doc, "T1"));
+        assert!(doc_has_task(doc, "T12") && doc_has_task(doc, "T1.2") && doc_has_task(doc, "T3") && doc_has_task(doc, "T4"));
+        assert!(!doc_has_task("ST3 说明", "T3"));
     }
 
     /// 主会话唯一：同一 Feat 只能一个会话；无 Feat 的会话按流程图互斥（路径不分大小写和斜杠）；

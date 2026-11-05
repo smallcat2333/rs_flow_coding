@@ -13,6 +13,7 @@
 //!
 //! Agent 窗口会话内可用（依赖 Flow Coding 下发的 FLOW_AGENT_* 环境变量）：
 //!   flowctl focus <图文件>#<节点id>     标记当前处理的节点，主窗口在该节点上显示本会话；--clear 清除
+//!   flowctl focus <Feat档案>#T<编号>    标记当前处理的 Feat 任务（如 #T3、#T3.1），Feat 控件页在该任务卡片上显示本会话
 //!   flowctl peers                     列出同 APP 的其他会话
 //!   flowctl send <会话名> <消息>       给同 APP 会话发协作消息（对方运行中则排队到它本轮结束）
 //!   flowctl agent-hook <事件>          Claude Code hook 回报（stdin 为 hook JSON），始终退出码 0
@@ -229,7 +230,7 @@ fn cmd_agent(args: &[String]) -> Result<ExitCode, String> {
     let req = match args[1].as_str() {
         "focus" => {
             let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            serde_json::json!({ "op": "focus", "ref": arg(args, 2, "图文件#节点id")?, "cwd": cwd })
+            serde_json::json!({ "op": "focus", "ref": arg(args, 2, "图文件#节点id 或 Feat档案#T编号")?, "cwd": cwd })
         }
         "peers" => serde_json::json!({ "op": "peers" }),
         _ => serde_json::json!({ "op": "send", "to": arg(args, 2, "会话名")?, "text": args.get(3..).map(|a| a.join(" ")).unwrap_or_default() }),
