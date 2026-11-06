@@ -14,12 +14,23 @@ test('一年为日历年且闰日回退到二月最后一天，不删除输入�
   assert.equal(original.length, 4);
 });
 
-test('不足一年按已有历史展开，单份和空历史不会除零', () => {
-  const start = now - 3 * 86400000;
+test('显示跨度最短 14 天、最长一年，中间跨度按真实历史展开', () => {
+  const day = 86400000, minimum = { start: now - 14 * day, end: now };
+  for (const rows of [[], [{ time: now }], [{ time: now - 3 * day }], [{ time: minimum.start }]]) {
+    assert.deepEqual(historyWindow(rows, now), minimum);
+  }
+  const start = now - 40 * day;
   assert.deepEqual(historyWindow([{ time: start }], now), { start, end: now });
-  assert.equal(historyWindow([{ time: domain.start - 86400000 }], now).start, domain.start);
-  assert.equal(historyWindow([{ time: now }], now).end - historyWindow([{ time: now }], now).start, 1);
-  assert.ok(Number.isFinite(timeRatio(now, historyWindow([], now))));
+  assert.deepEqual(historyWindow([{ time: domain.start - day }], now), domain);
+});
+
+test('不足 14 天的记录靠右显示，前面的空白日期不生成圆点', () => {
+  const day = 86400000, rows = [{ time: now - 3 * day }, { time: now }];
+  const scale = historyWindow(rows, now), groups = clusterSnapshots(rows, scale, 700);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].x, 550);
+  assert.equal(groups[1].x, 700);
+  assert.deepEqual(clusterSnapshots([], historyWindow([], now), 700), []);
 });
 
 test('短跨度标时分，跨天标日期，不填充空白月份', () => {

@@ -1,4 +1,4 @@
-// 流程图底部时间线：实际历史跨度（最多一年），密集快照只在显示层聚合，原始历史不变。
+// 流程图底部时间线：按历史跨度显示 14 天至一年，密集快照只在显示层聚合，空白日期不补点。
 // 旧版使用独立只读画布，编辑器始终保留当前图；仅复用 history / snapshot_xml / diff。
 // 依赖 app.js 的 st、isDark 与 floatingStatus，在 app.js 之后载入。
 'use strict';
@@ -19,7 +19,7 @@
   bar.appendChild(actions);
   actions.append(info, $('tl-now'));
   bar.querySelector('.tl-title').textContent = '历史';
-  range.setAttribute('aria-label', '图历史（最多一年），左右方向键逐份查看快照，End 回到当前');
+  range.setAttribute('aria-label', '图历史（最多一年），滚轮或左右方向键逐份查看快照，拖动实时预览，End 回到当前');
   range.step = '1';
 
   const tl = {
@@ -57,6 +57,7 @@
       range.min = String(tl.domain.start);
       range.max = String(tl.domain.end);
       range.disabled = tl.rows.length < 2;
+      range.hidden = !tl.rows.length;
       if (kept < 0) closePreview();
       renderScale();
       renderInfo();
@@ -187,9 +188,9 @@
   /** 快速拖动只保留最后一个目标，载图消息串行，防止旧回执错配新请求。 */
   async function show() {
     clearTimeout(tl.timer);
-    if (tl.dragging) return;
+    tl.timer = 0;
     if (tl.busy) { tl.queued = true; return; }
-    if (tl.idx < 0 || tl.idx === last()) { closePreview(); return; }
+    if (tl.idx < 0 || tl.idx === last()) { closePreview(tl.dragging); return; }
     const request = tl.seq, path = tl.path, row = tl.rows[tl.idx], prev = tl.rows[tl.idx - 1];
     const first = tl.loadedPath !== tl.path, keepView = !first && previewing();
     tl.busy = true;
@@ -223,23 +224,30 @@
     }
   }
 
-  /** 返回当前图并使已在途的历史结果失效；保留预览尺寸，不重复触发隐藏/显示的零尺寸适应。 */
-  function closePreview() {
+  /** 返回当前图并使在途历史结果失效；拖动到最新一版时保留拖动态，外部刷新继续等到松手。 */
+  function closePreview(dragging = false) {
     clearTimeout(tl.timer);
+    tl.timer = 0;
     tl.seq++;
-    tl.dragging = false;
+    tl.dragging = dragging;
     view.hidden = true;
     tl.idx = last();
     renderInfo();
   }
 
-  /** 松手或键盘选定后才载图；拖动过程中只更新原生滑块与时间，避免反复解析整张图。 */
-  function select(index) {
+  /** 选择原始快照：拖动立即更新时间，每 80ms 至多安排一次预览；松手、滚轮和键盘立即提交最新目标。 */
+  function select(index, dragging = false) {
+    if (index === tl.idx && dragging === tl.dragging) return;
     tl.seq++;
-    tl.dragging = false;
+    tl.dragging = dragging;
     tl.idx = index;
     renderInfo();
+    if (dragging) {
+      if (!tl.timer) tl.timer = setTimeout(show, 80);
+      return;
+    }
     clearTimeout(tl.timer);
+    tl.timer = 0;
     if (index === last()) closePreview();
     else show();
     if (tl.refreshPending) { tl.refreshPending = false; load(); }
@@ -257,15 +265,14 @@
     load();
   }
 
-  range.addEventListener('input', () => {
-    tl.seq++;
-    tl.dragging = true;
-    tl.queued = false;
-    clearTimeout(tl.timer);
-    tl.idx = nearestSnapshot(tl.rows, Number(range.value));
-    renderInfo();
-  });
+  range.addEventListener('input', () => select(nearestSnapshot(tl.rows, Number(range.value)), true));
   range.addEventListener('change', () => select(nearestSnapshot(tl.rows, Number(range.value))));
+  // 仅在时间线内消费滚轮：向上回看、向下前进；边界不越界，Ctrl/Meta 手势仍交给浏览器。
+  bar.addEventListener('wheel', ev => {
+    if (ev.ctrlKey || ev.metaKey || !ev.deltaY || tl.rows.length < 2) return;
+    ev.preventDefault();
+    select(Math.max(0, Math.min(last(), tl.idx + (ev.deltaY < 0 ? -1 : 1))));
+  }, { passive: false });
   range.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closePreview(); }
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key) && tl.rows.length) {
@@ -283,9 +290,9 @@
       const d = Math.abs(group.x - x);
       if (d < distance) { nearest = group; distance = d; }
     }
-    range.title = nearest && distance <= 14 ? groupText(nearest) : '按真实时间定位；左右方向键逐份查看';
+    range.title = nearest && distance <= 14 ? groupText(nearest) : '拖动实时预览；滚轮或左右方向键逐份查看';
   });
-  $('tl-now').onclick = closePreview;
+  $('tl-now').onclick = () => closePreview();
 
   // ResizeObserver 回调只读通知，不同步改 DOM；同宽通知直接跳过，避免布局反馈循环。
   new ResizeObserver(entries => {

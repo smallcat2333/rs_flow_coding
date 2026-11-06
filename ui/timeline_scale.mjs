@@ -26,10 +26,10 @@ export function visibleSnapshots(rows, domain) {
     .sort((a, b) => a.time - b.time || a.id - b.id);
 }
 
-/** 根据已筛选的记录收缩起点，截止 now 且最多一年；空记录或同一毫秒保留 1ms 范围以避免除零。 */
+/** 按已有历史展开，截止 now，最短 14 天、最长一个日历年；较早的空白日期不补快照。 */
 export function historyWindow(rows, now) {
   const cutoff = yearWindow(now).start;
-  return { start: Math.max(cutoff, Math.min(rows[0]?.time ?? now, now - 1)), end: now };
+  return { start: Math.max(cutoff, Math.min(rows[0]?.time ?? now, now - 14 * 86400000)), end: now };
 }
 
 /** 时间在实际历史范围中的位置（0~1）；仅用于范围内的记录与日历刻度。 */
