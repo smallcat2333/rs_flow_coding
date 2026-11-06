@@ -1,4 +1,4 @@
-// 侧栏生命周期与收纳：Feat 状态来自 Markdown，Chart 启停来自项目元数据；这里只保存本机显示偏好
+// 侧栏生命周期与收纳：Feat 状态来自 Markdown，Chart 启停来自项目元数据，Agent 来自会话服务；这里只保存本机显示偏好
 // （折叠、别名、分组/APP 顺序、更新置顶与未查看标记）。
 'use strict';
 
@@ -11,7 +11,8 @@ window.Sidebar = (() => {
   const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
   /** 分组键：分组目录路径（APP 目录的父目录）；未分组的 APP 合并为空串一组。 */
   const groupKey = (a) => a.group ? a.flow_dir.replace(/[\\/][^\\/]+[\\/]docs[\\/]flow$/i, '') : '';
-  const PAGE_SIZE = 5;
+  /** 分层列表每批 5 项，平铺列表每批 20 项；首次显示与追加使用同一数量。 */
+  const PAGE_SIZE = { tree: 5, flat: 20 };
   /** 一次写盘常触发多次文件通知，同一条目在该时间内只置顶一次（毫秒）。 */
   const BUMP_DEBOUNCE_MS = 1500;
   const ICON_EXPAND = 'm7 9 5-5 5 5M7 15l5 5 5-5';
@@ -24,17 +25,32 @@ window.Sidebar = (() => {
   const ICON_APP = '<rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.4"/><rect x="10" y="2.5" width="5.5" height="5.5" rx="1.4"/><rect x="2.5" y="10" width="5.5" height="5.5" rx="1.4"/><rect x="10" y="10" width="5.5" height="5.5" rx="1.4"/>';
   const ICON_FLOW = '<rect x="6" y="1" width="6" height="5" rx="1"/><path d="M9 6v4M3 10h12M3 10v3M15 10v3"/><rect x="1" y="13" width="4" height="4" rx="1"/><rect x="13" y="13" width="4" height="4" rx="1"/>';
   const ICON_FEAT = '<rect x="3" y="1" width="12" height="16" rx="2"/><path d="m6 6 1 1 2-2M10 6h2M6 11h6M6 14h4"/>';
+  const ICON_AGENT = '<path d="M9 1v3M1 8v4M17 8v4"/><rect x="3" y="4" width="12" height="11" rx="3"/><circle cx="6.5" cy="9" r="1"/><circle cx="11.5" cy="9" r="1"/>';
+  const agents = new Map();
+  let currentAgent = '';
+  let agentRenderQueued = false;
   const svg = (cls, body) => `<svg class="${cls}" viewBox="0 0 18 18" aria-hidden="true">${body}</svg>`;
   /** 分组折叠键加前缀，与 APP（flow_dir）及其分区键区分。 */
   const GROUP_PREFIX = 'group:';
   let prefs;
   let apps = [], currentFlow = '', currentFeat = '', refresh;
-  /** 最后一次主动打开的条目；独立于两类文档的当前路径，重绘时保持唯一选中。 */
-  let selectedPath = '';
   let search = '', menu = null, saveQueue = Promise.resolve();
   /** 当前选中的节点状态，仅用于本次侧栏过滤，不写入项目或偏好。 */
   let statusFilter = '';
+  let featFilter = '', statsMode = 'flow';
+  /** Feat 阶段分六组，数量按档案计；首尾两组不参与条长的最大值。 */
+  const FEAT_GROUPS = [
+    { key: 'closed', name: '关闭 / 废弃', tones: ['done', 'dropped'], bar: false },
+    { key: 'planning', name: '探讨 / 需求', tones: ['talk', 'req'], bar: true },
+    { key: 'design', name: 'UI', tones: ['design'], bar: true },
+    { key: 'dev', name: '开发', tones: ['dev'], bar: true },
+    { key: 'test', name: '测试', tones: ['ready', 'test', 'accept'], bar: true },
+    { key: 'other', name: '其他', tones: ['paused', 'muted'], bar: false },
+  ];
+  const filteringStats = () => !!(statusFilter || featFilter);
   const limits = new Map();
+  /** 改名期间目录刷新可能先到，暂时保留原置顶路径，收到完成事件后再换成新路径。 */
+  const renamingPins = new Set();
   let editing = false, drag = null;
   /** APP 名称单击折叠的延迟（毫秒）：期间出现双击则改为原位改名。 */
   const NAME_CLICK_MS = 250;
@@ -65,7 +81,7 @@ window.Sidebar = (() => {
       const below = (child) => child !== key && roots.some((root) => child === root || child.startsWith(root + '#'));
       for (const a of apps) {
         if (below(a.flow_dir)) collapsed.add(a.flow_dir);
-        for (const kind of ['flow', 'feat']) {
+        for (const kind of ['flow', 'feat', 'agent']) {
           const sectionKey = a.flow_dir + '#' + kind;
           const archiveKey = sectionKey + '#archive';
           if (below(sectionKey)) collapsed.add(sectionKey);
@@ -87,15 +103,16 @@ window.Sidebar = (() => {
 
   /** 全部展开清除各层折叠；全部收纳同时收起 APP、分区、收纳区与月份，清除搜索并重置分页。 */
   function setAllExpanded(expanded) {
-    const keys = apps.flatMap((a) => [a.flow_dir, a.flow_dir + '#flow', a.flow_dir + '#feat']);
+    const keys = apps.flatMap((a) => [a.flow_dir, ...['flow', 'feat', 'agent'].map((kind) => a.flow_dir + '#' + kind)]);
     const groups = prefs.collapsed.filter((k) => k.startsWith(GROUP_PREFIX));
     const months = apps.flatMap((a) => a.feats.filter((f) => f.archived)
       .map((f) => a.flow_dir + '#feat#archive#' + timeBucket(f.closed_at, true)));
     prefs.collapsed = expanded ? [] : [...new Set([...groups, ...keys, ...months])];
-    prefs.expanded_archives = expanded ? apps.flatMap((a) => [a.flow_dir + '#flow#archive', a.flow_dir + '#feat#archive']) : [];
+    prefs.expanded_archives = expanded ? apps.flatMap((a) => ['flow', 'feat', 'agent'].map((kind) => a.flow_dir + '#' + kind + '#archive')) : [];
     persist();
     $('tree-search').value = '';
     statusFilter = '';
+    featFilter = '';
     setSearch('');
   }
 
@@ -177,16 +194,18 @@ window.Sidebar = (() => {
     return true;
   }
 
-  /** 刷新后清理已不存在文件的置顶时间，以及已删除、收纳或停用条目的未查看标记。 */
+  /** 刷新后清理已不存在条目的手动置顶与更新时间，以及已删除、收纳或停用条目的未查看标记。 */
   function prune(list) {
     if (SOLO) return;
     const live = new Set(list.flatMap((a) => [...a.files, ...a.feats].map((f) => norm(f.path))));
+    const pinned = prefs.pinned.filter((path) => live.has(path) || renamingPins.has(path));
     const stale = Object.keys(prefs.bumped).filter((k) => !live.has(k));
     stale.forEach((k) => delete prefs.bumped[k]);
     const active = new Set(list.flatMap((a) => [...a.files.filter((f) => f.enabled), ...a.feats.filter((f) => !f.archived)].map((f) => norm(f.path))));
     const unseen = prefs.unseen.filter((k) => active.has(k));
-    if (!stale.length && unseen.length === prefs.unseen.length) return;
+    if (!stale.length && unseen.length === prefs.unseen.length && pinned.length === prefs.pinned.length) return;
     prefs.unseen = unseen;
+    prefs.pinned = pinned;
     persist();
   }
 
@@ -195,21 +214,22 @@ window.Sidebar = (() => {
     return lock ? `<span class="lock-dot">${lock.owner === 'agent' ? 'Agent 编辑中' : '编辑中'}</span>` : '';
   }
 
-  /** 按主动打开的路径更新唯一选中项并清除未查看提示；只在标记变化时重绘侧栏和页签。 */
+  /** 清除打开路径的未查看提示；图与 Feat 的高亮均按当前文档路径同步，空路径只刷新样式。 */
   function select(path) {
-    selectedPath = path;
     if (!SOLO && markSeen(path)) {
       persist();
       render(apps, currentFlow, currentFeat);
     }
     $('tree').querySelectorAll('.file, .feat').forEach((row) => {
-      row.classList.toggle('active', (row.dataset.path || row.dataset.feat) === selectedPath);
+      row.classList.toggle('active', [currentFlow, currentFeat].includes(row.dataset.path || row.dataset.feat));
     });
   }
 
-  /** 关闭文档时仅清除该文档的选中态，不影响后来选中的另一条目。 */
+  /** 关闭文档时仅清除对应路径的高亮，保留另一栏仍打开的文档。 */
   function deselect(path) {
-    if (selectedPath === path) select('');
+    if (currentFlow === path) currentFlow = '';
+    if (currentFeat === path) currentFeat = '';
+    select('');
   }
 
   /** 查询路径是否有未查看更新，侧栏行与顶部页签共用同一状态。 */
@@ -217,8 +237,9 @@ window.Sidebar = (() => {
     return prefs.unseen.includes(norm(path));
   }
 
+  /** 根据当前图和 Feat 生成行状态；列表重绘后同时保留两栏文档的高亮。 */
   function rowClass(f, archived) {
-    return `${f.path === selectedPath ? 'active' : ''} ${archived ? 'archived-entry' : ''} ${!archived && isUnseen(f.path) ? 'unseen' : ''}`;
+    return `${[currentFlow, currentFeat].includes(f.path) ? 'active' : ''} ${archived ? 'archived-entry' : ''} ${!archived && isUnseen(f.path) ? 'unseen' : ''}`;
   }
 
   /** 流程图统一两行：第一行图名与统计，第二行来源 APP，编辑状态靠右显示。 */
@@ -230,24 +251,44 @@ window.Sidebar = (() => {
       <div class="file-source"><span class="entry-detail" title="来源：${esc(source)}">来源：${esc(source)}</span>${lockTag(f.lock)}</div></div>`;
   }
 
-  /** 只按档案状态的开头归纳，避免正文中的「待验收」「已完成」被误判为当前阶段。 */
-  function featState(status) {
-    const value = String(status || '').trim().replace(/^\*+/, '').trim();
-    const rules = [
-      [/^(已废弃|放弃需求)/, '已废弃', 'muted'],
-      [/^(已关闭|已正式收口)/, '已关闭', 'done'],
-      [/^(已暂停|暂停|暂缓)/, '已暂停', 'warn'],
-      [/^(待验收|待人工确认|待用户确认)/, '待验收', 'warn'],
-      [/^(测试完成|已测试)/, '待验收', 'warn'],
-      [/^(待测试|开发完成)/, '待测试', 'test'],
-      [/^(正在测试|测试)/, '测试中', 'test'],
-      [/^(正在开发|部分接入|开发)/, '开发中', 'dev'],
-      [/^(UI|界面设计|设计界面)/i, 'UI设计', 'design'],
-      [/^(整理需求|需求)/, '需求中', 'req'],
-      [/^(讨论方案|探讨)/, '探讨中', 'req'],
-    ];
-    const match = rules.find(([pattern]) => pattern.test(value));
-    return match ? { label: match[1], tone: match[2] } : { label: '待明确', tone: 'muted' };
+  const featState = window.FeatState;
+
+  /** 与档案行共用状态解析；已收纳档案优先归入关闭／废弃，每份档案只进入一组。 */
+  function featGroup(f) {
+    if (f.archived) return 'closed';
+    const tone = featState(f.status).tone;
+    return FEAT_GROUPS.find((group) => group.tones.includes(tone))?.key || 'other';
+  }
+
+  /** 全局档案计数不受搜索、收纳折叠、分页、置顶副本或当前筛选影响。 */
+  function featStats() {
+    const counts = Object.fromEntries(FEAT_GROUPS.map((group) => [group.key, 0]));
+    for (const a of apps) for (const f of a.feats) counts[featGroup(f)]++;
+    return counts;
+  }
+
+  function renderFeatStats() {
+    const counts = featStats(), total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+    const max = Math.max(0, ...FEAT_GROUPS.filter((group) => group.bar).map((group) => counts[group.key]));
+    const included = {
+      closed: '已关闭、已废弃（含已收纳档案）', planning: '探讨中、需求中', design: 'UI设计',
+      dev: '开发中', test: '待测试、测试中、待验收', other: '已暂停、待明确及未识别状态',
+    };
+    $('status-bars').innerHTML = FEAT_GROUPS.map((group) => {
+      const value = counts[group.key], pct = total ? value / total * 100 : 0;
+      const bar = group.bar
+        ? `<span class="status-track" aria-hidden="true"><span class="status-fill" style="width:${max ? value / max * 100 : 0}%"></span></span>`
+        : '<span class="status-track none" aria-hidden="true"></span>';
+      const title = `${group.name}：${value.toLocaleString()} / ${total.toLocaleString()} 份 Feat（${pct.toFixed(1)}%）\n\n包含：${included[group.key]}`;
+      return `<div class="status-row feat-stat-row" data-feat-status="${group.key}" title="${esc(title)}">${svg('feat-stat-icon', ICON_FEAT)}<span class="status-name">${group.name}</span>${bar}<b class="status-value">${value.toLocaleString()}</b></div>`;
+    }).join('');
+  }
+
+  /** 节点筛选只匹配启用图；Feat 分组筛选包含收纳档案。 */
+  function matchesStatus(f, kind) {
+    if (statusFilter) return kind === 'flow' && f.enabled && f.counts[statusFilter] > 0;
+    if (featFilter) return kind === 'feat' && featGroup(f) === featFilter;
+    return true;
   }
 
   /** Feat 第一行末尾只显示词表中的阶段标签；第二行保留编号、进度、节点数与编辑锁提示。 */
@@ -259,11 +300,12 @@ window.Sidebar = (() => {
       <div class="feat-meta"><span class="entry-detail"><span>${esc(f.id)}</span>${f.tasks_total ? `<span>T ${f.tasks_done}/${f.tasks_total}</span>` : ''}<span>${f.node_total} 节点</span></span>${lockTag(f.lock)}</div></div>`;
   }
 
-  /** 每组先显示 5 项，点击再增加 5 项；搜索也分批，收起所属分组后从头计数。 */
+  /** 按当前排布分批显示；搜索也分批，收起所属分组后从头计数。 */
   function page(list, key, row) {
-    const limit = limits.get(key) || PAGE_SIZE;
+    const size = PAGE_SIZE[prefs.layout];
+    const limit = limits.get(key) || size;
     return list.slice(0, limit).map((f) => row(f)).join('') + (list.length > limit
-      ? `<button class="show-more" data-more="${esc(key)}">再显示 ${Math.min(PAGE_SIZE, list.length - limit)} 项（还有 ${list.length - limit} 项）</button>` : '');
+      ? `<button class="show-more" data-more="${esc(key)}">再显示 ${Math.min(size, list.length - limit)} 项（还有 ${list.length - limit} 项）</button>` : '');
   }
 
   /** 收纳分组标签：Feat 取 YYYY-MM（如 2026-11），Chart 仍取年份；日期缺失归到「未注明年份」。 */
@@ -306,12 +348,12 @@ window.Sidebar = (() => {
   function section(a, kind) {
     const flow = kind === 'flow';
     const all = flow ? a.files : a.feats;
-    const filtering = flow && !!statusFilter;
-    const active = byBump(all.filter((f) => (flow ? f.enabled : !f.archived) && matchesSearch(f) && (!filtering || f.counts[statusFilter] > 0)));
+    const filtering = filteringStats();
+    const active = byBump(all.filter((f) => (flow ? f.enabled : featFilter || !f.archived) && matchesSearch(f) && matchesStatus(f, kind)));
     const archived = filtering ? [] : all.filter((f) => (flow ? !f.enabled : f.archived) && matchesSearch(f) && (!search || prefs.include_archived));
     if ((search || filtering) && !active.length && !archived.length) return '';
     const key = a.flow_dir + '#' + kind;
-    const collapsed = !search && !statusFilter && prefs.collapsed.includes(key);
+    const collapsed = !search && !filtering && prefs.collapsed.includes(key);
     const row = flow ? (f) => flowRow(f, undefined, prefs.app_aliases[a.flow_dir] || a.app) : featRow;
     const live = all.filter((f) => flow ? f.enabled : !f.archived);
     const activeCount = filtering ? active.length : live.length;
@@ -321,10 +363,94 @@ window.Sidebar = (() => {
     return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}">
       <div class="sec-head ${unseen ? 'unseen' : ''}" role="button" tabindex="0" aria-expanded="${!collapsed}" title="${flow ? '流程图' : '功能需求档案'}">
         ${svg('sec-icon', flow ? ICON_FLOW : ICON_FEAT)}
-        <span class="sec-title">${flow ? 'Chart' : 'Feat'}</span><span class="sec-count" title="${flow ? '启用的流程图数量' : '开启的 Feat 数量'}">${activeCount}</span>
+        <span class="sec-title">${flow ? 'Chart' : 'Feat'}</span><span class="sec-count" title="${filtering ? '匹配的条目数量' : flow ? '启用的流程图数量' : '开启的 Feat 数量'}">${activeCount}</span>
         <button class="${flow ? 'app-new' : 'feat-new'}" data-dir="${esc(flow ? a.flow_dir : a.feat_dir)}" title="${flow ? '新建流程图' : '新建 Feat 档案'}">＋</button></div>
       <div class="sec-body">${page(active, key, row) || `<div class="empty mini">${search ? '没有匹配的活跃项' : flow ? '暂无启用的流程图' : '暂无开启的 Feat'}</div>`}
       ${history}</div></div>`;
+  }
+
+  /** 会话归属 APP：绑定项按来源路径定位；游离项按保存的 APP 名与工作目录匹配，不改变工作目录。 */
+  function agentApp(s) {
+    const source = s.feat || s.links[0]?.flow;
+    if (source) {
+      const owner = apps.find((a) => norm(source).startsWith(norm(a.flow_dir.replace(/[\\/]docs[\\/]flow[\\/]?$/i, '')) + '/'));
+      if (owner) return owner;
+    }
+    return apps.find((a) => a.app === s.app && norm(a.root) === norm(s.cwd));
+  }
+
+  /** Agent 窗口的页签偏好跨窗口共享，只更新选择外观，不重绘目录或改变滚动位置。 */
+  function syncAgentSelection(value) {
+    let tabs;
+    try { tabs = JSON.parse(value || '{}'); } catch { tabs = null; }
+    currentAgent = typeof tabs?.active === 'string' && tabs.active !== 'OV' && Array.isArray(tabs.tabs) && tabs.tabs.includes(tabs.active) ? tabs.active : '';
+    $('tree').querySelectorAll('.agent-entry').forEach((row) => {
+      const selected = row.dataset.agent === currentAgent && !agents.get(currentAgent)?.archived_at;
+      row.classList.toggle('active', selected);
+      row.setAttribute('aria-current', String(selected));
+    });
+  }
+
+  /** Agent 行以归属色表示绑定、游离、归档，以紫色边框表示当前会话页签。 */
+  function agentRow(s) {
+    const archived = !!s.archived_at, bound = !!(s.feat || s.links.length);
+    const state = archived ? '已归档' : bound ? '绑定' : '游离';
+    const source = s.feat || s.links[0]?.flow || s.cwd;
+    const detail = s.feat ? s.feat_code : s.links.length ? source.split(/[\\/]/).pop() : s.app;
+    const hint = archived ? `归档于 ${new Date(s.archived_at).toLocaleDateString()}，180 天后清理；右键可取消归档` : '点击打开会话；右键归档或删除';
+    const selected = s.id === currentAgent && !archived;
+    return `<div class="agent-entry ${archived ? 'archived-entry' : bound ? 'bound' : 'free'}${selected ? ' active' : ''}" data-agent="${esc(s.id)}" role="button" tabindex="0" aria-current="${selected}" title="${esc(source + '\n' + hint)}"><div class="agent-line">${svg('sec-icon', ICON_AGENT)}<span class="file-name">${esc(s.title)}</span><span class="agent-kind">${state}</span></div><div class="agent-detail">${esc(detail)}</div></div>`;
+  }
+
+  /** 每个 APP 的 Agent 折叠组；归档单独收纳，默认折叠，搜索沿用「包含收纳」开关。 */
+  function agentSection(a, flat = false) {
+    const all = [...agents.values()].filter((s) => agentApp(s) === a);
+    if (flat && !all.length) return '';
+    const hit = (s) => !search || `${s.title} ${s.app} ${s.feat} ${s.feat_code} ${s.links.map((l) => l.flow).join(' ')}`.toLowerCase().includes(search);
+    const active = all.filter((s) => !s.archived_at && hit(s)).sort((x, y) => y.created - x.created);
+    const archived = all.filter((s) => s.archived_at && hit(s) && (!search || prefs.include_archived)).sort((x, y) => y.archived_at - x.archived_at);
+    if (search && !active.length && !archived.length) return '';
+    const key = a.flow_dir + '#agent', archiveKey = key + '#archive';
+    const collapsed = !search && prefs.collapsed.includes(key), expanded = !!search || prefs.expanded_archives.includes(archiveKey);
+    const history = archived.length ? `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(archiveKey)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} 已归档</span><span>${archived.length}</span></button>${expanded ? `<div class="archive-body">${page(archived, archiveKey, agentRow)}</div>` : ''}</div>` : '';
+    return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}"><div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}">${svg('sec-icon', ICON_AGENT)}<span class="sec-title">Agent${flat ? '：' + esc(appName(a)) : ''}</span><span class="sec-count">${all.filter((s) => !s.archived_at).length}</span><button class="agent-new" data-agent-new="${esc(a.flow_dir)}" title="新建 Agent">＋</button></div><div class="sec-body">${page(active, key, agentRow) || '<div class="empty mini">暂无 Agent</div>'}${history}</div></div>`;
+  }
+
+  /** APP 右键和 Agent 组共用新建入口；只预填目录与 APP，仍展示工作流单选表单。 */
+  async function newAgent(flowDir) {
+    const a = apps.find((a) => a.flow_dir === flowDir);
+    await invoke('open_agent_window', { prefill: { root: a.root, flowDir: a.flow_dir, app: a.app } });
+  }
+
+  /** 合并会话事件重绘；仅名称、关联、归档等侧栏可见字段改变时调用，不因终端心跳关闭右键菜单。 */
+  function renderAgentsSoon() {
+    if (agentRenderQueued) return;
+    agentRenderQueued = true;
+    requestAnimationFrame(() => { agentRenderQueued = false; render(apps, currentFlow, currentFeat); });
+  }
+
+  /** 在 Agent 行右键提供归档/恢复和直接删除；删除复用现有后端范围，不再二次确认。 */
+  function openAgentMenu(trigger, x, y) {
+    const s = agents.get(trigger.dataset.agent);
+    closeMenu();
+    menu = document.createElement('div');
+    menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
+    const actions = [[s.archived_at ? 'restore' : 'archive', s.archived_at ? '取消归档' : '归档'], ['delete', '删除']];
+    menu.innerHTML = actions.map(([action, label]) => `<button role="menuitem" data-action="${action}">${MenuIcons.forLabel(label)}<span>${label}</span></button>`).join('');
+    menu.onclick = async (e) => {
+      const action = e.target.closest('[data-action]')?.dataset.action;
+      if (!action) return;
+      closeMenu();
+      try {
+        if (action === 'delete') { await invoke('agent_remove', { id: s.id }); agents.delete(s.id); }
+        else agents.set(s.id, await invoke('agent_archive', { id: s.id, archived: action === 'archive' }));
+        render(apps, currentFlow, currentFeat);
+      } catch (error) { sideMsg('Agent 操作失败：' + error); }
+    };
+    document.body.appendChild(menu);
+    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 4)) + 'px';
+    menu.style.top = Math.max(4, Math.min(y, innerHeight - menu.offsetHeight - 4)) + 'px';
+    menu.querySelector('button').focus();
   }
 
   /** 原位编辑 APP 或分组显示名：Enter/失焦保存、Esc 取消；空值或填回原名恢复默认，写入失败恢复旧别名。
@@ -425,10 +551,10 @@ window.Sidebar = (() => {
     for (const g of ordered()) {
       let body = '', count = 0, groupUnseen = false;
       for (const a of g.apps) {
-        if (statusFilter && !a.files.some((f) => f.enabled && f.counts[statusFilter] > 0 && matchesSearch(f))) continue;
-        const sections = section(a, 'flow') + (statusFilter ? '' : section(a, 'feat'));
-        if (!sections && (search || statusFilter)) continue;
-        const collapsed = !search && !statusFilter && prefs.collapsed.includes(a.flow_dir);
+        if (filteringStats() && !(featFilter ? a.feats : a.files).some((f) => matchesStatus(f, featFilter ? 'feat' : 'flow') && matchesSearch(f))) continue;
+        const sections = (featFilter ? '' : section(a, 'flow')) + (statusFilter ? '' : section(a, 'feat')) + (filteringStats() ? '' : agentSection(a));
+        if (!sections && (search || filteringStats())) continue;
+        const collapsed = !search && !filteringStats() && prefs.collapsed.includes(a.flow_dir);
         const alias = prefs.app_aliases[a.flow_dir];
         const unseen = [...a.files.filter((f) => f.enabled), ...a.feats.filter((f) => !f.archived)].some((f) => isUnseen(f.path));
         count++;
@@ -440,7 +566,7 @@ window.Sidebar = (() => {
       }
       if (!body) continue;
       const key = GROUP_PREFIX + g.key;
-      const collapsed = !search && !statusFilter && prefs.collapsed.includes(key);
+      const collapsed = !search && !filteringStats() && prefs.collapsed.includes(key);
       const alias = prefs.group_aliases[g.key];
       html += `<div class="group-block ${collapsed ? 'collapsed' : ''}" data-group="${esc(g.key)}" data-key="${esc(key)}"><div class="group ${collapsed && groupUnseen ? 'unseen' : ''}" role="button" tabindex="0" aria-expanded="${!collapsed}" draggable="true" title="单击折叠/展开，拖动调整分组顺序，双击名称修改显示名">
         <span class="app-toggle" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>${svg('tree-icon', ICON_GROUP)}
@@ -456,18 +582,45 @@ window.Sidebar = (() => {
     const entries = [];
     for (const g of ordered()) for (const a of g.apps) {
       const app = prefs.app_aliases[a.flow_dir] || a.app;
-      for (const f of a.files) entries.push({ kind: 'flow', f, app });
+      if (!featFilter) for (const f of a.files) entries.push({ kind: 'flow', f, app });
       if (!statusFilter) for (const f of a.feats) entries.push({ kind: 'feat', f, app });
     }
-    const live = (e) => e.kind === 'flow' ? e.f.enabled : !e.f.archived;
-    const hit = (e) => matchesSearch(e.f) && (!statusFilter || e.f.counts?.[statusFilter] > 0);
+    const live = (e) => e.kind === 'flow' ? e.f.enabled : featFilter || !e.f.archived;
+    const hit = (e) => matchesSearch(e.f) && matchesStatus(e.f, e.kind);
     const at = (e) => prefs.bumped[norm(e.f.path)] || 0;
     const active = entries.filter((e) => live(e) && hit(e)).sort((x, y) => at(y) - at(x));
-    const archived = statusFilter ? [] : entries.filter((e) => !live(e) && hit(e) && (!search || prefs.include_archived));
-    if (!active.length && !archived.length) return '';
+    const archived = filteringStats() ? [] : entries.filter((e) => !live(e) && hit(e) && (!search || prefs.include_archived));
+    const agentGroups = filteringStats() ? '' : ordered().flatMap((g) => g.apps.map((a) => agentSection(a, true))).join('');
+    if (!active.length && !archived.length && !agentGroups) return '';
     const row = (e) => e.kind === 'flow' ? flowRow(e.f, e.app) : featRow(e.f, e.app);
-    return `<div class="flat-list">${page(active, '#flat', row) || '<div class="empty mini">没有活跃的 Chart 或 Feat</div>'}
-      ${archive(archived, '#flat#archive', row, '已停用 / 已收纳', (e) => timeBucket(e.kind === 'flow' ? e.f.disabled_at : e.f.closed_at, e.kind !== 'flow'))}</div>`;
+    return `<div class="flat-list">${page(active, '#flat', row)}
+      ${archive(archived, '#flat#archive', row, '已停用 / 已收纳', (e) => timeBucket(e.kind === 'flow' ? e.f.disabled_at : e.f.closed_at, e.kind !== 'flow'))}${agentGroups}</div>`;
+  }
+
+  /** 顶部置顶区显示原条目的副本；独立于分页与分组折叠，原列表和统计保持不变。 */
+  function pinnedHtml() {
+    const entries = new Map();
+    for (const a of apps) {
+      for (const f of a.files) entries.set(norm(f.path), { kind: 'flow', file: f, app: a });
+      for (const f of a.feats) entries.set(norm(f.path), { kind: 'feat', file: f, app: a });
+    }
+    const pinned = prefs.pinned.map((path) => entries.get(path)).filter(Boolean)
+      .filter(({ kind, file }) => !filteringStats() || (matchesSearch(file) && matchesStatus(file, kind)));
+    if (!pinned.length) return '';
+    const rows = pinned.map(({ kind, file, app }) => kind === 'flow'
+      ? flowRow(file, appName(app)) : featRow(file, appName(app))).join('');
+    return `<section class="pinned-section" aria-label="置顶条目">
+      <div class="pinned-head">${MenuIcons.forLabel('置顶')}<span>置顶</span><span class="pinned-count">${pinned.length}</span></div>
+      <div class="pinned-list">${rows}</div></section>`;
+  }
+
+  /** 切换手动置顶：只更新本机侧栏偏好，置顶区与原列表共享同一文件。 */
+  function togglePinned(path) {
+    const key = norm(path);
+    prefs.pinned = prefs.pinned.includes(key)
+      ? prefs.pinned.filter((p) => p !== key) : [key, ...prefs.pinned];
+    persist();
+    render(apps, currentFlow, currentFeat);
   }
 
   /** 重绘侧栏：按排布偏好输出分层树或平铺列表，合计继续使用后端只包含启用 Chart 的统计。
@@ -482,17 +635,24 @@ window.Sidebar = (() => {
     const total = {};
     for (const a of apps) for (const [k, v] of Object.entries(a.counts)) total[k] = (total[k] || 0) + v;
     const html = prefs.layout === 'flat' ? flatHtml() : treeHtml();
-    $('tree').innerHTML = html || '<div class="empty mini">没有匹配项</div>';
+    $('tree').innerHTML = pinnedHtml() + (html || '<div class="empty mini">没有匹配项</div>');
     fitAppBadges();
     $('tree').querySelectorAll('.app-head').forEach((head) => appResize.observe(head));
-    renderStatusStats(total);
+    if (statsMode === 'feat') renderFeatStats(); else renderStatusStats(total);
+    const featMode = statsMode === 'feat';
+    const toggle = $('btn-stats-mode');
+    toggle.setAttribute('aria-pressed', String(featMode));
+    toggle.setAttribute('aria-label', featMode ? '切换为 Chart 统计' : '切换为 Feat 统计');
+    toggle.title = featMode ? '当前：Feat 档案统计；点击切换为 Chart' : '当前：Chart 节点统计；点击切换为 Feat';
+    $('stats-mode-icon').innerHTML = featMode ? ICON_FEAT : '<path d="M2 15h14M4 12V8M9 12V3M14 12V6"/>';
+    $('totals').setAttribute('aria-label', featMode ? '全部 Feat 档案阶段统计' : '启用流程图的节点状态统计');
     for (const row of $('status-bars').querySelectorAll('.status-row')) {
-      const selected = row.dataset.status === statusFilter;
+      const selected = featMode ? row.dataset.featStatus === featFilter : row.dataset.status === statusFilter;
       row.classList.toggle('selected', selected);
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       row.setAttribute('aria-pressed', String(selected));
-      row.title += selected ? '\n\n点击取消过滤' : '\n\n点击过滤流程图';
+      row.title += selected ? '\n\n点击取消过滤' : featMode ? '\n\n点击过滤 Feat' : '\n\n点击过滤流程图';
     }
     syncToggleAll();
     syncLayout();
@@ -516,7 +676,7 @@ window.Sidebar = (() => {
     const f = (kind === 'flow' ? app.files : app.feats).find((f) => f.path === path);
     const actions = kind === 'flow' ? [[f.enabled ? 'disable' : 'enable', f.enabled ? '停用并收纳' : '重新启用']]
       : f.archived ? [['reopen', '重新开启']] : [['close', '关闭（走 skill）'], ['drop', '废弃（走 skill）']];
-    actions.unshift(['copy-name', '复制名称'], ['copy-path', '复制路径']);
+    actions.unshift(['pin', prefs.pinned.includes(norm(path)) ? '取消置顶' : '置顶'], ['copy-name', '复制名称'], ['copy-path', '复制路径']);
     menu = document.createElement('div');
     menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
     menu.innerHTML = actions.map(([action, name]) => `<button role="menuitem" data-action="${action}">${MenuIcons.forLabel(name)}<span>${name}</span></button>`).join('');
@@ -524,6 +684,7 @@ window.Sidebar = (() => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (!action) return;
       closeMenu();
+      if (action === 'pin') { togglePinned(path); return; }
       if (action === 'copy-name' || action === 'copy-path') {
         // 后端扫描条目的 path 已是绝对路径；名称取磁盘文件名，不取显示别名。
         const text = action === 'copy-name' ? path.split(/[\\/]/).pop() : path;
@@ -551,13 +712,14 @@ window.Sidebar = (() => {
     closeMenu();
     menu = document.createElement('div');
     menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
-    const actions = [['copy-path', '复制路径'], ['copy-name', '复制名称'], ['remove', '移除目录']];
+    const actions = [...(group ? [] : [['new-agent', '新建 Agent']]), ['copy-path', '复制路径'], ['copy-name', '复制名称'], ['remove', '移除目录']];
     menu.innerHTML = actions.map(([action, label]) => `<button role="menuitem" data-action="${action}" ${!path && action !== 'copy-name' ? 'disabled' : ''}>${MenuIcons.forLabel(label)}<span>${label}</span></button>`).join('');
     menu.onclick = async (e) => {
       const action = e.target.closest('button:not(:disabled)')?.dataset.action;
       if (!action) return;
       closeMenu();
       try {
+        if (action === 'new-agent') { await newAgent(members[0].flow_dir); return; }
         if (action !== 'remove') {
           await navigator.clipboard.writeText(action === 'copy-name' ? name : path);
           sideMsg(action === 'copy-name' ? '已复制目录名称' : '已复制目录路径', true);
@@ -723,6 +885,14 @@ window.Sidebar = (() => {
     const config = await invoke('get_config');
     prefs = config.sidebar;
     $('search-archived').checked = prefs.include_archived;
+    statsMode = localStorage.getItem('fc-sidebar-stats') === 'feat' ? 'feat' : 'flow';
+    $('btn-stats-mode').onclick = () => {
+      statsMode = statsMode === 'flow' ? 'feat' : 'flow';
+      localStorage.setItem('fc-sidebar-stats', statsMode);
+      statusFilter = ''; featFilter = '';
+      limits.clear();
+      render(apps, currentFlow, currentFeat);
+    };
     $('btn-toggle-all').onclick = () => setAllExpanded(prefs.collapsed.length > 0);
     $('btn-arrange').onclick = () => setLayout(prefs.layout === 'flat' ? 'tree' : 'flat');
     $('btn-search').onclick = () => showSearch($('tree-filter').hidden);
@@ -732,10 +902,13 @@ window.Sidebar = (() => {
       const row = event.target.closest('.status-row');
       if (!row) return;
       event.preventDefault();
-      statusFilter = statusFilter === row.dataset.status ? '' : row.dataset.status;
-      const key = row.dataset.status;
+      const feat = statsMode === 'feat';
+      const key = feat ? row.dataset.featStatus : row.dataset.status;
+      if (feat) featFilter = featFilter === key ? '' : key;
+      else statusFilter = statusFilter === key ? '' : key;
+      limits.clear();
       render(apps, currentFlow, currentFeat);
-      if (event.type === 'keydown') $('status-bars').querySelector(`[data-status="${key}"]`).focus({ preventScroll: true });
+      if (event.type === 'keydown') $('status-bars').querySelector(`[${feat ? 'data-feat-status' : 'data-status'}="${key}"]`).focus({ preventScroll: true });
     };
     $('status-bars').addEventListener('click', filterStatus);
     $('status-bars').addEventListener('keydown', filterStatus);
@@ -754,17 +927,57 @@ window.Sidebar = (() => {
       if (!$('tree-filter').hidden && !e.target.closest('#tree-filter, #btn-search')) showSearch(false);
     });
     if (!SOLO) {
+      syncAgentSelection(localStorage.getItem('fc-agent-tabs'));
+      window.addEventListener('storage', (event) => {
+        if (event.key === 'fc-agent-tabs' || event.key === null) syncAgentSelection(localStorage.getItem('fc-agent-tabs'));
+      });
+      const signature = (s) => s && JSON.stringify([s.title, s.app, s.cwd, s.feat, s.feat_code, s.links, s.archived_at]);
+      const removed = new Set();
+      let loadingAgents = true;
+      listen('agent-update', ({ payload: s }) => {
+        const changed = signature(agents.get(s.id)) !== signature(s);
+        agents.set(s.id, s);
+        if (changed) renderAgentsSoon();
+      });
+      listen('agent-removed', ({ payload: s }) => { if (loadingAgents) removed.add(s.id); if (agents.delete(s.id)) renderAgentsSoon(); });
+      const serviceStatus = $('agent-service-status');
+      serviceStatus.hidden = false;
+      serviceStatus.textContent = 'Agent 正在启动…（最多 30 秒）';
+      $('btn-agent').setAttribute('aria-busy', 'true');
+      invoke('agent_list').then((list) => {
+        for (const s of list) if (!agents.has(s.id) && !removed.has(s.id)) agents.set(s.id, s);
+        serviceStatus.hidden = true;
+        renderAgentsSoon();
+      }).catch((error) => {
+        serviceStatus.className = 'error';
+        serviceStatus.textContent = '读取 Agent 失败：' + error;
+      }).finally(() => {
+        loadingAgents = false;
+        removed.clear();
+        $('btn-agent').setAttribute('aria-busy', 'false');
+      });
+      listen('rename-prepare', ({ payload: p }) => {
+        if (prefs.pinned.includes(norm(p.path))) renamingPins.add(norm(p.path));
+      });
+      listen('rename-finished', ({ payload: p }) => {
+        const oldPath = norm(p.oldPath);
+        renamingPins.delete(oldPath);
+        if (p.error || !prefs.pinned.includes(oldPath)) return;
+        prefs.pinned = prefs.pinned.map((path) => path === oldPath ? norm(p.path) : path);
+        persist();
+      });
       listen('flow-changed', (ev) => { if (ev.payload.hash && ev.payload.source !== 'user') bump(ev.payload.path); });
       listen('md-changed', (ev) => { if (ev.payload.hash && ev.payload.source !== 'user') bump(ev.payload.path); });
     }
     bindDrag();
     $('tree').addEventListener('contextmenu', (e) => {
-      const row = e.target.closest('.file, .feat, .app-head, .group');
+      const row = e.target.closest('.agent-entry, .file, .feat, .app-head, .group');
       if (!row) return;
       e.preventDefault();
       e.stopPropagation();
       clearTimeout(nameClick);
       if (row.matches('.app-head, .group')) openDirectoryMenu(row, e.clientX, e.clientY);
+      else if (row.matches('.agent-entry')) openAgentMenu(row, e.clientX, e.clientY);
       else openMenu(row, e.clientX, e.clientY);
     }, true);
     $('tree').addEventListener('click', (e) => {
@@ -773,10 +986,18 @@ window.Sidebar = (() => {
       const archived = e.target.closest('[data-archive]');
       const head = e.target.closest('.app-head, .sec-head, .group');
       const row = e.target.closest('.file, .feat');
-      if (more) { e.stopImmediatePropagation(); limits.set(more.dataset.more, (limits.get(more.dataset.more) || PAGE_SIZE) + PAGE_SIZE); render(apps, currentFlow, currentFeat); }
+      const newButton = e.target.closest('[data-agent-new]'), agent = e.target.closest('.agent-entry');
+      if (newButton) { e.stopImmediatePropagation(); newAgent(newButton.dataset.agentNew).catch((error) => sideMsg(String(error))); }
+      else if (agent) {
+        e.stopImmediatePropagation();
+        const s = agents.get(agent.dataset.agent);
+        if (s.archived_at) sideMsg('该 Agent 已归档，请右键取消归档后打开。');
+        else invoke('open_agent_window', { focus: s.id }).catch((error) => sideMsg(String(error)));
+      }
+      else if (more) { e.stopImmediatePropagation(); const size = PAGE_SIZE[prefs.layout]; limits.set(more.dataset.more, (limits.get(more.dataset.more) || size) + size); render(apps, currentFlow, currentFeat); }
       else if (bucket) { e.stopImmediatePropagation(); toggle(bucket.dataset.bucket, false); }
       else if (archived) { e.stopImmediatePropagation(); toggle(archived.dataset.archive, true); }
-      else if (head && !e.target.closest('.app-new, .feat-new')) {
+      else if (head && !e.target.closest('.app-new, .feat-new, .agent-new')) {
         e.stopImmediatePropagation();
         const key = head.parentElement.dataset.key;
         // 名称单击也折叠/展开，但延迟到双击判定之后：双击改名时取消，避免重绘打断双击。
@@ -811,11 +1032,12 @@ window.Sidebar = (() => {
       }
     }, true);
     $('tree').addEventListener('keydown', (e) => {
-      if (e.target.matches('.app-head, .sec-head, .group') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }
-      if (e.target.matches('.file, .feat, .app-head, .group') && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+      if (e.target.matches('.app-head, .sec-head, .group, .agent-entry') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }
+      if (e.target.matches('.file, .feat, .app-head, .group, .agent-entry') && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
         e.preventDefault();
         const box = e.target.getBoundingClientRect();
         if (e.target.matches('.app-head, .group')) openDirectoryMenu(e.target, box.left + 12, box.bottom);
+        else if (e.target.matches('.agent-entry')) openAgentMenu(e.target, box.left + 12, box.bottom);
         else openMenu(e.target, box.left + 12, box.bottom);
       }
     });
@@ -828,5 +1050,5 @@ window.Sidebar = (() => {
   /** APP 显示名：有别名用别名，否则目录名（推进矩阵的 APP 下拉复用）。 */
   const appName = (app) => prefs.app_aliases[app.flow_dir] || app.app;
 
-  return { init, render, select, deselect, prune, isUnseen, setAutoTop, autoTop: () => prefs.auto_top, appName };
+  return { init, render, select, deselect, prune, isUnseen, setAutoTop, autoTop: () => prefs.auto_top, appName, featState };
 })();

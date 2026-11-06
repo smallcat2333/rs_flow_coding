@@ -1,4 +1,4 @@
-// 使用说明：书本按钮打开弹层，「图文说明」与「视频介绍」两个页签；关闭或切走时暂停视频。
+// 使用说明：书本按钮打开图文、图示流程、视频三个页签；文字目录独立导航，关闭或切走时暂停视频。
 'use strict';
 
 window.Guide = (() => {
@@ -91,6 +91,7 @@ window.Guide = (() => {
     else video.pause();
   }
 
+  /** 在完整说明 DOM 就绪后绑定弹层、页签和各正文目录；不修改业务文件，切页保留各页滚动位置。 */
   function init() {
     $('btn-guide').onclick = () => { $('guide-dialog').showModal(); tab('doc'); $('guide-doc').scrollTop = 0; };
     $('guide-close').onclick = () => $('guide-dialog').close();
@@ -107,12 +108,14 @@ window.Guide = (() => {
       next.focus();
       tab(next.dataset.guideTab);
     });
-    // 目录跳转只滚动正文容器，不改地址
-    $('guide-doc').querySelector('nav').addEventListener('click', (e) => {
-      const a = e.target.closest('a');
-      if (!a) return;
-      e.preventDefault();
-      $('guide-doc').querySelector(a.getAttribute('href')).scrollIntoView({ block: 'start' });
+    // 每份文字目录只定位本页章节；点击目录留白不导航，不改变地址或其他页的滚动位置。
+    document.querySelectorAll('.guide-reading').forEach((panel) => {
+      panel.querySelector('nav').addEventListener('click', (e) => {
+        const a = e.target.closest('a');
+        if (!a) return;
+        e.preventDefault();
+        panel.querySelector(a.getAttribute('href')).scrollIntoView({ block: 'start' });
+      });
     });
   }
 

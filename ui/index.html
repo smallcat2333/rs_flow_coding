@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Flow Coding</title>
   <!-- 主题尽早生效，避免深色模式下先闪一帧浅色 -->
   <script>
@@ -14,6 +15,8 @@
     })();
   </script>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="feat_state.css">
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
   <link rel="stylesheet" href="settings.css">
   <link rel="stylesheet" href="guide.css">
   <link rel="stylesheet" href="progress.css">
@@ -36,6 +39,7 @@
         <button id="btn-agent" class="icon-button" title="Agent 窗口" aria-label="Agent 窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M10.5 4h3M9.5 12.5v1.5M14.5 12.5v1.5M3 12v3M21 12v3"/></svg></button>
         <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
         <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
+        <button id="btn-stats-mode" class="icon-button" title="当前：Chart 节点统计；点击切换为 Feat" aria-label="切换为 Feat 统计" aria-pressed="false" aria-controls="totals"><svg id="stats-mode-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 15h14M4 12V8M9 12V3M14 12V6"/></svg></button>
       </nav>
       <div id="layout-menu" role="group" aria-label="布局" hidden>
         <div class="lm-title">排布方式</div>
@@ -53,6 +57,7 @@
       <div id="status-bars"></div>
     </section>
     <div id="tree"></div>
+    <div id="agent-service-status" role="status" hidden></div>
     <div id="side-msg" hidden></div>
   </aside>
   <div id="side-splitter" title="拖动调整侧栏宽度，双击恢复默认"></div>
@@ -220,6 +225,8 @@
         <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">Agent</span>
           <ul role="group">
             <li role="treeitem" data-settings-tab="claude" aria-selected="false" tabindex="-1"><span class="settings-node">Claude Code</span></li>
+            <li role="treeitem" data-settings-tab="terminal" aria-selected="false" tabindex="-1"><span class="settings-node">终端主题</span></li>
+            <li role="treeitem" data-settings-tab="agent-lifecycle" aria-selected="false" tabindex="-1"><span class="settings-node">会话策略</span></li>
           </ul>
         </li>
         <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">数据维护</span>
@@ -266,7 +273,33 @@
           <h3>Claude Code</h3><p>Agent 窗口用这里的设置启动会话。模型、权限模式等未在额外参数中指定的配置，仍读取 Claude Code 自己的 settings.json。</p>
           <div class="settings-well"><label for="settings-claude-path">claude 路径</label><input id="settings-claude-path" type="text" spellcheck="false" placeholder="留空自动查找"><p id="settings-claude-found"></p></div>
           <div class="settings-well"><label for="settings-claude-args">额外启动参数</label><input id="settings-claude-args" type="text" spellcheck="false" placeholder="例如 --model opus --permission-mode acceptEdits"><p>追加到每次新建和续接的启动命令，空格分隔，含空格的值用双引号括起。只影响之后启动的会话，运行中的会话停止后重新启动才生效。</p></div>
-          <div class="settings-actions"><button id="settings-claude-save">保存</button></div>
+          <div class="settings-actions settings-claude-actions"><button id="settings-claude-test">测试连接</button><button id="settings-claude-save">保存</button></div>
+          <p class="settings-claude-hint">测试使用当前输入，无需先保存。会发送一条简短请求，消耗少量额度，最长约 70 秒。</p>
+          <div id="settings-claude-result" class="settings-claude-result" role="status" aria-live="polite" aria-atomic="true" hidden>
+            <strong id="settings-claude-result-title"></strong>
+            <p id="settings-claude-result-meta"></p>
+            <pre id="settings-claude-result-detail"></pre>
+          </div>
+        </section>
+        <section data-settings-panel="terminal" aria-label="终端主题" hidden>
+          <h3>终端主题</h3><p>选择 Agent 内嵌终端的配色，已打开的会话立即同步。</p>
+          <div class="settings-well">
+            <label for="settings-terminal-theme">配色方案</label>
+            <select id="settings-terminal-theme" aria-describedby="settings-terminal-description"></select>
+            <p id="settings-terminal-description"></p>
+            <div id="settings-terminal-preview" class="settings-terminal-preview" aria-label="终端配色预览（只读）"></div>
+          </div>
+          <p class="settings-terminal-note">默认使用原生主题，并启用彩色输出。配色会自动保存；Claude Code 自己指定的文字颜色会保留。</p>
+          <p class="settings-terminal-note">已在运行的会话，停止后重新打开一次即可启用新的彩色输出配置，对话历史会保留。</p>
+        </section>
+        <section data-settings-panel="agent-lifecycle" aria-label="会话策略" hidden>
+          <h3>会话策略</h3><p>会话保留在列表中，CLI 进程按需启动；点击左侧会话或页签会自动恢复对话。</p>
+          <div class="settings-well">
+            <label for="settings-agent-idle-hours">CLI 进程空闲存活时间（小时）</label>
+            <input id="settings-agent-idle-hours" type="number" min="0" max="8760" step="any" value="1" disabled aria-describedby="settings-agent-idle-hint">
+            <p id="settings-agent-idle-hint">默认 1 小时，0 表示不自动关闭，可填写小数。仅在连续空闲、等待输入时计时；回答、工具执行、压缩和等待确认期间不会关闭。修改后自动保存，并作用于当前进程。</p>
+          </div>
+          <p class="settings-terminal-note">到期仅结束 CLI 进程，保留会话与已保存的对话。再次点击会话自动恢复，无需手动续接。</p>
         </section>
         <section data-settings-panel="database" aria-label="数据库" hidden>
           <div class="storage-heading"><h3>数据库</h3><button data-storage-refresh>更新统计</button></div><p id="storage-path"></p>
@@ -286,11 +319,12 @@
       <h2 id="guide-title">使用说明</h2>
       <div id="guide-tabs" class="guide-tabs" role="tablist" aria-label="说明类型">
         <button role="tab" data-guide-tab="doc" aria-controls="guide-doc" aria-selected="true">图文说明</button>
+        <button id="guide-tab-workflow" role="tab" data-guide-tab="workflow" aria-controls="guide-workflow" aria-selected="false" tabindex="-1">图示流程</button>
         <button role="tab" data-guide-tab="video" aria-controls="guide-video" aria-selected="false" tabindex="-1">视频介绍</button>
       </div>
       <button id="guide-close" class="icon-button" aria-label="关闭使用说明" title="关闭使用说明">×</button>
     </header>
-    <div id="guide-doc" class="guide-panel" role="tabpanel" data-guide-panel="doc" aria-labelledby="guide-title">
+    <div id="guide-doc" class="guide-panel guide-reading" role="tabpanel" data-guide-panel="doc" aria-labelledby="guide-title">
       <nav aria-label="说明目录">
         <a href="#guide-start">开始使用</a>
         <a href="#guide-colors">节点颜色</a>
@@ -298,6 +332,7 @@
         <a href="#guide-stats">状态统计</a>
         <a href="#guide-feat">Feat 档案</a>
         <a href="#guide-link">图间链接</a>
+        <a href="#guide-agent">Agent 会话</a>
         <a href="#guide-lock">Agent 加锁</a>
         <a href="#guide-history">历史对比</a>
       </nav>
@@ -325,8 +360,8 @@
               <tr><td><span class="guide-sw" style="background:#FFFFFF"></span>已实现</td><td>—</td><td>代码已与图一致。</td></tr>
               <tr><td><span class="guide-sw" style="background:#DAE8FC"></span>你的想法</td><td>你</td><td>新想法或改动。Agent 评估可行改黄，不可行保持蓝并用便签写原因。</td></tr>
               <tr><td><span class="guide-sw" style="background:#FFF2CC"></span>起草待审</td><td>Agent</td><td>方案写好等你审：同意改绿，不同意改红。</td></tr>
-              <tr><td><span class="guide-sw" style="background:#D5E8D4"></span>已确认</td><td>你</td><td>下一轮执行。Agent 改完代码改回无色。</td></tr>
-              <tr><td><span class="guide-sw" style="background:#F8CECC"></span>有问题</td><td>你</td><td>问题写在节点里或用便签连过去。Agent 修正后改黄。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#D5E8D4"></span>已确认</td><td>你</td><td>下一轮执行。Agent 完成节点整体职责并验证后改回无色。</td></tr>
+              <tr><td><span class="guide-sw" style="background:#F8CECC"></span>有问题</td><td>你</td><td>短问题写在节点里，详细说明用挂载便签。Agent 修正方案后改黄。</td></tr>
               <tr><td><span class="guide-sw" style="background:#F5F5F5;border-style:dashed"></span>计划删除</td><td>Agent</td><td>建议删掉这一步：同意改绿虚线，不同意改无色。</td></tr>
               <tr><td><span class="guide-sw" style="background:#D5E8D4;border-style:dashed"></span>确认删除</td><td>你</td><td>Agent 删除节点和对应代码。</td></tr>
             </tbody>
@@ -335,11 +370,12 @@
         </section>
         <section id="guide-loop">
           <h3>协作流程</h3>
-          <p>一次典型的来回：你把节点标<b>蓝</b> → Agent 出方案标<b>黄</b> → 你审核标<b>绿</b> → Agent 改完代码标回<b>无色</b>。发现问题随时标<b>红</b>，Agent 修完会再交回黄色给你审。</p>
+          <p>一次典型的方案审阅：你把节点标<b>蓝</b> → Agent 出方案标<b>黄</b> → 你审核标<b>绿</b> → Agent 完成节点整体职责并验证后标回<b>无色</b>。发现方案问题可标<b>红</b>，Agent 修正方案后回到黄色供你审阅。四阶段技能、连续推进和测试返修的完整示例见「图示流程」页签。</p>
         </section>
         <section id="guide-stats">
           <h3>状态统计</h3>
           <p>左上角汇总所有启用流程图的节点状态。点一行只显示含该状态节点的图，再点一次取消；可以和搜索叠加。</p>
+          <p>侧栏首行最右侧的统计图标可切换 Chart／Feat，并记住选择。Feat 分为关闭／废弃、探讨／需求、UI、开发、测试、其他六组；测试包含待测试、测试中、待验收。首尾两组只显示数量，其余显示数量条。点一组筛选对应档案，再点取消；关闭档案也计入统计并可直接筛选查看。</p>
           <figure><img src="guide/shot_status.png" alt="左上角按状态逐行显示的数量条" width="330"><figcaption>例如点「起草待审」，快速找到等你审核的图。</figcaption></figure>
         </section>
         <section id="guide-feat">
@@ -371,6 +407,44 @@
           <h3>图间链接</h3>
           <p>在 draw.io 中右键节点 →「编辑链接」，填 <code>子流程.drawio</code> 或 <code>子流程.drawio#节点id</code>。节点出现箭头角标，点击打开目标图；流程图顶栏左侧的返回箭头逐层回到来源图。</p>
         </section>
+        <section id="guide-agent">
+          <h3>Agent 会话</h3>
+          <p>点击侧栏顶部的机器人图标打开 Agent 窗口，也可从画布左下角的「Agent」入口进入。窗口内运行真实的 Claude Code 终端：左侧管理会话和查看活动，右侧在「总览」与各会话页签之间切换。</p>
+          <h4>首次配置与启动</h4>
+          <ol>
+            <li>先在本机安装并完成 Claude Code 登录。运行目录中需有与 Flow Coding 配套的 <code>flowctl.exe</code>。</li>
+            <li>主窗口打开「设置 → Agent → Claude Code」。「claude 路径」留空时自动查找；找不到时填可执行文件路径，保存后核对显示的查找结果。</li>
+            <li>需要自定义启动选项时填写「额外启动参数」：空格分隔，含空格的值用双引号括起。未指定的配置沿用 Claude Code 自身设置；修改只在之后启动或续接时生效。</li>
+            <li>在 Agent 窗口点「新建会话」，选择 APP 工作目录，或选「其他目录…」输入绝对路径；可填写名称、关联 Feat 或流程图、勾选置顶，再点「启动」。名称留空时使用 Feat 名，未关联 Feat 时叫「新会话」。</li>
+          </ol>
+          <p>「测试连接」使用当前输入，无需先保存：检查 CLI 版本并发送简短请求，展示耗时、回复或失败原因，最长约 70 秒，会消耗少量额度；测试通过后仍需点「保存」保留配置。</p>
+          <p>选择 Feat 会同时带入同 APP 下挂了该 Feat 标签的节点。关联档案路径与节点会在启动时加入会话提示；启动后，在右侧终端输入任务并按 Enter 发送，Shift+Enter 换行。权限请求和其他确认直接在终端内操作。</p>
+          <h4>查看活动与处理提醒</h4>
+          <p>左上活动泳道展示最近 5 分钟的编辑、命令、读取、提交和协作消息；悬停查看活动详情，点击泳道打开会话，运行中的 worker 子代理显示在所属会话下方。左下搜索支持会话名、APP、Feat、流程图和最近活动，Ctrl+K 聚焦搜索框；会话可置顶，右侧标题双击可改名。</p>
+          <table class="guide-states">
+            <thead><tr><th>状态或提醒</th><th>如何处理</th></tr></thead>
+            <tbody>
+              <tr><td>启动中 / 运行中 / 执行中</td><td>会话正在启动、响应或执行工具；执行中显示工具名和耗时。</td></tr>
+              <tr><td>等你确认</td><td>打开会话，在终端查看具体请求并作出选择。</td></tr>
+              <tr><td>可能停滞</td><td>运行中且没有工具执行，超过 60 秒未收到新活动时提示；先查看终端输出，不能仅凭此判断进程已卡死。</td></tr>
+              <tr><td>空闲 / 未运行</td><td>空闲表示进程仍在等待输入；未运行需要点击「启动」或「续接」。</td></tr>
+              <tr><td>异常退出</td><td>查看退出码和终端输出，处理原因后可点「续接」。</td></tr>
+              <tr><td>多个会话改同一文件</td><td>「总览」列出近 30 分钟内被多个会话编辑的文件；先核对改动并协调分工，此提醒不代表已发生内容冲突。</td></tr>
+            </tbody>
+          </table>
+          <h4>与 Feat、流程图双向定位</h4>
+          <p>默认开启「跟随主窗口」：在主窗口选中节点或打开 Feat，会切到对应会话；没有匹配会话时可从提示新建。关闭后显示「已锁定」，保留当前会话。反过来，点击会话中的 Feat 标签、流程图或节点引用，可在主窗口打开并定位。</p>
+          <p>会话头的「＋ 关联」可补充 Feat 或流程图；主窗口选中节点后，可点会话头出现的「＋ 图名#节点」加入关联，节点标签上的 × 取消该关联。新增关联在下次启动或续接时写入会话提示。</p>
+          <p>Agent 处理某个节点时，可运行下面的命令标记当前位置。画布会在该节点旁显示机器人和状态，最近活动产生发光与短气泡；点击机器人打开对应会话。画布左下角显示本图会话状态，旁边的眼睛按钮显示或隐藏画布 Agent，开关会被记住。这些标记只用于展示，不修改图中的业务状态颜色。</p>
+          <pre>flowctl focus "docs/flow/业务流程.drawio#n7"
+flowctl focus --clear</pre>
+          <h4>会话协作与关闭</h4>
+          <p>下面的命令在 Flow Coding 启动的 Agent 会话内执行：<code>peers</code> 查看同 APP 的其他会话；<code>send</code> 按会话名或 ID 前缀发消息。接收方须在运行，空闲时送达，忙碌或等待确认时排队到本轮结束。多个会话准备修改同一文件前先协调。</p>
+          <pre>flowctl peers
+flowctl send "接口开发" "我准备修改共享配置，请先确认分工"</pre>
+          <p><b>关闭页签只收起视图，会话继续运行。</b>「停止」结束进程并保留 Claude Code 对话历史，之后可点「续接」，或在未运行终端按 Enter；已有对话记录时恢复原会话。「移除」需再次点击确认，运行中的会话会先结束，再从列表移除，Claude Code 的对话记录保留。关闭主窗口、退出 Flow Coding 时会结束其托管的全部会话进程。</p>
+          <p>会话关联和画布定位不代替文件加锁；修改流程图或 Feat 前仍按下一节的加锁流程执行。配套 smallcat-feat 技能需在 Claude Code 环境另行配置，关联 Feat 后仍需向会话发送具体任务。</p>
+        </section>
         <section id="guide-lock">
           <h3>Agent 加锁</h3>
           <p>Agent 改图或改档案前必须加锁，期间 App 显示半透明悬浮只读标识，不阻挡缩放、滚动或选中复制；解锁后自动合并磁盘最新内容。</p>
@@ -382,6 +456,132 @@ flowctl unlock &lt;文件&gt;</pre>
         <section id="guide-history">
           <h3>历史对比</h3>
           <p>每次写盘内容有变化都会记一条快照。点流程图顶栏「历史对比」，勾选两个快照，按节点列出新增、删除、文字变化和状态变化；也可以只读查看旧版或回滚。</p>
+        </section>
+      </div>
+    </div>
+    <div id="guide-workflow" class="guide-panel guide-reading" role="tabpanel" data-guide-panel="workflow" aria-labelledby="guide-tab-workflow" hidden>
+      <nav aria-label="图示流程目录">
+        <a href="#workflow-start">从哪里开始</a>
+        <a href="#workflow-stages">四阶段总览</a>
+        <a href="#workflow-drawing">何时改图</a>
+        <a href="#workflow-confirm">何时由你确认</a>
+        <a href="#workflow-modes">怎样连续推进</a>
+        <a href="#workflow-examples">场景演练</a>
+        <a href="#workflow-commands">技能与沟通示例</a>
+      </nav>
+      <div class="guide-body guide-workflow-body">
+        <section id="workflow-start">
+          <p class="guide-eyebrow">FEAT SKILL × 流程图</p>
+          <h3>从需求到验收，一条完整路径</h3>
+          <p><b>图长期维护，Feat 记录一次改动，skill 指导 Agent 完成各阶段。</b> 同一张业务图可以关联多个 Feat；关闭一个 Feat 后，图仍继续使用。</p>
+          <div class="guide-callout"><b>先在 Agent 环境配置配套的 smallcat-feat 技能。</b> 下方命令发给 Agent；Flow Coding 负责编辑、展示和定位文件，不会自行执行技能或改代码。既有项目直接从需求开始，新 APP 可先用 <code>smallcat-feat-init</code> 接入。</div>
+        </section>
+        <section id="workflow-stages">
+          <h3>四阶段总览</h3>
+          <p>阶段之间是否停下，取决于推进方式和真正的待决事项。清楚的小任务可以连续完成。</p>
+          <ol class="guide-process" aria-label="需求、原型、开发、测试四阶段">
+            <li><span class="guide-step">01 · /1</span><h4>需求</h4><p>明确目标、范围<br>与验收标准</p><small>落档 §1 · 读已有图</small></li>
+            <li><span class="guide-step">02 · /2</span><h4>原型</h4><p>确定界面<br>与操作方式</p><small>落档 §2 · 无 UI 可跳过</small></li>
+            <li><span class="guide-step">03 · /3</span><h4>开发</h4><p>先写路线<br>再实现与自验</p><small>落档 §3 · 自验后 T 完成</small></li>
+            <li><span class="guide-step">04 · /4</span><h4>测试</h4><p>提出正式计划<br>程序测试＋人工确认</p><small>落档 §4 · 回填验收</small></li>
+          </ol>
+          <div class="guide-callout"><b>正式测试计划由 /4 提出。</b> /3 的验证是开发自验，结果记在 §3.2；/4 从需求、交互和设计图提出 §4.1 程序测试、§4.2 人工清单，不按开发实现反推验收。</div>
+          <p>开发完成后进入测试，你不必逐个确认 T。测试结束仍需按 <code>smallcat-feat-5-close</code> 核对并关闭 Feat；工具不会把“开发完成”自动当成“已关闭”。</p>
+        </section>
+        <section id="workflow-drawing">
+          <h3>Agent 什么时候改图？</h3>
+          <table class="guide-states guide-workflow-table">
+            <thead><tr><th scope="col">时机</th><th scope="col">Agent 对图做什么</th><th scope="col">你看什么</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">需求 /1</th><td>先读已有图与代码，定位受影响的业务节点；需要改变业务流程时，在原图起草黄节点或灰色删除计划，关联本 Feat。</td><td>目标、范围、关键分支和业务结果是否正确。</td></tr>
+              <tr><th scope="row">原型 /2</th><td>操作方式改变业务走向时同步图；只调控件、间距或内部接线，不强行改业务图。</td><td>页面大设计、关键操作和业务流程是否一致。</td></tr>
+              <tr><th scope="row">开发 /3</th><td>按已确认或已明确授权的范围实现。节点代表的整体职责实现并验证后恢复无色；局部完成不提前清色。</td><td>只有新出现的关键取舍才需介入；无需再确认“代码写完”。</td></tr>
+              <tr><th scope="row">测试 /4</th><td>用图核对业务覆盖、分支和链接。发现业务描述或实现有误，登记问题并回开发处理；不在测试阶段直接执行图中绿色项。</td><td>执行精简人工清单，反馈通过、失败及具体现象。</td></tr>
+            </tbody>
+          </table>
+          <p><b>先复用，再考虑新图。</b> 新 Feat、新 T 或一次 bug 都不是新建图的理由。确需新增独立业务图或拆图时，Agent 说明候选图、不能复用的原因和新图职责，经你确认后再建。</p>
+          <ul>
+            <li>图只保留主要业务环节、关键判断和结果；函数、SQL、字段校验等细节放在档案和测试中。</li>
+            <li>沿用原节点 ID 和历史 Feat 标签。长说明用<b>挂载 Note</b>，短分支条件用<b>连线原生标签</b>，不叠放独立文字层。</li>
+            <li>Agent 改图、改 Feat 前加锁，写完解锁；你看到只读标识时仍可浏览，解锁后内容自动同步。</li>
+          </ul>
+        </section>
+        <section id="workflow-confirm">
+          <h3>你确认的是方案，还是测试结果？</h3>
+          <h4>方案确认：决定接下来怎么做</h4>
+          <ol class="guide-process guide-review-process" aria-label="图上方案确认顺序">
+            <li><span class="guide-sw" style="background:#DAE8FC" aria-hidden="true"></span><b>蓝 · 你的想法</b><small>你提出希望改变的业务</small></li>
+            <li><span class="guide-sw" style="background:#FFF2CC" aria-hidden="true"></span><b>黄 · Agent 草案</b><small>Agent 整理方案交你审阅</small></li>
+            <li><span class="guide-sw" style="background:#D5E8D4" aria-hidden="true"></span><b>绿 · 你已确认</b><small>由你标记，交 Agent 实施</small></li>
+            <li><span class="guide-sw" style="background:#FFFFFF" aria-hidden="true"></span><b>无色 · 实现验证</b><small>Agent 完成节点整体职责</small></li>
+          </ol>
+          <p>方案有问题时，你标<b>红</b>并挂注释；Agent 调整后回到<b>黄</b>。计划删除用<b>灰虚线</b>，你同意后标<b>绿虚线</b>，Agent 才按授权删除。Agent 不代替你标红、蓝或绿。</p>
+          <p>你也可在会话中明确确认方案，由 Agent 记录确认依据。采用已配置的连续推进约定时，当前任务中已明确授权的小改动可连续实施；已有待审草图、红蓝问题、新建或拆图仍需对应决定，不因选择自动推进而全部获准。</p>
+          <h4>人工验收：确认实际运行是否符合预期</h4>
+          <p>在 §4.2 执行场景，在 §4.3 复测问题；一次完整操作能覆盖多个检查点，就合并为一条人工测试。你反馈后，Agent 按证据回填测试结果和 §1.3 验收勾选。</p>
+          <div class="guide-callout"><b>三个“完成”各有含义：</b> 图无色＝业务职责已实现并验证；T 完成＝开发和必要自验完成；人工通过＝你已实际验证。它们不能互相代替，Feat 关闭还要正式收口。</div>
+        </section>
+        <section id="workflow-modes">
+          <h3>小任务连续做，复杂任务留确认点</h3>
+          <p>在采用配套推进约定的项目中，Feat 档案头可记录一个设置；这是 Agent 读取的约定，不是本工具的自动执行开关：</p>
+          <pre>&gt; 推进方式：自适应</pre>
+          <table class="guide-states guide-workflow-table">
+            <thead><tr><th scope="col">方式</th><th scope="col">怎样推进</th><th scope="col">怎样表达</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">自适应 · 默认</th><td>明确的小任务连续完成；重要业务或设计取舍先落档，等你调整。</td><td>“你按情况决定。”</td></tr>
+              <tr><th scope="row">一次完成</th><td>在既定目标内完成可独立完成的工作，交付后你再调整；真实阻塞问题仍先问。</td><td>“这次直接做完。”</td></tr>
+              <tr><th scope="row">分段确认</th><td>需求、原型方案、开发路线分别先写入 Feat，等你看过再实施；不增加开发完成确认。</td><td>“每个阶段的方案先给我看。”</td></tr>
+            </tbody>
+          </table>
+          <p>你明确说“只讨论”“只建档”“只改 T2”或“暂不测试”时，以你的范围为准。人工待测不代填通过，修复提交仍等你确认；推进方式不授权自动关闭、推送或发布。</p>
+        </section>
+        <section id="workflow-examples">
+          <h3>场景演练</h3>
+          <p>看一遍具体任务如何走，再把同样的表达方式用于自己的 Feat。</p>
+          <details class="guide-scenario" open>
+            <summary><span>01</span> 小改动：接入一个已设计好的筛选框</summary>
+            <div><p><b>你的输入：</b>“控件已画好，填值按该条件查询，清空沿用原逻辑；这次直接做完。”</p>
+              <ol><li>Agent 读现有实现，写清范围与验收；原型沿用现有设计，先把任务路线写入 Feat。</li><li>业务主线不变就不改图；需要说明筛选规则时，补到原节点的挂载 Note。</li><li>接入、实现、自验后 T 标完成，继续 /4，给出“填值查询 → 清空查询”的一条人工场景及各步预期。</li><li>你反馈实际结果，Agent 更新测试和验收；不再逐个问你 T 是否完成。</li></ol>
+              <p class="guide-scenario-result">你主要介入：明确目标，以及最后的人工测试。</p></div>
+          </details>
+          <details class="guide-scenario">
+            <summary><span>02</span> 复杂需求：增加审批与退回流程</summary>
+            <div><p><b>你的输入：</b>“要增加审批，但退回到哪一步、谁能重提还需要讨论，分段给我看。”</p>
+              <ol><li>Agent 将候选方案和待决问题先写进 Feat，与你确定业务口径。</li><li>优先复用已有业务图；原图确实不能承载时，先说明新图职责，经你确认后再建。</li><li>你审阅关键分支、原型方案和已落档的开发路线；图中确认项由你标绿，Agent 按授权实施。</li><li>整体实现并验证后相关节点恢复无色，T 完成，进入 /4 测试审批、退回等业务场景。</li></ol>
+              <p class="guide-scenario-result">你主要介入：业务路线、页面大设计、开发路线，以及人工验收。</p></div>
+          </details>
+          <details class="guide-scenario">
+            <summary><span>03</span> 测试返修：取消后旧结果仍覆盖新任务</summary>
+            <div><p><b>你的输入：</b>“人工第 2 项不通过：取消旧任务后，新任务结果又被旧结果覆盖。”</p>
+              <ol><li>对照原需求判为已有实现缺陷，在 §4.3 记录问题并关联原 T，不新增修复 T。</li><li>原 T 回到进行中，Agent 定位、修复、自验；业务图含义没变就不重画，图描述也有误时同步修正方案。</li><li>修复自验及必要集成验证通过后，T 恢复完成，§4.3 仍写“未复测（待用户确认）”。</li><li>你复测通过后问题才闭环；失败则继续原问题，保留轮次记录。确认修复完成后再按修复规则提交。</li></ol>
+              <p class="guide-scenario-result">开发完成与等待复测可以同时存在。新增原需求没有的能力，才先确认范围并新增 T。</p></div>
+          </details>
+        </section>
+        <section id="workflow-commands">
+          <h3>把任务交给 Agent</h3>
+          <p>在已配置这些技能的 Agent 会话中使用全名；/1～/5 是本页的简称，不是另一个命令。</p>
+          <table class="guide-states guide-workflow-table guide-command-table">
+            <thead><tr><th scope="col">想做什么</th><th scope="col">发给 Agent</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">整理需求并开始推进</th><td><code>/smallcat-feat-1-new &lt;APP 路径&gt; &lt;需求&gt;</code></td></tr>
+              <tr><th scope="row">设计或补全界面</th><td><code>/smallcat-feat-2-ui &lt;Feat 编号&gt;</code></td></tr>
+              <tr><th scope="row">开发或续修原任务</th><td><code>/smallcat-feat-3-dev &lt;Feat 编号&gt; &lt;T 编号或问题描述&gt;</code></td></tr>
+              <tr><th scope="row">提出测试计划、回填反馈</th><td><code>/smallcat-feat-4-test &lt;Feat 编号&gt; &lt;可选反馈&gt;</code></td></tr>
+              <tr><th scope="row">验收后正式关闭</th><td><code>/smallcat-feat-5-close &lt;Feat 编号&gt;</code></td></tr>
+            </tbody>
+          </table>
+          <h4>让反馈能准确定位</h4>
+          <p>选中节点后使用“复制引用”，把图名、节点 ID 和期望一起发给 Agent；从 Feat 顶栏复制路径可明确是哪份档案。</p>
+          <pre>查询流程.drawio#n3：这里应先检查条件，再发起查询。
+请先更新方案供我确认，不要直接开发。
+
+人工 1 通过；2 不通过：取消旧任务后，新结果被覆盖。
+请按原 T 修复，修完给我复测。</pre>
+          <p>§4.3 的问题、修复和复测分三段写；每个问题只保留一个当前复测结论：</p>
+          <pre>- 日期 [缺陷][关联 T2] 问题与复现步骤
+  → 修复：根因、改动、自验及轮次记录
+  → 复测：未复测 / 不通过 / 通过</pre>
+          <p>上面为阅读示意。实际档案每条问题写成<b>一行</b>，用 ASCII <code>-&gt;</code> 分隔三段；历史轮次放在修复段，不保留旧的“复测：通过”字段。</p>
         </section>
       </div>
     </div>
@@ -397,12 +597,17 @@ flowctl unlock &lt;文件&gt;</pre>
 
   <script src="vendor/vendor.js"></script>
   <script src="menu_icons.js"></script>
+  <script src="feat_state.js"></script>
   <script src="sidebar.js"></script>
   <script src="layout.js"></script>
   <script src="tabs.js"></script>
   <script src="app.js"></script>
   <script src="timeline.js"></script>
   <script src="float_feed.js"></script>
+  <script src="vendor/xterm/xterm.js"></script>
+  <script src="vendor/xterm/addon-fit.js"></script>
+  <script src="vendor/xterm/addon-unicode11.js"></script>
+  <script src="terminal_themes.js"></script>
   <script src="settings.js"></script>
   <script src="live_markdown.js"></script>
   <script src="progress.js"></script>
