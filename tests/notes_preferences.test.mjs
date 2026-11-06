@@ -75,7 +75,9 @@ test('默认关闭；主动打开和固定后，新画布选点自动恢复两�
   assert.equal(next.notes.isOpen(), false);
   next.select(1);
   assert.equal(next.notes.isOpen(), true);
-  assert.equal(next.panel().children[0].children[0].textContent, '节点注释 · n2');
+  const title = next.panel().children[0].children[0];
+  assert.equal(title.textContent, 'n2');
+  assert.equal(title.title, '节点注释 · n2\nn2');
   assert.equal(next.anchor().getAttribute('aria-pressed'), 'true');
 });
 

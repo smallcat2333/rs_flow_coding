@@ -24,6 +24,15 @@
 // 新建节点/连线的 id 改为短号 n1、n2…（替换 draw.io 的随机 guid 前缀），便于口头或在会话中报给 Agent；已有 id 不改。
 (function () {
   'use strict';
+  /** 尺寸观察循环通知只记警告；捕获阶段拦截，避免 draw.io 后续替换 onerror 后又弹窗，其他错误照常报告。 */
+  window.addEventListener('error', function (event) {
+    if (event.message === 'ResizeObserver loop completed with undelivered notifications.' ||
+        event.message === 'ResizeObserver loop limit exceeded') {
+      console.warn(event.message);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
   var origMain = null;
   var ui = null;
   var noteTools = null;
@@ -80,14 +89,16 @@
       if (!graph.model.isVertex(cell)) continue;
       var link = graph.getLinkForCell(cell);
       if (!isFlowLink(link)) continue;
-      var hasFeat = tagsOf(graph, cell).some(function (tag) { return FEAT_TAG.test(tag); });
-      var key = link + '|' + hasFeat;
+      // 从右向左依次为出链、入链、图跳转；仅为当前图实际存在的角标留位。
+      var slots = (tagsOf(graph, cell).some(function (tag) { return FEAT_TAG.test(tag); }) ? 1 : 0) +
+        (fullPath === incomingPath && incomingRefs[cell.id] && incomingRefs[cell.id].length ? 1 : 0);
+      var key = link + '|' + slots;
       seen[cell.id] = true;
       var old = linkMarks[cell.id];
       if (old && old.cell === cell && old.key === key) continue;
       if (old) graph.removeCellOverlay(old.cell, old.overlay);
       var ov = new mxCellOverlay(linkImage(), '打开流程图：' + link,
-        mxConstants.ALIGN_RIGHT, mxConstants.ALIGN_TOP, new mxPoint(hasFeat ? -35 : -14, 10), 'pointer');
+        mxConstants.ALIGN_RIGHT, mxConstants.ALIGN_TOP, new mxPoint(-14 - slots * 21, 10), 'pointer');
       ov.addListener(mxEvent.CLICK, (function (target, href) {
         return function () { graph.customLinkClicked(href, target); };
       })(cell, link));
@@ -110,8 +121,7 @@
       if (!graph.model.isVertex(cell)) continue;
       var sources = incomingRefs[cell.id];
       if (!sources || !sources.length) continue;
-      var slots = (tagsOf(graph, cell).some(function (tag) { return FEAT_TAG.test(tag); }) ? 1 : 0) +
-        (isFlowLink(graph.getLinkForCell(cell)) ? 1 : 0);
+      var slots = tagsOf(graph, cell).some(function (tag) { return FEAT_TAG.test(tag); }) ? 1 : 0;
       var key = JSON.stringify(sources) + '|' + slots;
       seen[cell.id] = true;
       var old = incomingMarks[cell.id];

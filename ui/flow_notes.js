@@ -86,23 +86,22 @@
 
     var css = document.createElement('style');
     css.textContent = '.fc-notes{position:fixed;top:64px;right:24px;z-index:1000;box-sizing:border-box;display:flex;flex-direction:column;width:380px;max-width:calc(100vw - 16px);max-height:calc(100vh - 80px);min-height:0;padding:14px;border:1px solid light-dark(#ffffffb3,#ffffff29);border-radius:8px;background:light-dark(#ffffff73,#29292973);-webkit-backdrop-filter:blur(16px) saturate(125%);backdrop-filter:blur(16px) saturate(125%);color:light-dark(#222,#ddd);box-shadow:0 8px 28px #0003,inset 0 1px 0 light-dark(#ffffffa6,#ffffff14);font:13px/1.6 Arial,"Microsoft YaHei",sans-serif}' +
-      '.fc-notes-head{display:flex;align-items:center;gap:8px;cursor:move;touch-action:none;user-select:none;margin-bottom:4px}' +
-      '.fc-notes h2{flex:1;min-width:0;font-size:15px;margin:0;overflow-wrap:anywhere}' +
-      '.fc-notes-head .geBtn{margin:0;min-width:28px;padding:2px 7px;cursor:pointer}' +
+      '.fc-notes-head{display:flex;align-items:center;gap:4px;cursor:move;touch-action:none;user-select:none;margin-bottom:6px}' +
+      '.fc-notes h2{flex:1;min-width:0;font-size:13px;line-height:22px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.fc-notes-head .geBtn{flex-shrink:0;box-sizing:border-box;margin:0;width:22px;min-width:22px;height:22px;padding:0;font-size:12px;line-height:20px;cursor:pointer}' +
       '.fc-notes-head .fc-notes-anchor[aria-pressed=true]{background:light-dark(#dbeafe,#243d58);border-color:#4493f8;color:light-dark(#174a8b,#b9d9ff);box-shadow:inset 0 0 0 1px #4493f8}' +
       '.fc-notes.is-anchored .fc-notes-head{cursor:default}' +
       '.fc-notes-empty{padding:12px 0;opacity:.7}' +
-      '.fc-notes-summary{opacity:.7;font-size:12px;margin-bottom:12px}' +
       '.fc-notes-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}' +
-      '.fc-note-card{border-top:1px solid light-dark(#d0d7de,#505050);padding:12px 0}' +
+      '.fc-note-card{border-top:1px solid light-dark(#d0d7de,#505050);padding:8px 0}' +
       '.fc-note-located{background:light-dark(#fff8e8,#332b1c);outline:1px solid #b7791f;outline-offset:-1px}' +
-      '.fc-note-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}' +
-      '.fc-note-caption{font-size:11px;opacity:.65;min-width:0}' +
+      '.fc-note-head{display:flex;align-items:center;gap:6px;margin-bottom:3px}' +
+      '.fc-note-caption{flex:1;font-size:11px;line-height:20px;opacity:.65;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
       '.fc-note-content{overflow-wrap:anywhere;max-height:300px;overflow:auto;white-space:normal}' +
       '.fc-note-content[contenteditable=true]{min-height:100px;outline:1px solid #b7791f;padding:8px;box-sizing:border-box}' +
       '.fc-note-content:focus-visible,.fc-notes button:focus-visible{outline:2px solid #b7791f;outline-offset:2px}' +
       '.fc-note-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0}' +
-      '.fc-note-actions .geBtn{margin:0;padding:2px 4px;min-width:0;font-size:11px;line-height:16px;display:inline-flex;align-items:center;gap:3px}' +
+      '.fc-note-actions .geBtn{box-sizing:border-box;margin:0;padding:0 3px;min-width:0;height:20px;font-size:11px;line-height:16px;display:inline-flex;align-items:center;gap:2px}' +
       '.fc-note-action-icon{width:12px;height:12px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}' +
       '.fc-note-pick{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);z-index:10000;max-width:calc(100% - 32px);box-sizing:border-box;padding:10px 14px;border:1px solid #b7791f;border-radius:6px;background:light-dark(#fff8e8,#332b1c);color:light-dark(#55370a,#ffe0a0);font:13px/1.5 Arial,"Microsoft YaHei",sans-serif;pointer-events:none}';
     document.head.appendChild(css);
@@ -241,7 +240,9 @@
       var header = document.createElement('div');
       header.className = 'fc-notes-head';
       var title = document.createElement('h2');
-      title.textContent = (model.isEdge(target) ? '连线注释' : '节点注释') + ' · ' + target.id;
+      // 宿主名称与按钮共用一行，完整名称和节点身份保留在悬停提示中。
+      title.textContent = text(target) || (model.isEdge(target) ? '此连线的说明' : '此节点的说明');
+      title.title = (model.isEdge(target) ? '连线注释' : '节点注释') + ' · ' + target.id + '\n' + title.textContent;
       header.appendChild(title);
       var anchor = button('↗', function () {
         panelAnchored = !panelAnchored;
@@ -281,10 +282,6 @@
         ev.preventDefault();
       });
       root.appendChild(header);
-      var summary = document.createElement('div');
-      summary.className = 'fc-notes-summary';
-      summary.textContent = text(target).slice(0, 100) || '此连线的说明';
-      root.appendChild(summary);
       var list = document.createElement('div');
       list.className = 'fc-notes-list';
       root.appendChild(list);

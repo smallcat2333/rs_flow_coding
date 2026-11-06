@@ -49,7 +49,7 @@ test('仅正文引用也显示入链，无需节点 Feat 标签；重复刷新�
 test('蓝色出链、图链接和深黄色入链使用不同槽位', () => {
   const f = fixture({ outgoing: true, link: true });
   f.refresh();
-  assert.equal(f.overlays[0].offset.x, -56);
+  assert.equal(f.overlays[0].offset.x, -35);
 });
 
 test('来源更新重建计数，移除引用和切图均清除旧入链', () => {
