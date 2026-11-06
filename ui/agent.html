@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agent - Flow Coding</title>
+  <title>Agent</title>
+  <link rel="icon" type="image/svg+xml" href="agent.svg">
   <!-- 主题尽早生效（与主窗口共用 localStorage 的 fc-theme），避免深色模式下先闪一帧浅色 -->
   <script>
     (() => {
@@ -21,7 +22,7 @@
   <aside class="left">
     <section class="pulse" aria-label="会话活动">
       <header class="ph">
-        <h1>Agent</h1>
+        <h1><img src="agent.svg" width="18" height="18" alt="">Agent</h1>
         <span class="today" id="today"></span>
         <label class="follow" title="开启后，主窗口选中节点或打开 Feat 时，这里切到对应会话">
           <input type="checkbox" id="follow"><span class="sw" aria-hidden="true"></span><span id="followText">跟随主窗口</span>

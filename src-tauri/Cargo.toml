@@ -1,6 +1,6 @@
 [package]
 name = "flow_coding"
-version = "0.2.28"
+version = "0.2.31"
 description = "按 APP 汇总 draw.io 流程图，颜色状态统计、实时编辑、加锁协作与历史对比"
 authors = ["smallcat_SY"]
 edition = "2021"

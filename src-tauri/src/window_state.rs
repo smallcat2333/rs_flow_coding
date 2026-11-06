@@ -44,12 +44,9 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
     main.show().map_err(|e| e.to_string())
 }
 
-/// 捕获当前正常矩形与最大化状态；最小化与全屏沿用此前状态，不把临时尺寸写回偏好。
-fn capture(window: &Window, prefs: &mut Prefs) -> Result<(), String> {
-    if window.is_fullscreen().map_err(|e| e.to_string())? || window.is_minimized().map_err(|e| e.to_string())? {
-        return Ok(());
-    }
-    // Windows 的 Moved 早于 WM_SIZE 更新框架缓存，必须读取原生状态来排除最大化过渡矩形。
+/// 读取最大化状态：Windows 使用原生窗口状态，避免 Moved 早于框架缓存更新时记录过渡矩形。
+/// 主窗口与 Agent 窗口共用；窗口句柄或状态查询失败时返回错误。
+pub(crate) fn is_maximized(window: &Window) -> Result<bool, String> {
     #[cfg(windows)]
     {
         #[link(name = "user32")]
@@ -57,10 +54,18 @@ fn capture(window: &Window, prefs: &mut Prefs) -> Result<(), String> {
             fn IsZoomed(hwnd: *mut std::ffi::c_void) -> i32;
         }
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        prefs.maximized = unsafe { IsZoomed(hwnd.0 as *mut std::ffi::c_void) != 0 };
+        Ok(unsafe { IsZoomed(hwnd.0 as *mut std::ffi::c_void) != 0 })
     }
     #[cfg(not(windows))]
-    { prefs.maximized = window.is_maximized().map_err(|e| e.to_string())?; }
+    { window.is_maximized().map_err(|e| e.to_string()) }
+}
+
+/// 捕获当前正常矩形与最大化状态；最小化与全屏沿用此前状态，不把临时尺寸写回偏好。
+fn capture(window: &Window, prefs: &mut Prefs) -> Result<(), String> {
+    if window.is_fullscreen().map_err(|e| e.to_string())? || window.is_minimized().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    prefs.maximized = is_maximized(window)?;
     if !prefs.maximized {
         let p = window.outer_position().map_err(|e| e.to_string())?;
         let s = window.inner_size().map_err(|e| e.to_string())?;

@@ -124,6 +124,9 @@ pub struct Metrics {
     pub model_id: Option<String>,
     pub model_name: Option<String>,
     pub effort: Option<String>,
+    pub input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
+    pub cache_read_input_tokens: Option<u64>,
     pub used_tokens: Option<u64>,
     pub capacity: Option<u64>,
     pub used_percentage: Option<f64>,
@@ -146,6 +149,9 @@ impl Metrics {
             model_id: p["model"]["id"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
             model_name: p["model"]["display_name"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
             effort: p["effort"]["level"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
+            input_tokens: usage["input_tokens"].as_u64(),
+            cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64(),
+            cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64(),
             used_tokens,
             capacity,
             used_percentage: used_tokens.zip(capacity).map(|(used, size)| used as f64 / size as f64 * 100.0),
@@ -275,7 +281,7 @@ static SETTINGS_WRITE: Mutex<()> = Mutex::new(());
 static GEOM: Mutex<Option<Geom>> = Mutex::new(None);
 
 /// Agent 窗口几何信息：物理坐标、物理尺寸、是否最大化。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 struct Geom {
     x: i32,
     y: i32,
@@ -425,8 +431,11 @@ fn build_hub() -> Result<(), String> {
     Ok(())
 }
 
-/// 主窗口关闭、App 退出前结束全部会话进程（对话历史已由 Claude Code 保存，下次可续接）。
+/// 主窗口关闭、App 退出前保存 Agent 窗口位置并结束全部会话进程；对话历史由 Claude Code 保存，下次可续接。
 pub fn shutdown() {
+    if let Err(error) = save_window_geometry() {
+        eprintln!("保存 Agent 窗口状态失败: {error}");
+    }
     let Ok(h) = hub() else { return };
     for e in h.entries.lock().unwrap().values_mut() {
         if let Some(p) = e.proc.as_mut() {
@@ -1906,12 +1915,18 @@ pub async fn open_agent_window(app: AppHandle, focus: Option<String>, prefill: O
     }
     let q = if q.is_empty() { String::new() } else { format!("?{}", q.join("&")) };
     let w = tauri::WebviewWindowBuilder::new(&app, LABEL, tauri::WebviewUrl::App(format!("agent.html{q}").into()))
-        .title("Agent - Flow Coding")
+        .title("Agent")
+        .icon(tauri::include_image!("icons/agent.png"))
+        .map_err(|e| format!("设置 Agent 窗口图标失败: {e}"))?
         .inner_size(1500.0, 940.0)
         .min_inner_size(820.0, 520.0)
         .visible(false)
         .build()
         .map_err(|e| format!("打开 Agent 窗口失败: {e}"))?;
+    // 首次打开也建立普通矩形缓存，避免直接最大化后关闭时没有可恢复的位置。
+    let p = w.outer_position().map_err(|e| e.to_string())?;
+    let s = w.inner_size().map_err(|e| e.to_string())?;
+    *GEOM.lock().unwrap() = Some(Geom { x: p.x, y: p.y, w: s.width, h: s.height, max: false });
     let saved = dir().ok().and_then(|d| std::fs::read_to_string(d.join("window.json")).ok()).and_then(|t| serde_json::from_str::<Geom>(&t).ok());
     if let Some(g) = saved {
         // 只在保存的位置仍落在某块屏幕上时恢复，拔掉副屏后不会开到看不见的地方
@@ -1922,6 +1937,7 @@ pub async fn open_agent_window(app: AppHandle, focus: Option<String>, prefill: O
         if on_screen {
             let _ = w.set_size(tauri::PhysicalSize::new(g.w, g.h));
             let _ = w.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+            *GEOM.lock().unwrap() = Some(g);
             if g.max {
                 let _ = w.maximize();
             }
@@ -1932,37 +1948,58 @@ pub async fn open_agent_window(app: AppHandle, focus: Option<String>, prefill: O
     Ok(())
 }
 
-/// Agent 窗口事件：移动 / 改尺寸时记下几何信息（最小化、最大化时只记最大化标志），销毁时写盘。
-pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
-    match event {
-        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-            if window.is_minimized().unwrap_or(false) {
-                return;
-            }
-            let max = window.is_maximized().unwrap_or(false);
-            let mut g = GEOM.lock().unwrap();
-            if max {
-                if let Some(g) = g.as_mut() {
-                    g.max = true;
-                }
-                return;
-            }
-            if let (Ok(p), Ok(s)) = (window.outer_position(), window.inner_size()) {
-                *g = Some(Geom { x: p.x, y: p.y, w: s.width, h: s.height, max: false });
-            }
-        }
-        tauri::WindowEvent::Destroyed => {
-            if let (Some(g), Ok(d)) = (*GEOM.lock().unwrap(), dir()) {
-                let _ = crate::write_atomic(&d.join("window.json"), &serde_json::to_string(&g).unwrap());
-            }
-        }
-        _ => {}
+/// 将最近缓存的 Agent 普通矩形与最大化标志原子写入本机偏好；窗口未开过时不创建记录。
+/// 关闭 Agent 和退出主程序共用，避免主程序先退出而丢失尚未销毁的 Agent 窗口位置。
+fn save_window_geometry() -> Result<(), String> {
+    if let Some(g) = *GEOM.lock().unwrap() {
+        let text = serde_json::to_string(&g).map_err(|e| e.to_string())?;
+        crate::write_atomic(&dir()?.join("window.json"), &text)?;
     }
+    Ok(())
+}
+
+/// Agent 窗口事件：缓存普通位置与尺寸，最大化只改标志，最小化与全屏不覆盖普通矩形。
+/// 关闭请求先保存，销毁时再使用缓存保存；文件或窗口查询失败返回错误供统一窗口事件入口记录。
+pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> Result<(), String> {
+    if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) | tauri::WindowEvent::CloseRequested { .. })
+        && !window.is_minimized().map_err(|e| e.to_string())?
+        && !window.is_fullscreen().map_err(|e| e.to_string())?
+    {
+        let max = crate::window_state::is_maximized(window)?;
+        let mut geom = GEOM.lock().unwrap();
+        if max {
+            if let Some(g) = geom.as_mut() { g.max = true; }
+        } else {
+            let p = window.outer_position().map_err(|e| e.to_string())?;
+            let s = window.inner_size().map_err(|e| e.to_string())?;
+            *geom = Some(Geom { x: p.x, y: p.y, w: s.width, h: s.height, max: false });
+        }
+    }
+    if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+        save_window_geometry()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 窗口偏好独立于会话进程保存：负坐标副屏、普通尺寸和最大化标志原样落盘；没有窗口缓存时不覆盖已有记录。
+    #[test]
+    fn window_geometry_persists_without_agent_process() {
+        crate::paths::test_home();
+        let expected = Geom { x: -1440, y: 120, w: 1100, h: 780, max: true };
+        let previous = GEOM.lock().unwrap().replace(expected);
+        save_window_geometry().unwrap();
+        let path = dir().unwrap().join("window.json");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(serde_json::from_str::<Geom>(&text).unwrap(), expected);
+        *GEOM.lock().unwrap() = None;
+        save_window_geometry().unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+        *GEOM.lock().unwrap() = previous;
+    }
 
     /// 启动信号：未完成时超时报具体原因；晚到的成功唤醒等待方；失败原因原样传给所有等待方。
     #[test]
@@ -2046,12 +2083,19 @@ mod tests {
         assert_eq!(m.model_id.as_deref(), Some("configured-model"));
         assert_eq!(m.model_name.as_deref(), Some("测试模型"));
         assert_eq!(m.effort.as_deref(), Some("high"));
+        assert_eq!(m.input_tokens, Some(20000));
+        assert_eq!(m.cache_creation_input_tokens, Some(5000));
+        assert_eq!(m.cache_read_input_tokens, Some(51000));
         assert_eq!(m.used_tokens, Some(76000));
         assert_eq!(m.capacity, Some(200000));
         assert_eq!(m.used_percentage, Some(38.0));
         assert_eq!(m.updated_at, 1234);
         let unknown = Metrics::from_statusline(&json!({"context_window":{"context_window_size":200000,"current_usage":null}}), 2);
         assert!(unknown.used_tokens.is_none() && unknown.used_percentage.is_none());
+        assert!(unknown.input_tokens.is_none() && unknown.cache_creation_input_tokens.is_none() && unknown.cache_read_input_tokens.is_none());
+        let zero = Metrics::from_statusline(&json!({"context_window":{"context_window_size":200000,"current_usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}), 3);
+        assert_eq!(zero.used_tokens, Some(0));
+        assert_eq!((zero.input_tokens, zero.cache_creation_input_tokens, zero.cache_read_input_tokens), (Some(0), Some(0), Some(0)));
         let invalid = Metrics::from_statusline(&json!({"context_window":{"context_window_size":0,"current_usage":{"input_tokens":u64::MAX,"cache_creation_input_tokens":1,"cache_read_input_tokens":0}}}), 3);
         assert!(invalid.used_tokens.is_none() && invalid.capacity.is_none());
     }

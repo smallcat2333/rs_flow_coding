@@ -82,8 +82,8 @@ function renderHead(s) {
       ${s.feat ? `<button class="lnk" data-feat="${s.id}" title="在主窗口打开 ${esc(f?.title || s.feat)}">${esc(s.feat_code || base(s.feat))}</button>${f ? `<span class="stage feat-state ${window.FeatState(f.status).tone}" title="${esc(f.status)}">${esc(f.status)}</span>` : ''}` : '<span class="stage">未关联 Feat</span>'}
       <span class="sapp" title="${esc(s.cwd)}">${esc(s.app)}</span><span class="grow"></span>
       <span class="sst v-${v}">${stText(s)} <span data-tk="${s.id}">${esc(timeText(s))}</span></span>
-      ${s.running ? '<button class="btn" data-act="stop" title="结束 Claude Code 进程，对话历史保留">停止</button>' : ''}
-      <button class="btn" data-act="archive" title="结束进程并归档，保留 180 天">归档</button><button class="btn danger" data-act="remove" title="直接删除会话记录（Claude Code 的对话记录保留）">删除</button></div>
+      ${s.running ? `<button class="btn" data-act="stop" title="结束 Claude Code 进程，对话历史保留">${ICON.stop}<span>停止</span></button>` : ''}
+      <button class="btn" data-act="archive" title="结束进程并归档，保留 180 天">${ICON.archive}<span>归档</span></button><button class="btn danger" data-act="remove" title="直接删除会话记录（Claude Code 的对话记录保留）">${ICON.trash}<span>删除</span></button></div>
     <div class="sh2">${refsOf(s).map((r) => `<span class="ref${r.cur ? ' cur' : ''}" data-ref="${esc(r.flow)}" data-node="${esc(r.node)}" title="${r.cur ? '当前位置（flowctl focus）' : '关联节点'}，点击在主窗口定位">${r.cur ? '● ' : ''}${esc(refLabel(r))}${r.cur ? '' : `<span class="rx" data-unlink="${esc(r.flow)}" data-unnode="${esc(r.node)}" title="取消关联">×</span>`}</span>`).join('')}
       ${sel ? `<button class="ref" data-linksel="1" title="把主窗口选中的节点关联到这个会话">＋ ${esc(flowName(sel.path))}#${esc(sel.node)}</button>` : ''}
       <button class="ref" data-addlink="1">＋ 关联</button>

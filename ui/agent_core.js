@@ -36,6 +36,9 @@ const hms = (t) => new Date(t).toTimeString().slice(0, 8);
 const BOT = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle class="ant" cx="8" cy="1.3" r="1.05"/><rect x="2.4" y="3.7" width="11.2" height="9.2" rx="2.7" fill="none" stroke="currentColor" stroke-width="1.3"/><circle class="eye" cx="5.9" cy="8.2" r="1.15"/><circle class="eye" cx="10.1" cy="8.2" r="1.15"/><path d="M.9 7.4v2.6M15.1 7.4v2.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>';
 const bot = () => `<span class="bot">${BOT}</span>`;
 const ICON = {
+  stop: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg>',
+  archive: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 5.5h11v8h-11zM1.5 2.5h13v3h-13zM6 8h4" stroke-linejoin="round"/></svg>',
+  trash: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 4h11M6 2h4l1 2M4 4l.7 10h6.6L12 4M6.5 6.5v5M9.5 6.5v5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   graph: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="4" r="2"/><circle cx="3" cy="12" r="2"/><circle cx="13" cy="8" r="2"/><path d="M5 4.6 11 7.4M5 11.4 11 8.6"/></svg>',
   feat: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4zM9 1.5v3h3M6 7h4M6 10h4" stroke-linejoin="round"/></svg>',
   x: '<svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4"><path d="M2 2l6 6M8 2 2 8"/></svg>',

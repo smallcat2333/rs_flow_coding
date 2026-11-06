@@ -553,7 +553,9 @@ pub fn run() {
             agent::agent_get_lifecycle, agent::agent_set_lifecycle
         ])
         .on_window_event(|window, event| {
-            if window.label() == agent::LABEL { agent::on_window_event(window, event); }
+            if window.label() == agent::LABEL {
+                if let Err(e) = agent::on_window_event(window, event) { eprintln!("保存 Agent 窗口状态失败: {e}"); }
+            }
             if let Err(e) = window_state::on_event(window, event) { eprintln!("保存主窗口状态失败: {e}"); }
             // 悬浮窗：App 窗口焦点变化或弹出窗口关闭后，重新判定 App 是否还在前台
             match event {

@@ -30,10 +30,49 @@ test('未上报上下文保持未知，不显示虚假零占用或猜测模型',
 
 test('上下文占比与容量来自同一快照，模型与推理档位分开显示', () => {
   const { api } = setup();
-  const d = api.describe(session({ metrics: { model_id: 'model-id', model_name: '模型名称', effort: 'high', used_tokens: 76000, capacity: 200000, used_percentage: 38, updated_at: 5000 } }));
+  const d = api.describe(session({ metrics: { model_id: 'model-id', model_name: '模型名称', effort: 'high', input_tokens: 20000, cache_creation_input_tokens: 5000, cache_read_input_tokens: 51000, used_tokens: 76000, capacity: 200000, used_percentage: 38, updated_at: 5000 } }));
   assert.equal(d.model, '模型名称'); assert.equal(d.modelId, 'model-id'); assert.equal(d.effort, 'high');
   assert.equal(d.contextKnown, true); assert.equal(d.percentage, 38);
   assert.equal(d.used, '76,000'); assert.equal(d.capacity, '200,000');
+});
+
+test('堆叠分项合计等于总容量，分项占比使用总容量且保留真实小值', () => {
+  const { api, elements } = setup();
+  const s = session({ metrics: { input_tokens: 20000, cache_creation_input_tokens: 5000, cache_read_input_tokens: 51000, used_tokens: 76000, capacity: 200000, used_percentage: 38 } });
+  const d = api.describe(s);
+  assert.deepEqual(Array.from(d.contextParts, p => p.count), [20000, 5000, 51000, 124000]);
+  assert.deepEqual(Array.from(d.contextParts, p => p.pct), [10, 2.5, 25.5, 62]);
+  assert.equal(d.contextParts.reduce((sum, p) => sum + p.count, 0), 200000);
+  assert.equal(d.usedCompact, '76k'); assert.equal(d.capacityCompact, '200k');
+  api.init(() => {}); api.render(s);
+  assert.match(elements.get('[data-am="bar"]').innerHTML, /flex-grow:5000/);
+  assert.match(elements.get('[data-am="contextDetail"]').innerHTML, /上下文用量明细/);
+  api.render(session({ metrics: { ...s.metrics, input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, used_tokens: 1, used_percentage: 0.0005 } }));
+  assert.match(elements.get('[data-am="bar"]').innerHTML, /flex-grow:1"/);
+  assert.doesNotMatch(elements.get('[data-am="bar"]').innerHTML, /seg-creation/);
+});
+
+test('缺失分项保持未知，真实零输入显示全部剩余', () => {
+  const { api } = setup();
+  const m = { used_tokens: 76000, capacity: 200000, used_percentage: 38 };
+  assert.equal(api.describe(session({ metrics: m })).contextKnown, false);
+  assert.equal(api.describe(session({ metrics: m })).contextParts.length, 0);
+  const d = api.describe(session({ metrics: { ...m, input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, used_tokens: 0, used_percentage: 0 } }));
+  assert.equal(d.contextKnown, true); assert.equal(d.percentage, 0);
+  assert.deepEqual(Array.from(d.contextParts, p => p.count), [0, 0, 0, 200000]);
+});
+
+test('相同上下文刷新不重建详情，更新用量时才重画', () => {
+  const { api, elements } = setup();
+  const s = session({ metrics: { input_tokens: 20000, cache_creation_input_tokens: 5000, cache_read_input_tokens: 51000, used_tokens: 76000, capacity: 200000, used_percentage: 38 } });
+  api.init(() => {}); api.render(s);
+  const panel = elements.get('[data-am="contextDetail"]');
+  let writes = 0;
+  Object.defineProperty(panel, 'innerHTML', { set() { writes++; } });
+  api.render({ ...s, metrics: { ...s.metrics, updated_at: 7000 } });
+  assert.equal(writes, 0);
+  api.render({ ...s, metrics: { ...s.metrics, input_tokens: 30000, used_tokens: 86000, used_percentage: 43 } });
+  assert.equal(writes, 1);
 });
 
 test('本轮完成后计时冻结，新一轮、等待权限和压缩状态分别展示', () => {
