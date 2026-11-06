@@ -18,6 +18,7 @@ function setup(invoke) {
       : selector === '#tabs' ? { addEventListener: (type, handler) => { handlers[type] = handler; } } : null,
     document: { createElement: () => ({ innerHTML: '', className: '', setAttribute() {}, remove() { mask = null; } }) },
     vs: s => s.status,
+    toast() {}, refreshAll() {},
     esc: text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
   });
   vm.runInContext(section('function openSession(id)', 'function closeTab(id)')
@@ -48,7 +49,7 @@ test('点击待命会话自动启动，连续点击去重，运行中不重复�
   assert.equal(calls.length, 1);
 });
 
-test('空闲回收后的刷新不自动重启，再次点击当前页签才恢复', async () => {
+test('空闲回收后的刷新不自动重启，从列表重新点击时才恢复', async () => {
   let calls = 0;
   const { context: c, sessions, handlers, mask } = setup(async () => {
     calls++;
@@ -61,9 +62,9 @@ test('空闲回收后的刷新不自动重启，再次点击当前页签才恢�
   c.updateMask('a'); c.updateMask('a');
   assert.equal(calls, 1);
   assert.equal(mask(), null, '待命不显示手动续接提示');
-  handlers.click({ target: { closest: selector => selector === '[data-tab]' ? { dataset: { tab: 'a' } } : null } });
+  c.openFocusedSession('a');
   await flush();
-  assert.equal(calls, 2, '当前页签也可以点击恢复');
+  assert.equal(calls, 2, '从列表重新点击时恢复');
   handlers.click({ target: { closest: selector => selector === '[data-tab]' ? { dataset: { tab: 'OV' } } : null } });
   assert.equal(c.active, 'OV');
   assert.equal(calls, 2, '总览不启动进程');

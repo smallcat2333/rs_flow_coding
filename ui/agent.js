@@ -17,9 +17,10 @@ function attnItems() {
   conflicts().forEach((c) => items.push(`<button class="ai-btn cf" data-open="${c.ss[0].id}">${c.ss.map((s) => esc(s.title)).join(' 和 ')} 都改了 ${esc(base(c.path))}</button>`));
   return items;
 }
+/** 仅保留正在运行或由用户发起启动的会话；待命、停止及归档会话不恢复为页签。 */
 function renderTabs() {
-  openTabs = openTabs.filter((id) => S.has(id) && !S.get(id).archived_at);
-  if (active !== 'OV' && (!S.has(active) || S.get(active).archived_at)) active = 'OV';
+  openTabs = openTabs.filter((id) => S.has(id) && !S.get(id).archived_at && (S.get(id).running || startingSessions.has(id)));
+  if (active !== 'OV' && !openTabs.includes(active)) active = 'OV';
   const n = attnItems().length;
   $('#tabs').innerHTML = `<button class="tab${active === 'OV' ? ' on' : ''}" data-tab="OV" role="tab" aria-selected="${active === 'OV'}">${ICON.graph}<span class="tl">总览</span>${n ? `<b class="cnt" title="${n} 项需要你处理">${n}</b>` : ''}</button>`
     + openTabs.map((id) => {
@@ -44,11 +45,11 @@ window.addEventListener('focus', markSeen);
 function openSession(id) {
   if (!S.has(id)) return;
   if (S.get(id).archived_at) { toast('会话已归档，请在主窗口侧栏取消归档后打开'); return; }
+  startSession(id);
   if (!openTabs.includes(id)) openTabs.push(id);
   activate(id);
   const t = $(`.tab[data-tab="${id}"]`);
   if (t) { t.scrollIntoView({ block: 'nearest', inline: 'nearest' }); t.classList.add('flash'); }
-  startSession(id);
 }
 /** 主窗口机器人与左侧列表共用按需启动入口。 */
 function openFocusedSession(id) { openSession(id); }
@@ -201,8 +202,12 @@ async function startSession(id) {
   startErrors.delete(id);
   updateMask(id);
   try { await invoke('agent_start', { id }); }
-  catch (e) { startErrors.set(id, '连接失败：' + String(e)); }
-  finally { startingSessions.delete(id); updateMask(id); }
+  catch (e) {
+    const error = '连接失败：' + String(e);
+    startErrors.set(id, error);
+    toast(error);
+  }
+  finally { startingSessions.delete(id); updateMask(id); refreshAll(); }
 }
 
 // ---------------- 总览：需要处理的事项与实时关系图 ----------------
@@ -278,8 +283,10 @@ function refreshAll() {
   refreshQueued = true;
   requestAnimationFrame(() => {
     refreshQueued = false;
-    renderMix(); renderToday(); renderLanes(); renderRows(); renderTabs(); renderTicker();
-    if (active === 'OV') renderOverview();
+    const previous = active;
+    renderMix(); renderToday(); renderLanes(); renderTabs(); renderRows(); renderTicker();
+    if (active !== previous) renderPane();
+    else if (active === 'OV') renderOverview();
     else if (S.has(active)) { renderHead(S.get(active)); updateMask(active); }
   });
 }
