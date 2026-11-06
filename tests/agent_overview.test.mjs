@@ -21,6 +21,36 @@ const session = (id, patch = {}) => ({ id, title: id, app: 'app_a', status: 'run
 const nodes = (m, kind) => m.nodes.filter((n) => n.kind === kind);
 const edges = (m, kind) => m.edges.filter((n) => n.kind === kind);
 
+test('总览加载真实后端扁平关联节点，保留节点 ID 并补齐关系', async () => {
+  const feat = 'C:/app/docs/feat/Feat_1.md', calls = [];
+  const catalog = [{ app: 'app_a', flow_dir: 'C:/app/docs/flow', feats: [{ path: feat, id: 'Feat_1', title: '订单' }] }];
+  const ss = [session('s1', { feat })];
+  const c = vm.createContext({
+    window: {}, key, base, now: () => at, WINDOW: 300_000,
+    byUrgency: () => 0, vs: s => s.status, stText: s => s.status, refsOf: s => s.links,
+    list: () => ss, mainSel: null, active: 'TEST',
+    featEntry: () => ({ ...catalog[0].feats[0], app: catalog[0] }),
+    invoke: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return [{ file: 'C:/app/docs/flow/订单.drawio', id: 'n1', label: '订单入口' }];
+    },
+  });
+  const exportLine = 'return { build, render, activity, init, invalidate };';
+  assert.ok(source.includes(exportLine));
+  vm.runInContext(source.replace(exportLine, 'return { build, loadRelations, tagged, loads };'), c);
+  const api = c.window.AgentOverview;
+  api.loadRelations();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls[0].cmd, 'tagged_nodes');
+  assert.equal(calls[0].args.flowDir, catalog[0].flow_dir);
+  assert.equal(calls[0].args.tag, 'Feat_1');
+  assert.equal(api.loads.get(key(feat)).error, '');
+  assert.equal(api.tagged.get(key(feat))[0].node, 'n1');
+  const model = api.build(ss, catalog, api.tagged, null, at);
+  assert.equal(edges(model, 'association').length, 1);
+  assert.equal(nodes(model, 'flow')[0].path, 'C:/app/docs/flow/订单.drawio');
+});
+
 test('无 Feat 会话直接连接流程图；大小写和分隔符差异去重', () => {
   const s = session('s1', { links: [{ flow: 'C:/app/a.drawio', node: 'n1' }, { flow: 'c:\\APP\\a.drawio', node: 'n2' }] });
   const m = build([s], [], new Map(), null, at);

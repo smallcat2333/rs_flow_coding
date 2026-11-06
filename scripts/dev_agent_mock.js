@@ -37,7 +37,6 @@
     const s = sessions.get(args.id);
     if (cmd === 'open_agent_window') return;
     if (cmd === 'summary') return (await original(cmd, args)).map(a => ({ ...a, root: a.root || (a.app === 'rs_bot_sever' ? '/mock' : '/mock/' + a.app) }));
-    if (cmd === 'tagged_nodes') return (await original(cmd, args)).map(n => ({ file: n.file, node: n.node || n }));
     if (cmd === 'agent_list') {
       if (startup === 'error') throw 'Agent 服务启动超时（30 秒），请稍后重试';
       await startupReady;

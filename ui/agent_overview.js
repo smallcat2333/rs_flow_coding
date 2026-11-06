@@ -99,7 +99,7 @@ window.AgentOverview = (() => {
       const request = { pending: true, error: '' };
       loads.set(k, request);
       invoke('tagged_nodes', { flowDir: f.app.flow_dir, tag: f.id }).then((rows) => {
-        if (loads.get(k) === request) tagged.set(k, rows.map((r) => ({ flow: r.file, node: r.node.id })));
+        if (loads.get(k) === request) tagged.set(k, rows.map((r) => ({ flow: r.file, node: r.id })));
       }).catch((e) => { request.error = String(e); }).finally(() => {
         request.pending = false;
         if (active === 'OV') render();

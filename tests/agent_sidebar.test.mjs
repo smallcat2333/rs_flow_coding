@@ -51,7 +51,7 @@ test('Feat 直接创建保留来源与关联节点，不提交自定义名字', 
   const calls = [];
   const { context: c } = setup(async (cmd, args) => {
     calls.push({ cmd, args });
-    if (cmd === 'tagged_nodes') return [{ file: 'E:/orders/docs/flow/订单.drawio', node: { id: 'n1' } }];
+    if (cmd === 'tagged_nodes') return [{ file: 'E:/orders/docs/flow/订单.drawio', id: 'n1', label: '订单入口' }];
     return session('feat-main', { title: '订单导出', feat: args.feat, links: args.links });
   });
   c.setApps([{ app: 'app_orders', root: 'E:/orders', flow_dir: 'E:/orders/docs/flow', feats: [] }]);

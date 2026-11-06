@@ -363,7 +363,7 @@ async function featLinks(featPath, id) {
   if (!a) return [];
   try {
     const nodes = await invoke('tagged_nodes', { flowDir: a.flow_dir, tag: id });
-    return nodes.map((t) => ({ flow: t.file, node: t.node.id }));
+    return nodes.map((t) => ({ flow: t.file, node: t.id }));
   } catch (e) { return []; }
 }
 const creatingSources = new Map();
