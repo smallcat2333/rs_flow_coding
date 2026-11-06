@@ -1,9 +1,9 @@
 // 主窗口栏顶的 Agent 机器人：Feat 栏一个「主」机器人；流程图栏一个「主」机器人加一个「客」计数。
-// - 主会话：Feat 的主会话是关联该 Feat 的会话；流程图的主会话是没有 Feat、关联了这张图（整图或其中节点）的会话。
+// - 主会话：Feat 的主会话是关联该 Feat 的会话；流程图的主会话是没有 Feat、第一项关联指向这张图的会话。
 //   后端保证每个 Feat / 每张图只有一个主会话（agent.rs main_conflict）；规则之前留下的重复以最早创建的为主。
-// - 客会话：带 Feat、关联或正在处理这张图节点的会话；「客 N」的 N 是其中正在运行的个数。
+// - 客会话：其他 Feat 或主图的会话关联或正在处理这张图；「客 N」的 N 是其中正在运行的个数。
 // - 颜色（多个会话取最紧急）：红 异常 > 黄 等你确认 > 紫 多个 subagent 运行中 > 蓝 运行中 > 绿 运行完成未查看 > 白 有会话 > 灰 无会话。
-// - 单击：有会话切到 Agent 窗口的该会话；没有会话时打开 Agent 窗口并预填新建面板。
+// - 单击：有会话切到 Agent 窗口的该会话；没有会话时直接创建同名主 Agent 并启动。
 // 数据：agent_list 初始化，agent-update / agent-removed 增量；当前图取 app.js 的 st.cur，当前 Feat 取 FeatPane。
 'use strict';
 
@@ -12,6 +12,8 @@
   const { listen } = window.__TAURI__.event;
   /** 会话 id → 视图（与 Agent 窗口同源，只用状态与关联字段）。 */
   const sessions = new Map();
+  // 初次列表返回前，机器人显示启动状态并禁止创建，避免把“尚未加载”误认成“没有主会话”。
+  let ready = false, startupError = '';
   const RANK = { err: 0, wait: 1, multi: 2, run: 3, done: 4, has: 5, none: 6 };
   const TEXT = { err: '异常退出', wait: '等你确认', multi: '多个 subagent 运行中', run: '运行中', done: '运行完成，还没查看', has: '空闲', none: '还没有会话' };
   const SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="an" d="M8 1.7v2"/><circle class="ab" cx="8" cy="1.4" r="1"/>'
@@ -38,14 +40,14 @@
   /** 当前 Feat 的主会话。 */
   function featMain(path) {
     const k = key(path);
-    return oldest([...sessions.values()].filter((s) => key(s.feat) === k));
+    return oldest([...sessions.values()].filter((s) => !s.archived_at && key(s.feat) === k));
   }
   /** 当前流程图的主会话与客会话。 */
   function flowParts(path) {
-    const k = key(path), all = [...sessions.values()];
+    const k = key(path), all = [...sessions.values()].filter((s) => !s.archived_at);
     return {
-      main: oldest(all.filter((s) => !s.feat && (s.links || []).some((l) => key(l.flow) === k))),
-      guests: all.filter((s) => s.feat && touches(s, k)),
+      main: oldest(all.filter((s) => !s.feat && key(s.links?.[0]?.flow) === k)),
+      guests: all.filter((s) => (s.feat || key(s.links?.[0]?.flow) !== k) && touches(s, k)),
     };
   }
 
@@ -64,20 +66,20 @@
   function render() {
     const featPath = window.FeatPane?.curPath() || '';
     const fb = document.getElementById('btn-feat-bot');
-    fb.disabled = !featPath;
+    fb.disabled = !featPath || !ready;
     const fm = featPath ? featMain(featPath) : null;
-    paint(fb, fm ? stateOf(fm) : 'none', fm ? `主会话「${fm.title}」：${TEXT[stateOf(fm)]}，点击打开` : '这个 Feat 还没有会话，点击新建');
+    paint(fb, fm ? stateOf(fm) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : fm ? `主会话「${fm.title}」：${TEXT[stateOf(fm)]}，点击打开` : '这个 Feat 还没有会话，点击新建');
 
     const flowPath = st.cur || '';
     const mb = document.getElementById('btn-flow-bot'), gb = document.getElementById('btn-flow-guest');
-    mb.disabled = !flowPath;
+    mb.disabled = !flowPath || !ready;
     const { main, guests } = flowPath ? flowParts(flowPath) : { main: null, guests: [] };
-    paint(mb, main ? stateOf(main) : 'none', main ? `主会话「${main.title}」：${TEXT[stateOf(main)]}，点击打开` : '这张图还没有主会话，点击新建');
+    paint(mb, main ? stateOf(main) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : main ? `主会话「${main.title}」：${TEXT[stateOf(main)]}，点击打开` : '这张图还没有主会话，点击新建');
     gb.hidden = !guests.length;
     if (guests.length) {
       const running = guests.filter((s) => ['run', 'multi', 'wait'].includes(stateOf(s))).length;
       const lines = guests.map((s) => `「${s.title}」${s.feat_code ? ' ' + s.feat_code : ''}：${TEXT[stateOf(s)]}`);
-      paint(gb, stateOf(urgent(guests)), `客会话（来自 Feat，处理本图节点），${running} 个运行中：\n${lines.join('\n')}\n点击打开最需要处理的一个`, `客 ${running}`);
+      paint(gb, stateOf(urgent(guests)), `客会话（来自其他 Feat 或主图，协作处理本图），${running} 个运行中：\n${lines.join('\n')}\n点击打开最需要处理的一个`, `客 ${running}`);
     }
   }
 
@@ -114,12 +116,12 @@
   /** 运行中、正在处理当前 Feat 某个任务的会话，按紧急程度排序。 */
   function taskSessions(featPath) {
     const k = key(featPath);
-    return [...sessions.values()].filter((s) => s.running && s.task && key(s.task.feat) === k).sort(byUrgency);
+    return [...sessions.values()].filter((s) => !s.archived_at && s.running && s.task && key(s.task.feat) === k).sort(byUrgency);
   }
   /** 运行中、属于当前 Feat（关联了该 Feat，或正在做它的某个任务）的会话，按紧急程度排序。 */
   function featSessions(featPath) {
     const k = key(featPath);
-    return [...sessions.values()].filter((s) => s.running && (key(s.feat) === k || (s.task && key(s.task.feat) === k))).sort(byUrgency);
+    return [...sessions.values()].filter((s) => !s.archived_at && s.running && (key(s.feat) === k || (s.task && key(s.task.feat) === k))).sort(byUrgency);
   }
   /** 会话「正在做」的一行文字：等你确认 / 异常优先，其次最近活动，都没有时用状态名。 */
   function doingText(s) {
@@ -301,8 +303,9 @@
 
   invoke('agent_list').then((list) => {
     for (const s of list) { sessions.set(s.id, s); if (s.acts?.length) lastAct.set(s.id, s.acts[s.acts.length - 1]); }
+    ready = true;
     render(); schedule();
-  }).catch((e) => console.error('读取 Agent 会话失败', e));
+  }).catch((e) => { startupError = String(e); render(); });
   listen('agent-update', (e) => { sessions.set(e.payload.id, e.payload); render(); schedule(); });
   listen('agent-removed', (e) => { sessions.delete(e.payload.id); lastAct.delete(e.payload.id); render(); schedule(); });
   listen('agent-act', (e) => {

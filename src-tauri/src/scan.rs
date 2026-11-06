@@ -19,6 +19,8 @@ const SKIP_DIRS: [&str; 16] = [
 pub struct SidebarPrefs {
     pub collapsed: Vec<String>,
     pub expanded_archives: Vec<String>,
+    /// 手动置顶的 Chart / Feat 规范化路径，按置顶区显示顺序保存；原列表保留条目。
+    pub pinned: Vec<String>,
     pub include_archived: bool,
     /// APP 显示别名，以 flow_dir 为键；不修改原目录名或项目文件。
     pub app_aliases: std::collections::BTreeMap<String, String>,
@@ -44,6 +46,7 @@ impl Default for SidebarPrefs {
         Self {
             collapsed: Vec::new(),
             expanded_archives: Vec::new(),
+            pinned: Vec::new(),
             include_archived: false,
             app_aliases: Default::default(),
             group_aliases: Default::default(),
@@ -204,6 +207,8 @@ mod tests {
         assert!(prefs.app_aliases.is_empty());
         assert!(prefs.auto_top, "旧配置缺字段时自动置顶默认开启");
         assert_eq!(prefs.layout, "tree", "旧配置缺字段时按分层排布");
+        assert!(prefs.pinned.is_empty(), "未设置置顶时列表为空");
+        prefs.pinned = vec!["/project/app/docs/feat/feat_261104_1.md".into()];
         prefs.layout = "flat".into();
         prefs.app_aliases.insert("/project/app_sever/docs/flow".into(), "服务端".into());
         prefs.group_aliases.insert("/project/group_sever".into(), "服务".into());
@@ -215,6 +220,7 @@ mod tests {
         assert_eq!(restored.group_order, ["/project/group_sever", ""]);
         assert!(!restored.auto_top);
         assert_eq!(restored.layout, "flat");
+        assert_eq!(restored.pinned, ["/project/app/docs/feat/feat_261104_1.md"]);
         assert_eq!(restored.collapsed, ["app"]);
         assert!(restored.include_archived);
     }

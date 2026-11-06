@@ -35,8 +35,14 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
             html = (UI / "index.html").read_text(encoding="utf-8")
-            html = html.replace('<script src="vendor/vendor.js">', '<script src="/__mock.js"></script><script src="vendor/vendor.js">')
+            html = html.replace('<script src="vendor/vendor.js">', '<script src="/__mock.js"></script><script src="/__agent_mock.js"></script><script src="vendor/vendor.js">')
             return self._send(html.encode("utf-8"), "text/html; charset=utf-8")
+        if path == "/agent.html":
+            html = (UI / "agent.html").read_text(encoding="utf-8")
+            html = html.replace('<script src="agent_core.js">', '<script src="/__mock.js"></script><script src="/__agent_mock.js"></script><script src="agent_core.js">')
+            return self._send(html.encode("utf-8"), "text/html; charset=utf-8")
+        if path == "/__agent_mock.js":
+            return self._send((ROOT / "scripts" / "dev_agent_mock.js").read_bytes(), "application/javascript; charset=utf-8")
         if path == "/__mock.js":
             return self._send(MOCK.read_bytes(), "application/javascript; charset=utf-8")
         if path == "/__samples":

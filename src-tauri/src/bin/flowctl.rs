@@ -219,8 +219,9 @@ fn cmd_agent_hook(args: &[String]) -> ExitCode {
     use std::io::Read;
     let mut text = String::new();
     let _ = std::io::stdin().read_to_string(&mut text);
-    let payload: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let mut payload: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
     let event = args.get(2).cloned().unwrap_or_default();
+    if event == "StatusLine" { agent::enrich_statusline(&mut payload); }
     let _ = agent::client(serde_json::json!({ "op": "hook", "event": event, "payload": payload }));
     ExitCode::SUCCESS
 }

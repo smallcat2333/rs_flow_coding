@@ -5,6 +5,11 @@ window.Settings = (() => {
   const $ = (id) => document.getElementById(id);
   const { invoke } = window.__TAURI__.core;
   let busy = false;
+  let claudeTesting = false;
+  let terminalPreview = null;
+  let terminalFit = null;
+  let agentIdleHours = 1;
+  let lifecycleSaving = false;
 
   /** 内容更新偏好与主题一样保存在本机 localStorage，各窗口共享，未设置时默认开启。 */
   const keepFlowView = () => localStorage.getItem('fc-keep-flow-view') !== '0';
@@ -58,6 +63,8 @@ window.Settings = (() => {
     focusNode(document.querySelector(`[data-settings-tab="${name}"]`), false);
     document.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
     $('settings-msg').textContent = '';
+    if (name === 'terminal') showTerminalTheme();
+    if (name === 'agent-lifecycle') loadLifecycle();
     if (name === 'database' || name === 'cache') {
       act(document.querySelector(`[data-settings-panel="${name}"] [data-storage-refresh]`), async () => { await usage(); return ''; });
     }
@@ -120,6 +127,69 @@ window.Settings = (() => {
     });
   }
 
+  /** 与真实会话共用调色板和 ANSI 渲染；只在可见时创建并测量终端。 */
+  function showTerminalTheme() {
+    const themes = window.TerminalThemes;
+    const select = $('settings-terminal-theme');
+    if (!select.options.length) select.innerHTML = themes.choices.map(theme => `<option value="${theme.id}">${theme.name}</option>`).join('');
+    select.value = themes.current();
+    $('settings-terminal-description').textContent = themes.choices.find(theme => theme.id === select.value).description;
+    const host = $('settings-terminal-preview');
+    const theme = themes.resolve();
+    host.style.background = theme.background;
+    if (!terminalPreview) {
+      terminalPreview = new Terminal({ fontFamily: themes.FONT, fontSize: 13, lineHeight: 1.4, cols: 40, rows: 7,
+        disableStdin: true, allowProposedApi: true, scrollback: 0, minimumContrastRatio: 4.5, theme });
+      terminalFit = new FitAddon.FitAddon();
+      terminalPreview.loadAddon(terminalFit);
+      terminalPreview.loadAddon(new Unicode11Addon.Unicode11Addon());
+      terminalPreview.unicode.activeVersion = '11';
+      terminalPreview.open(host);
+      terminalPreview.textarea.tabIndex = -1;
+      terminalPreview.write(themes.SAMPLE);
+      new ResizeObserver(() => { if (!host.closest('section').hidden) terminalFit.fit(); }).observe(host);
+      new MutationObserver(() => showTerminalTheme()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    } else terminalPreview.options.theme = theme;
+    if (!host.closest('section').hidden) terminalFit.fit();
+  }
+
+  /** 进程策略由后端计时，关闭 Agent 窗口后仍生效。 */
+  async function loadLifecycle() {
+    const input = $('settings-agent-idle-hours');
+    if (lifecycleSaving) return;
+    input.disabled = true;
+    try {
+      const policy = await invoke('agent_get_lifecycle');
+      agentIdleHours = policy.idleHours;
+      input.value = agentIdleHours;
+      input.disabled = false;
+    } catch (error) { floatingStatus(String(error)); }
+  }
+
+  /** 单项自动保存，失败还原最后成功值，避免显示与实际策略不一致。 */
+  async function saveLifecycle(event) {
+    const input = event.currentTarget;
+    if (lifecycleSaving) return;
+    const hours = Number(input.value);
+    if (input.value.trim() === '' || !Number.isFinite(hours) || hours < 0 || hours > 8760 || !input.reportValidity()) {
+      input.value = agentIdleHours;
+      return;
+    }
+    lifecycleSaving = true;
+    input.disabled = true;
+    $('settings-msg').textContent = '保存中…';
+    try {
+      const policy = await invoke('agent_set_lifecycle', { idleHours: hours });
+      agentIdleHours = policy.idleHours;
+      input.value = agentIdleHours;
+      $('settings-msg').textContent = hours === 0 ? '已关闭 CLI 空闲自动结束' : `已保存：CLI 连续空闲 ${agentIdleHours} 小时后自动结束`;
+    } catch (error) {
+      input.value = agentIdleHours;
+      $('settings-msg').textContent = '';
+      floatingStatus(String(error));
+    } finally { lifecycleSaving = false; input.disabled = false; }
+  }
+
   /** 填入 Claude Code 启动项；found 为按当前设置实际会启动的 claude，找不到时显示原因。 */
   function showClaude(v) {
     $('settings-claude-path').value = v.claudePath;
@@ -127,6 +197,38 @@ window.Settings = (() => {
     const note = $('settings-claude-found');
     note.textContent = v.found ? `将启动：${v.found}` : v.error;
     note.style.color = v.found ? '' : 'var(--danger)';
+  }
+
+  /** 测试结果留在设置页，便于核对路径和错误；全部使用 textContent 展示 CLI 输出。 */
+  function claudeResult(state, title, meta, detail) {
+    const box = $('settings-claude-result');
+    box.hidden = false;
+    box.dataset.state = state;
+    box.setAttribute('aria-busy', String(state === 'running'));
+    $('settings-claude-result-title').textContent = title;
+    $('settings-claude-result-meta').textContent = meta;
+    $('settings-claude-result-detail').textContent = detail;
+  }
+
+  /** 使用未保存的输入测试；测试期间固定配置，避免把旧结果误当成新配置可用。 */
+  async function testClaude() {
+    if (busy || claudeTesting) return;
+    claudeTesting = true;
+    const controls = ['settings-claude-test', 'settings-claude-save', 'settings-claude-path', 'settings-claude-args'].map($);
+    controls.forEach(control => { control.disabled = true; });
+    $('settings-claude-test').textContent = '测试中…';
+    claudeResult('running', '正在测试 Claude Code…', '先检查 CLI 版本，再发送简短请求，最长约 70 秒。', '可继续查看其他设置，结果会保留在这里。');
+    try {
+      const result = await invoke('agent_test_settings', { claudePath: $('settings-claude-path').value, extraArgs: $('settings-claude-args').value });
+      const meta = [result.path, result.version, `耗时 ${(result.elapsedMs / 1000).toFixed(1)} 秒`].filter(Boolean).join('\n');
+      claudeResult(result.ok ? 'success' : 'error', `${result.ok ? '✓' : '✕'} ${result.message}`, meta, result.detail);
+    } catch (error) {
+      claudeResult('error', '✕ 测试未完成', '', String(error));
+    } finally {
+      claudeTesting = false;
+      controls.forEach(control => { control.disabled = false; });
+      $('settings-claude-test').textContent = '测试连接';
+    }
   }
 
   /** 显示设置并读取最新配置；多个窗口编辑后也以磁盘最新项目根为准。 */
@@ -141,7 +243,10 @@ window.Settings = (() => {
     $('settings-tab-lifetime').value = tabLifetime();
     $('settings-float').checked = await invoke('get_float_enabled');
     // 设置文件损坏时只在本栏提示，不挡住整个设置页
-    try { showClaude(await invoke('agent_get_settings')); } catch (error) { $('settings-claude-found').textContent = String(error); }
+    if (!claudeTesting) {
+      $('settings-claude-result').hidden = true;
+      try { showClaude(await invoke('agent_get_settings')); } catch (error) { $('settings-claude-found').textContent = String(error); }
+    }
     $('settings-dialog').showModal();
     tab('appearance');
     await act($('settings-project-save'), async () => {
@@ -169,6 +274,15 @@ window.Settings = (() => {
       applyTheme();
       $('settings-msg').textContent = '外观已保存';
     };
+    $('settings-terminal-theme').onchange = (e) => {
+      window.TerminalThemes.save(e.currentTarget.value);
+      showTerminalTheme();
+      $('settings-msg').textContent = '终端主题已保存，Agent 窗口已同步';
+    };
+    window.addEventListener('storage', (e) => {
+      if (terminalPreview && (e.key === null || e.key === window.TerminalThemes.KEY)) showTerminalTheme();
+    });
+    $('settings-agent-idle-hours').onchange = saveLifecycle;
     $('settings-auto-top').onchange = (e) => {
       const box = e.currentTarget;
       act(box, async () => {
@@ -220,6 +334,14 @@ window.Settings = (() => {
       if (!await refresh(true)) throw new Error($('side-msg').textContent);
       return '项目目录已保存并扫描';
     });
+    $('settings-claude-test').onclick = testClaude;
+    for (const id of ['settings-claude-path', 'settings-claude-args']) {
+      $(id).oninput = () => {
+        $('settings-claude-result').hidden = true;
+        $('settings-claude-found').textContent = '配置已修改，点击“测试连接”核对当前输入。';
+        $('settings-claude-found').style.color = '';
+      };
+    }
     /** Claude Code 启动项：后端校验路径与参数，失败时保留输入并提示原因。 */
     $('settings-claude-save').onclick = (e) => act(e.currentTarget, async () => {
       showClaude(await invoke('agent_set_settings', { claudePath: $('settings-claude-path').value, extraArgs: $('settings-claude-args').value }));

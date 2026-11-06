@@ -225,10 +225,12 @@ fn on_file_event(app: &tauri::AppHandle, path: &Path) {
 }
 
 /// 处理 Feat 档案变化：只通知前端（Markdown 不入历史库）。来源判定同流程图。
+/// 档案一级标题是 Feat 主会话的名称来源，同步以它为来源的会话名。
 fn on_md_event(app: &tauri::AppHandle, path: &Path) {
     let source = event_source(path);
     let hash = std::fs::read_to_string(path).map(|t| db::hash(&t)).unwrap_or_default();
     let _ = app.emit("md-changed", ChangeEvent { path: path.to_string_lossy().into_owned(), hash, source: source.into() });
+    agent::source_changed(path);
 }
 
 /// 原子写文件：先写同目录临时文件再替换，避免监听方读到半截内容。
@@ -532,8 +534,9 @@ pub fn run() {
         .manage(AppState { watcher: Mutex::new(None), watched: Mutex::new(Vec::new()) })
         .setup(|app| {
             window_state::init(app.handle())?;
-            float::init(app.handle());
+            // 主窗口先显示，Agent 在后台初始化；不等待悬浮窗 WebView 创建完成才启动服务。
             agent::init(app.handle());
+            float::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -545,8 +548,9 @@ pub fn run() {
             maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache,
             float::get_float_enabled, float::set_float_enabled, float::float_activate,
             agent::agent_list, agent::agent_create, agent::agent_start, agent::agent_stop, agent::agent_write,
-            agent::agent_resize, agent::agent_buffer, agent::agent_seen, agent::agent_update, agent::agent_remove, agent::open_agent_window,
-            agent::agent_get_settings, agent::agent_set_settings
+            agent::agent_resize, agent::agent_buffer, agent::agent_seen, agent::agent_update, agent::agent_archive, agent::agent_remove, agent::open_agent_window,
+            agent::agent_get_settings, agent::agent_set_settings, agent::agent_test_settings,
+            agent::agent_get_lifecycle, agent::agent_set_lifecycle
         ])
         .on_window_event(|window, event| {
             if window.label() == agent::LABEL { agent::on_window_event(window, event); }

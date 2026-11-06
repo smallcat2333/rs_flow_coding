@@ -265,6 +265,7 @@
   // ---------------- 数据 ----------------
 
   function upsert(v) {
+    if (v.archived_at) { delete sessions[v.id]; return; }
     var old = sessions[v.id];
     v.acts = old ? old.acts : (v.acts || []);
     sessions[v.id] = v;

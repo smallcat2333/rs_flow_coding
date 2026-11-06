@@ -6,19 +6,20 @@
 'use strict';
 
 const terms = new Map();  // 会话 id → { term, fit, el, seq, pending, gen, cols, rows }
+AgentMetrics.init(() => { if (active !== 'OV') fitTerm(active, true); });
 
 // ---------------- 页签 ----------------
 function attnItems() {
   const items = [], ss = list();
   ss.filter((s) => vs(s) === 'wait').forEach((s) => items.push(`<button class="ai-btn v-wait" data-open="${s.id}">${bot()}${esc(s.title)} 等你确认 <span data-tk="${s.id}">${timeText(s)}</span></button>`));
-  ss.filter((s) => vs(s) === 'err').forEach((s) => items.push(`<button class="ai-btn v-err" data-open="${s.id}">${bot()}${esc(s.title)} 异常退出，可续接</button>`));
+  ss.filter((s) => vs(s) === 'err').forEach((s) => items.push(`<button class="ai-btn v-err" data-open="${s.id}">${bot()}${esc(s.title)} 异常退出，点击重试</button>`));
   ss.filter((s) => vs(s) === 'stall').forEach((s) => items.push(`<button class="ai-btn v-stall" data-open="${s.id}">${bot()}${esc(s.title)} 已 <span data-tk="${s.id}">${timeText(s)}</span> 没有新活动</button>`));
   conflicts().forEach((c) => items.push(`<button class="ai-btn cf" data-open="${c.ss[0].id}">${c.ss.map((s) => esc(s.title)).join(' 和 ')} 都改了 ${esc(base(c.path))}</button>`));
   return items;
 }
 function renderTabs() {
-  openTabs = openTabs.filter((id) => S.has(id));
-  if (active !== 'OV' && !S.has(active)) active = 'OV';
+  openTabs = openTabs.filter((id) => S.has(id) && !S.get(id).archived_at);
+  if (active !== 'OV' && (!S.has(active) || S.get(active).archived_at)) active = 'OV';
   const n = attnItems().length;
   $('#tabs').innerHTML = `<button class="tab${active === 'OV' ? ' on' : ''}" data-tab="OV" role="tab" aria-selected="${active === 'OV'}">${ICON.graph}<span class="tl">总览</span>${n ? `<b class="cnt" title="${n} 项需要你处理">${n}</b>` : ''}</button>`
     + openTabs.map((id) => {
@@ -42,17 +43,15 @@ function markSeen() {
 window.addEventListener('focus', markSeen);
 function openSession(id) {
   if (!S.has(id)) return;
+  if (S.get(id).archived_at) { toast('会话已归档，请在主窗口侧栏取消归档后打开'); return; }
   if (!openTabs.includes(id)) openTabs.push(id);
   activate(id);
   const t = $(`.tab[data-tab="${id}"]`);
   if (t) { t.scrollIntoView({ block: 'nearest', inline: 'nearest' }); t.classList.add('flash'); }
+  startSession(id);
 }
-/** 机器人指定的会话：先显示终端，未运行时自动启动或续接；普通页签切换不触发。 */
-function openFocusedSession(id) {
-  if (!S.has(id)) return;
-  openSession(id);
-  if (!S.get(id).running) startSession(id);
-}
+/** 主窗口机器人与左侧列表共用按需启动入口。 */
+function openFocusedSession(id) { openSession(id); }
 function closeTab(id) {
   const i = openTabs.indexOf(id);
   openTabs.splice(i, 1);
@@ -66,24 +65,24 @@ function renderPane() {
   const ov = active === 'OV';
   $('#ov').hidden = !ov;
   $('#terms').hidden = ov;
-  if (ov) { $('#head').innerHTML = ''; renderOverview(); return; }
+  if (ov) { $('#head').innerHTML = ''; AgentMetrics.render(null); renderOverview(); return; }
   renderHead(S.get(active));
   showTerm(active);
 }
-/** 会话头：名称（双击改名）、Feat、APP、状态、启动 / 停止 / 移除；第二行是关联节点、同 APP 会话。 */
+/** 会话头：名称（双击改名）、Feat、APP、状态、停止 / 归档 / 删除；第二行是关联节点、同 APP 会话。 */
 function renderHead(s) {
+  AgentMetrics.render(s);
   if ($('#head .sh1 h2 input') || document.activeElement === $('#hdLink')) return;  // 正在改名或搜索关联时不重绘
   const v = vs(s), f = s.feat && featEntry(s.feat);
   const peers = list().filter((x) => x !== s && x.app === s.app && x.running);
   const sel = mainSel?.node && !refsOf(s).some((r) => key(r.flow) === key(mainSel.path) && r.node === mainSel.node) ? mainSel : null;
   $('#head').innerHTML = `<header class="sh">
-    <div class="sh1"><span class="v-${v}">${bot()}</span><h2 title="双击改名">${esc(s.title)}</h2>
-      ${s.feat ? `<button class="lnk" data-feat="${s.id}" title="在主窗口打开 ${esc(f?.title || s.feat)}">${esc(s.feat_code || base(s.feat))}</button>${f ? `<span class="stage">${esc(f.status)}</span>` : ''}` : '<span class="stage">未关联 Feat</span>'}
+    <div class="sh1"><span class="v-${v}">${bot()}</span><h2 class="${sourceOf(s).locked ? 'name-locked' : ''}" title="${esc(s.title)}${sourceOf(s).locked ? '（名称跟随来源，不能单独修改）' : '（双击改名）'}">${esc(s.title)}</h2>${sourceBadge(s)}
+      ${s.feat ? `<button class="lnk" data-feat="${s.id}" title="在主窗口打开 ${esc(f?.title || s.feat)}">${esc(s.feat_code || base(s.feat))}</button>${f ? `<span class="stage feat-state ${window.FeatState(f.status).tone}" title="${esc(f.status)}">${esc(f.status)}</span>` : ''}` : '<span class="stage">未关联 Feat</span>'}
       <span class="sapp" title="${esc(s.cwd)}">${esc(s.app)}</span><span class="grow"></span>
       <span class="sst v-${v}">${stText(s)} <span data-tk="${s.id}">${esc(timeText(s))}</span></span>
-      ${s.running ? '<button class="btn" data-act="stop" title="结束 Claude Code 进程，对话历史保留">停止</button>'
-        : `<button class="btn primary" data-act="start">${s.started ? '续接' : '启动'}</button>`}
-      <button class="btn danger" data-act="remove" title="从列表移除（Claude Code 的对话记录保留）">移除</button></div>
+      ${s.running ? '<button class="btn" data-act="stop" title="结束 Claude Code 进程，对话历史保留">停止</button>' : ''}
+      <button class="btn" data-act="archive" title="结束进程并归档，保留 180 天">归档</button><button class="btn danger" data-act="remove" title="直接删除会话记录（Claude Code 的对话记录保留）">删除</button></div>
     <div class="sh2">${refsOf(s).map((r) => `<span class="ref${r.cur ? ' cur' : ''}" data-ref="${esc(r.flow)}" data-node="${esc(r.node)}" title="${r.cur ? '当前位置（flowctl focus）' : '关联节点'}，点击在主窗口定位">${r.cur ? '● ' : ''}${esc(refLabel(r))}${r.cur ? '' : `<span class="rx" data-unlink="${esc(r.flow)}" data-unnode="${esc(r.node)}" title="取消关联">×</span>`}</span>`).join('')}
       ${sel ? `<button class="ref" data-linksel="1" title="把主窗口选中的节点关联到这个会话">＋ ${esc(flowName(sel.path))}#${esc(sel.node)}</button>` : ''}
       <button class="ref" data-addlink="1">＋ 关联</button>
@@ -111,9 +110,11 @@ function ensureTerm(id) {
   for (const x of terms.values()) x.el.hidden = true;
   $('#terms').hidden = false;
   $('#terms').appendChild(el);
+  const theme = termTheme();
+  $('#terms').style.setProperty('--t-bg', theme.background);
   const term = new Terminal({
-    fontFamily: '"Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace', fontSize: 13, lineHeight: 1.15,
-    cursorBlink: true, allowProposedApi: true, scrollback: 8000, theme: termTheme(),
+    fontFamily: window.TerminalThemes.FONT, fontSize: 13, lineHeight: 1.15,
+    cursorBlink: true, allowProposedApi: true, scrollback: 8000, minimumContrastRatio: 4.5, theme,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -157,15 +158,18 @@ function loadBuffer(id, t) {
     t.pending = [];
   }).catch(() => { t.seq = 0; });
 }
-/** 终端上的“未运行”提示：运行中移除，未运行时显示启动 / 续接按钮。 */
+/** 仅连接中或失败时显示提示；待命会话没有手动续接步骤。 */
 function updateMask(id) {
-  const s = S.get(id);
+  if (active !== id) return;
+  const s = S.get(id), connecting = startingSessions.has(id);
+  const error = startErrors.get(id) || (vs(s) === 'err' ? `CLI 异常退出（代码 ${s.exit_code ?? '?'}）` : '');
   let mask = $('#terms .offmask');
-  if (s.running) { mask?.remove(); return; }
+  if (s.running || (!connecting && !error)) { mask?.remove(); return; }
   if (!mask) { mask = document.createElement('div'); $('#terms').appendChild(mask); }
-  const err = vs(s) === 'err';
-  mask.className = 'offmask' + (err ? ' err' : '');
-  mask.innerHTML = `<span>${err ? `进程异常退出（代码 ${s.exit_code ?? '?'}），对话历史已保存` : s.started ? '会话未运行，对话历史已保存' : '会话还没启动'}</span><button class="btn primary" data-act="start">${s.started ? '续接（Enter）' : '启动（Enter）'}</button>`;
+  mask.className = 'offmask' + (error && !connecting ? ' err' : '');
+  mask.setAttribute('role', 'status');
+  mask.innerHTML = connecting ? '<span>正在连接 CLI…</span>'
+    : `<span>${esc(error)}</span><button class="btn primary" data-act="start">重试</button>`;
 }
 function showTerm(id) {
   const t = ensureTerm(id);
@@ -189,12 +193,16 @@ function fitTerm(id, force) {
 }
 // 同一会话启动请求未完成时不重复发送，避免连续点击机器人或续接按钮重复启动。
 const startingSessions = new Set();
-/** 启动或续接会话；已运行和正在启动时跳过，失败显示原因并允许重试。 */
+const startErrors = new Map();
+/** 打开会话即按需启动；并发点击合并，失败留在当前会话重试。 */
 async function startSession(id) {
-  if (S.get(id)?.running || startingSessions.has(id)) return;
+  if (!S.has(id) || S.get(id).running || startingSessions.has(id)) return;
   startingSessions.add(id);
-  try { await invoke('agent_start', { id }); } catch (e) { toast('启动失败：' + e); }
-  finally { startingSessions.delete(id); }
+  startErrors.delete(id);
+  updateMask(id);
+  try { await invoke('agent_start', { id }); }
+  catch (e) { startErrors.set(id, '连接失败：' + String(e)); }
+  finally { startingSessions.delete(id); updateMask(id); }
 }
 
 // ---------------- 总览：需要处理的事项与实时关系图 ----------------
@@ -202,7 +210,8 @@ async function startSession(id) {
 function renderOverview() { AgentOverview.render(); }
 AgentOverview.init();
 listen('flow-changed', () => AgentOverview.invalidate());
-listen('md-changed', async () => { await loadApps(); AgentOverview.invalidate(); });
+listen('md-changed', async () => { await loadApps(); AgentOverview.invalidate(); refreshAll(); });
+listen('catalog-changed', async () => { await loadApps(); AgentOverview.invalidate(); refreshAll(); });
 
 // ---------------- 主窗口联动 ----------------
 /** 主窗口选中节点或打开 Feat：找直接关联的会话 → 5 分钟内处理过它的会话 → 节点所属 Feat 的会话 → 提示新建。 */
@@ -216,7 +225,7 @@ async function onMainSelect(p) {
     label = fe ? `${fe.id} ${fe.title}` : p.feat;
     const cand = fe ? list().filter((s) => key(s.feat) === key(fe.path)).sort(byUrgency) : [];
     go = () => (cand.length ? openSession(cand[0].id)
-      : fe && toast(`${label} 还没有会话`, '新建', () => openNewBox({ root: a.root, feat: { id: fe.id, title: fe.title, path: fe.path } })));
+      : fe && toast(`${label} 还没有会话`, '新建', () => createFromSource({ root: a.root, feat: { id: fe.id, title: fe.title, path: fe.path } })));
   } else {
     mainSel = { path: p.path, node: p.node };
     label = `${flowName(p.path)}#${p.node}`;
@@ -231,12 +240,12 @@ async function onMainSelect(p) {
       if (hot) { toast(`${label} 没有直接关联的会话，切到刚处理过它的「${hot.s.title}」`); return openSession(hot.s.id); }
       if (byFeat.length) return openSession(byFeat[0].id);
       const fe = a?.feats.find((f) => tags.includes(f.id));
-      toast(`${label} 还没有会话`, '新建', () => openNewBox({ root: a?.root, links: [{ flow: p.path, node: p.node }], feat: fe ? { id: fe.id, title: fe.title, path: fe.path } : null }));
+      toast(`${label} 还没有会话`, '新建', () => createFromSource({ root: a?.root, links: [{ flow: p.path, node: p.node }], feat: fe ? { id: fe.id, title: fe.title, path: fe.path } : null }));
     };
   }
   if (follow) go();
   else {
-    $$('.row .mt').forEach((t) => { const el = t.closest('.row'); el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); });
+    $$('.row.is-main').forEach((el) => { el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); });
     toast(`主窗口切到「${label}」，当前已锁定，没有跟着切换`);
   }
   renderRows();
@@ -277,6 +286,7 @@ function refreshAll() {
 listen('agent-update', (e) => {
   const was = S.get(e.payload.id);
   upsert(e.payload);
+  if (e.payload.archived_at && active === e.payload.id) activate('OV');
   if (was && !was.running && e.payload.running) requestAnimationFrame(() => fitTerm(e.payload.id, true));
   if (e.payload.id === active) markSeen();
   refreshAll();
@@ -293,6 +303,8 @@ listen('agent-act', (e) => {
 });
 listen('agent-removed', (e) => {
   S.delete(e.payload.id);
+  if (active === e.payload.id) activate('OV');
+  startErrors.delete(e.payload.id);
   const t = terms.get(e.payload.id);
   if (t) { t.term.dispose(); t.el.remove(); terms.delete(e.payload.id); }
   refreshAll();
@@ -316,14 +328,21 @@ listen('agent-reset', (e) => {
   requestAnimationFrame(() => fitTerm(e.payload.id, true));
 });
 listen('agent-focus', (e) => openFocusedSession(e.payload.id));
-// 主窗口机器人：Feat / 流程图还没有会话时，打开预填好的新建面板
-listen('agent-prefill', (e) => openNewBox(e.payload));
+// 主窗口机器人：Feat / 流程图还没有会话时，直接创建同名主 Agent。
+listen('agent-prefill', (e) => createFromSource(e.payload));
 listen('agent-main-select', (e) => onMainSelect(e.payload));
 window.addEventListener('storage', (e) => {
-  if (e.key !== 'fc-theme') return;
-  const t = e.newValue || 'auto';
-  document.documentElement.dataset.theme = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-  for (const x of terms.values()) x.term.options.theme = termTheme();
+  if (e.key !== null && e.key !== 'fc-theme' && e.key !== window.TerminalThemes.KEY) return;
+  if (e.key === null || e.key === 'fc-theme') {
+    const t = localStorage.getItem('fc-theme') || 'auto';
+    document.documentElement.dataset.theme = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  applyTerminalTheme();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+  if ((localStorage.getItem('fc-theme') || 'auto') !== 'auto') return;
+  document.documentElement.dataset.theme = e.matches ? 'dark' : 'light';
+  applyTerminalTheme();
 });
 
 // ---------------- 事件：左栏 ----------------
@@ -371,11 +390,6 @@ rowsEl.addEventListener('click', async (e) => {
   const row = e.target.closest('.row');
   if (row) openSession(row.dataset.s);
 });
-rowsEl.addEventListener('mouseover', (e) => {
-  const row = e.target.closest('.row'), app = row?.dataset.app;
-  $$('.row', rowsEl).forEach((r) => r.classList.toggle('sib', !!app && r !== row && r.dataset.app === app));
-});
-rowsEl.addEventListener('mouseleave', () => $$('.row.sib', rowsEl).forEach((r) => r.classList.remove('sib')));
 rowsEl.addEventListener('keydown', (e) => {
   const row = e.target.closest('.row');
   if (!row || e.target !== row) return;
@@ -426,7 +440,10 @@ $('#tabs').addEventListener('click', (e) => {
   if (c) { e.stopPropagation(); closeTab(c.dataset.close); return; }
   if (e.target.closest('[data-act="new"]')) { openNewBox(); return; }
   const t = e.target.closest('[data-tab]');
-  if (t && t.dataset.tab !== active) activate(t.dataset.tab);
+  if (t) {
+    if (t.dataset.tab === 'OV') activate('OV');
+    else openSession(t.dataset.tab);
+  }
 });
 $('#tabs').addEventListener('auxclick', (e) => { const t = e.target.closest('[data-tab]'); if (e.button === 1 && t && t.dataset.tab !== 'OV') closeTab(t.dataset.tab); });
 
@@ -457,12 +474,11 @@ async function linkPicked(s, x) {
   if (x.t === 'feat') {
     const links = [...(s.links || [])];
     for (const l of await featLinks(x.f.path, x.f.id)) if (!links.some((y) => key(y.flow) === key(l.flow) && y.node === l.node)) links.push(l);
-    if (await patchSession(s.id, { feat: x.f.path, feat_code: x.f.id, links })) toast(`已关联 ${x.f.id}，下次启动或续接时写进系统提示`);
+    if (await patchSession(s.id, { feat: x.f.path, feat_code: x.f.id, links })) toast(`已关联 ${x.f.id}，下次打开时写进系统提示`);
   } else if (!(s.links || []).some((l) => key(l.flow) === key(x.flow) && !l.node)) {
     patchSession(s.id, { links: [...(s.links || []), { flow: x.flow, node: '' }] });
   }
 }
-let removeArmed = 0;
 $('#pane').addEventListener('mousedown', (e) => { if (e.target.closest('#hdDrop [data-cand]')) e.preventDefault(); });
 $('#pane').addEventListener('click', async (e) => {
   const t = e.target, s = active !== 'OV' && S.get(active);
@@ -486,16 +502,13 @@ $('#pane').addEventListener('click', async (e) => {
   if (act && s) {
     if (act.dataset.act === 'start') startSession(s.id);
     if (act.dataset.act === 'stop') invoke('agent_stop', { id: s.id }).catch((err) => toast(String(err)));
-    if (act.dataset.act === 'remove') {
-      if (now() - removeArmed > 3000) { removeArmed = now(); act.textContent = s.running ? '再点一次：结束并移除' : '再点一次确认移除'; return; }
-      removeArmed = 0;
-      invoke('agent_remove', { id: s.id }).catch((err) => toast(String(err)));
-    }
+    if (act.dataset.act === 'archive') invoke('agent_archive', { id: s.id, archived: true }).catch((err) => toast(String(err)));
+    if (act.dataset.act === 'remove') invoke('agent_remove', { id: s.id }).catch((err) => toast(String(err)));
   }
 });
 $('#pane').addEventListener('dblclick', (e) => {
   const h = e.target.closest('.sh1 h2'), s = active !== 'OV' && S.get(active);
-  if (!h || !s || h.querySelector('input')) return;
+  if (!h || !s || sourceOf(s).locked || h.querySelector('input')) return;
   h.innerHTML = `<input value="${esc(s.title)}" aria-label="会话名">`;
   const inp = h.querySelector('input');
   inp.select();
@@ -522,18 +535,29 @@ new ResizeObserver(() => {
 
 // ---------------- 启动 ----------------
 (async () => {
+  // APP 汇总独立加载：先显示会话并连接 CLI，避免所有项目的档案扫描挡住首屏；汇总到齐后补全关联信息。
+  const appsReady = loadApps();
+  $('#today').textContent = 'Agent 正在启动…（最多 30 秒）';
   try {
-    const [vs0] = await Promise.all([invoke('agent_list'), loadApps()]);
+    const vs0 = await invoke('agent_list');
     vs0.forEach((v) => S.set(v.id, v));
-  } catch (e) { toast('读取会话失败：' + e); }
+  } catch (e) {
+    $('#today').textContent = 'Agent 启动失败：' + e;
+    return;
+  }
   const params = new URLSearchParams(location.search), focus = params.get('focus'), prefill = params.get('new');
   renderMix(); renderToday(); renderLanes(); renderTicker();
   if (focus && S.has(focus)) openFocusedSession(focus);
   else { renderTabs(); renderPane(); renderRows(); }
-  if (prefill) openNewBox(JSON.parse(prefill));
+  appsReady.then(() => {
+    refreshAll();
+    // 新建来源仍等汇总完成，确保 Feat 的关联节点完整；首屏和已有会话不等这一步。
+    if (prefill) return createFromSource(JSON.parse(prefill));
+  }).catch((e) => toast('打开来源会话失败：' + e));
   requestAnimationFrame(frame);
   let lastSig = '';
   setInterval(() => {
+    if (active !== 'OV') AgentMetrics.render(S.get(active));
     $$('[data-tk]').forEach((el) => { const s = S.get(el.dataset.tk); if (s) el.textContent = timeText(s); });
     $$('[data-wk]').forEach((el) => {
       const [sid, wid] = el.dataset.wk.split('/'), w = S.get(sid)?.workers?.find((x) => x.id === wid);

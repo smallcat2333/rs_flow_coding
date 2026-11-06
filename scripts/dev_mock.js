@@ -12,7 +12,7 @@
   const userLocks = new Set();
   const chartStates = JSON.parse(localStorage.getItem('fc-mock-charts') || '{}');
   const mdOverrides = JSON.parse(localStorage.getItem('fc-mock-mds') || '{}');
-  const config = { roots: ['(mock)'], flow_dirs: [], excluded_dirs: JSON.parse(localStorage.getItem('fc-mock-excluded') || '[]'), sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], auto_top: true, bumped: {}, unseen: [], layout: 'tree', ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
+  const config = { roots: ['(mock)'], flow_dirs: [], excluded_dirs: JSON.parse(localStorage.getItem('fc-mock-excluded') || '[]'), sidebar: { app_aliases: {}, group_aliases: {}, group_order: [], app_order: [], pinned: [], auto_top: true, bumped: {}, unseen: [], layout: 'tree', ...JSON.parse(localStorage.getItem('fc-mock-sidebar') || '{"collapsed":[],"expanded_archives":[],"include_archived":false}') } };
 
   /** 解析节点：与 Rust flow::parse 同口径（仅用于预览），返回 [{id,label,status,tags}]。 */
   function nodes(xml) {
@@ -130,18 +130,11 @@
     const dev = { todo: 0, doing: 0, waiting: 0, done: 0, paused: 0, cancelled: 0, unknown: 0, total: 0, line: region('## 3.')[0] };
     tasks.forEach((t) => dev[t.state]++);
     dev.total = tasks.length - dev.paused - dev.cancelled;
-    const tally = (head) => {
-      const body = region(head, true)[1];
-      const hdr = body.find(([, l]) => l.trim().startsWith('|'));
-      const col = hdr ? hdr[1].trim().replace(/^\||\|$/g, '').split('|').findIndex((c) => c.includes('结果')) : -1;
-      const rs = rows(body);
-      let pass = 0, fail = 0;
-      for (const [, c] of rs) { const v = (c[col] || '').trim(); if (/^(不通过|失败|FAIL)/i.test(v)) fail++; else if (/^(通过|PASS)/i.test(v)) pass++; }
-      return [pass, fail, rs.length];
-    };
-    const [ap, af, at] = tally('### 4.1'), [mp, mf, mt] = tally('### 4.2');
+    // 复用真实控件页解析器，预览不再维护另一套测试结果判定。
+    const { auto, manual } = window.FeatBoard.model(text).stats;
+    const [ap, af, at] = [auto.pass, auto.fail, auto.total], [mp, mf, mt] = [manual.pass, manual.fail, manual.total];
     const issues = region('### 4.3', true)[1].filter(([, l]) => l.trimStart().startsWith('- '));
-    const test = { auto_pass: ap, auto_fail: af, auto_total: at, manual_pass: mp, manual_fail: mf, manual_total: mt,
+    const test = { auto_pass: ap, auto_fail: af, auto_unknown: auto.unknown, auto_total: at, manual_pass: mp, manual_fail: mf, manual_unknown: manual.unknown, manual_total: mt,
       issues_open: issues.filter(([, l]) => !/复测[：:]通过/.test(l)).length, issues_total: issues.length, line: region('## 4.')[0] };
     const [cl, cb] = region('## 5.');
     const close = { release: mean(cb) > 0, line: cl };
@@ -314,11 +307,39 @@
   let mockFullscreen = false;
   if (solo) window.addEventListener('pagehide', () => bc.postMessage({ name: 'popout-closed', payload: { kind: solo } }));
 
+  const storedIdleHours = Number(localStorage.getItem('fc-mock-agent-idle-hours') ?? '1');
+  let mockIdleHours = Number.isFinite(storedIdleHours) && storedIdleHours >= 0 && storedIdleHours <= 8760 ? storedIdleHours : 1;
+  let mockClaude = { claudePath: '', extraArgs: '', found: '(浏览器模拟) claude.exe', error: '' };
+  Object.assign(api, {
+    get_float_enabled: async () => localStorage.getItem('fc-mock-float') !== '0',
+    set_float_enabled: async ({ enabled }) => { localStorage.setItem('fc-mock-float', enabled ? '1' : '0'); },
+    agent_get_lifecycle: async () => ({ idleHours: mockIdleHours }),
+    agent_set_lifecycle: async ({ idleHours }) => {
+      if (!Number.isFinite(idleHours) || idleHours < 0 || idleHours > 8760) throw '空闲存活时间须为 0～8760 小时';
+      mockIdleHours = idleHours;
+      localStorage.setItem('fc-mock-agent-idle-hours', String(idleHours));
+      return { idleHours };
+    },
+    agent_get_settings: async () => ({ ...mockClaude }),
+    agent_set_settings: async ({ claudePath, extraArgs }) => {
+      mockClaude = { claudePath, extraArgs, found: claudePath || '(浏览器模拟) claude.exe', error: '' };
+      return { ...mockClaude };
+    },
+    agent_test_settings: async ({ claudePath, extraArgs }) => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const failed = /missing|invalid/i.test(claudePath) || (extraArgs.match(/"/g) || []).length % 2;
+      return { ok: !failed, message: failed ? '配置检查失败（浏览器模拟）' : 'Claude Code 可用（浏览器模拟）',
+        path: claudePath || '(浏览器模拟) claude.exe', version: failed ? '' : '预览模拟版本', elapsedMs: 800,
+        detail: failed ? '模拟错误：请检查路径或参数引号，然后重试。' : '仅用于验证页面交互，实际可用性需要桌面版测试。\n回复：FLOW_CODING_OK' };
+    },
+  });
+
   window.__TAURI__ = {
     core: { invoke: (cmd, args) => (api[cmd] ? api[cmd](args || {}) : Promise.reject('mock 未实现 ' + cmd)) },
     event: {
       listen: async (name, f) => { (listeners[name] = listeners[name] || []).push(f); return () => {}; },
       emit: async (name, payload) => { emit(name, payload); bc.postMessage({ name, payload }); },
+      emitTo: async (_target, name, payload) => { bc.postMessage({ name, payload }); },
     },
     window: {
       getCurrentWindow: () => ({

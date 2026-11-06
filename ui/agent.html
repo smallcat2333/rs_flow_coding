@@ -14,6 +14,7 @@
   </script>
   <link rel="stylesheet" href="vendor/xterm/xterm.css">
   <link rel="stylesheet" href="agent.css">
+  <link rel="stylesheet" href="feat_state.css">
 </head>
 <body>
 <div class="app">
@@ -28,7 +29,10 @@
       </header>
       <div class="mix" id="mix"></div>
       <div class="lanes" id="lanes"></div>
-      <div class="axis" aria-hidden="true"><span></span><div><span>5 分钟前</span><span class="lg"><span><i class="l-edit"></i>编辑</span><span><i class="l-cmd"></i>命令</span><span><i class="l-read"></i>读取</span><span><i class="l-commit"></i>提交</span><span><i class="l-msg"></i>协作</span></span><span>现在</span></div><span></span></div>
+      <div class="axis" aria-hidden="true">
+        <div class="axis-time"><span>10 分钟前</span><span>现在</span></div>
+        <div class="lg"><span><i class="l-edit"></i>编辑</span><span><i class="l-cmd"></i>命令</span><span><i class="l-read"></i>读取</span><span><i class="l-commit"></i>提交</span><span><i class="l-msg"></i>协作</span><span><i class="l-prompt"></i>提问</span></div>
+      </div>
       <div class="ticker" id="ticker"></div>
     </section>
     <section class="roster" aria-label="CLI 会话">
@@ -36,10 +40,16 @@
         <input class="search" id="q" type="search" placeholder="搜索会话、APP、Feat、流程图或最近活动（Ctrl+K）" aria-label="搜索会话" autocomplete="off">
         <button class="newbtn" id="newBtn" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 14 14" stroke="currentColor" stroke-width="1.6"><path d="M7 2v10M2 7h10"/></svg>新建会话</button>
       </div>
-      <div class="newwrap" id="newwrap"><div>
+      <div class="newwrap" id="newwrap" inert><div>
         <div class="newbox" id="newbox">
           <div class="nb-t">新建 Claude Code 会话</div>
-          <label for="nbName">名称</label><input type="text" id="nbName" placeholder="留空则用关联的 Feat 名，或叫「新会话」" autocomplete="off">
+          <span id="nbWorkflowLabel">流程</span><div class="nb-workflow" role="radiogroup" aria-labelledby="nbWorkflowLabel" title="可不选；选择后首次启动进入对应流程">
+            <label><input type="radio" name="nbWorkflow" value="feat">Feat</label>
+            <label><input type="radio" name="nbWorkflow" value="fix">Fix</label>
+            <label><input type="radio" name="nbWorkflow" value="perf">Perf</label>
+          </div>
+          <label for="nbName">名称</label><input type="text" id="nbName" placeholder="留空则叫「新会话」" autocomplete="off">
+          <p class="nb-name-hint" id="nbNameHint">关联 Feat 或流程图后，名称自动跟随来源。</p>
           <label for="nbApp">目录</label><select id="nbApp"></select>
           <label for="nbLink">关联</label>
           <div class="nb-links" id="nbLinks"><span id="nbChips"></span><input id="nbLink" placeholder="搜索 Feat 或流程图，可留空" autocomplete="off"></div>
@@ -55,6 +65,7 @@
     <div class="bar"><div class="tabs" id="tabs" role="tablist" aria-label="会话页签"></div></div>
     <div class="pane" id="pane">
       <div id="head"></div>
+      <div id="agentMetrics" class="am-strip" hidden aria-label="会话运行信息"></div>
       <div class="ov" id="ov"></div>
       <div class="terms" id="terms" hidden></div>
     </div>
@@ -65,8 +76,11 @@
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm/addon-fit.js"></script>
 <script src="vendor/xterm/addon-unicode11.js"></script>
+<script src="terminal_themes.js"></script>
+<script src="feat_state.js"></script>
 <script src="agent_core.js"></script>
 <script src="agent_overview.js"></script>
+<script src="agent_metrics.js"></script>
 <script src="agent.js"></script>
 </body>
 </html>

@@ -155,9 +155,12 @@ fn rename_on_disk(path: &Path, name: &str) -> Result<Renamed, String> {
 }
 
 /// 所有窗口完成保存并释放锁后调用；成功通知目录及相关 Markdown 更新。
+/// 磁盘事务提交后再同步 Agent 会话引用（feat / 关联节点 / 当前位置 / 任务与主会话名），
+/// 改名失败不会走到这里，不会留下指向旧路径的悬挂引用。
 #[tauri::command]
 pub fn rename_entry(app: tauri::AppHandle, path: String, name: String) -> Result<Renamed, String> {
     let result = rename_on_disk(Path::new(&path), &name)?;
+    crate::agent::on_renamed(Path::new(&path), Path::new(&result.path));
     for md in &result.changed_feats {
         if let Ok(text) = std::fs::read_to_string(md) {
             let _ = app.emit("md-changed", crate::ChangeEvent { path: md.clone(), hash: db::hash(&text), source: "user".into() });
