@@ -247,7 +247,11 @@ window.FeatPane = (() => {
     const f = app ? app.feats.find((x) => x.path === st.path) : null;
     $('feat-id').textContent = st.id;
     $('feat-title').textContent = f ? f.title : '';
-    $('feat-status').textContent = f ? f.status : '';
+    const state = f ? Sidebar.featState(f.status) : null;
+    const statusEl = $('feat-status');
+    statusEl.textContent = state ? state.label : '';
+    statusEl.className = state ? `feat-state ${state.tone}` : '';
+    statusEl.title = f ? (f.status || '档案未注明状态') : '';
     const b = $('md-lock');
     if (st.readOnly) { b.className = 'agent'; b.textContent = 'Agent 持锁'; }
     else if (st.holding) { b.className = 'user'; b.textContent = '你持锁'; }

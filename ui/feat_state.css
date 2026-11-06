@@ -1,0 +1,13 @@
+/* 主窗口与 Agent 窗口共用的 Feat 状态色；随各窗口 color-scheme 切换深浅主题。 */
+.feat-state { flex: 0 0 auto; padding: 0 5px; border-radius: 3px; font-size: 11px; line-height: 18px; background: var(--bg2); color: var(--fg2); }
+.feat-state.talk { background: light-dark(#f3e8ff, #30203f); color: light-dark(#7e22ce, #d8b4fe); }
+.feat-state.req { background: light-dark(#e0e7ff, #232947); color: light-dark(#3730a3, #a5b4fc); }
+.feat-state.design { background: light-dark(#fce7f3, #422039); color: light-dark(#9d174d, #f9a8d4); }
+.feat-state.dev { background: light-dark(#dbeafe, #182f50); color: light-dark(#1d4ed8, #93c5fd); }
+.feat-state.ready { background: light-dark(#e0f2fe, #123446); color: light-dark(#075985, #7dd3fc); }
+.feat-state.test { background: light-dark(#ccfbf1, #103a35); color: light-dark(#115e59, #5eead4); }
+.feat-state.accept { background: light-dark(#ecfccb, #2a3618); color: light-dark(#3f6212, #bef264); }
+.feat-state.paused { background: light-dark(#fef3c7, #402f13); color: light-dark(#92400e, #fcd34d); }
+.feat-state.done { background: light-dark(#dcfce7, #173823); color: light-dark(#166534, #86efac); }
+.feat-state.dropped { background: light-dark(#fee2e2, #401e23); color: light-dark(#991b1b, #fca5a5); }
+.feat-state.muted { background: light-dark(#eaeef2, #292e36); color: light-dark(#57606a, #9da7b3); }

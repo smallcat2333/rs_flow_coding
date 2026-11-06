@@ -25,8 +25,6 @@ window.FeatBoard = (() => {
   ];
   /** 页签名称：概览不带编号，章节显示编号、中文名与灰色英文缩写。 */
   const stageName = (s) => `${s.k === 'overview' ? '' : `<span class="fb-stage-no">${s.k}.</span>`}<span class="fb-stage-zh">${s.name}</span><span class="fb-stage-en">/ ${s.en}</span>`;
-  /** 档案头状态 → 样式类（§2.11.4 词表），词表外为 unknown。 */
-  const STATUS_CLS = [['探讨中', 'talk'], ['需求整理中', 'req'], ['开发中', 'dev'], ['测试中', 'test'], ['已暂停', 'paused'], ['已关闭', 'closed'], ['已废弃', 'dropped']];
   /** 路线图状态词（与 progress.rs task_state 同序：先判「待用户确认」）。 */
   const TASK_WORDS = [['待用户确认', 'waiting'], ['待开发', 'todo'], ['进行中', 'doing'], ['完成', 'done'], ['暂缓', 'paused'], ['取消', 'cancelled']];
   const TASK_NAME = { waiting: '待用户确认', todo: '待开发', doing: '进行中', done: '完成', paused: '暂缓', cancelled: '取消', unknown: '未识别' };
@@ -37,7 +35,7 @@ window.FeatBoard = (() => {
   let api = null;          // feat.js 提供的接口，见 init 注释
   const st = {
     path: '',              // 当前渲染的档案；换档案时页签回到当前阶段
-    tab: '',               // 当前页签章节号
+    tab: '',               // 当前页签键：overview 或 0–5 章节号
     selectedT: '',         // 开发页选中的 T；只控制详情区，开发记录始终完整显示
     onlyTodo: false,       // 测试页：§4.2 只看未填
     open: new Set(),       // 展开的开发记录（记录标题行号）；空表示默认展开最新一条
@@ -159,9 +157,14 @@ window.FeatBoard = (() => {
     return out;
   }
 
-  /** 测试结果：pass / fail / other（有字但不是判定词）/ ''（未填），与 progress.rs verdict 同口径。 */
+  /** 判定标准结果或完整数量摘要；正数失败优先，全零或未知文本不推定通过，与 progress.rs 同口径。 */
   function verdict(s) {
     const c = s.trim(), u = c.toUpperCase();
+    const counts = u.split(/[、,，;；/]/).map((part) => part.trim().match(/^(\d+)\s*(不通过|失败|通过|FAILED|FAIL|PASSED|PASS)$/));
+    if (counts.every(Boolean)) {
+      if (counts.some((m) => Number(m[1]) > 0 && ['不通过', '失败', 'FAILED', 'FAIL'].includes(m[2]))) return 'fail';
+      return counts.some((m) => Number(m[1]) > 0 && ['通过', 'PASSED', 'PASS'].includes(m[2])) ? 'pass' : 'other';
+    }
     if (c.startsWith('不通过') || c.startsWith('失败') || u.startsWith('FAIL')) return 'fail';
     if (c.startsWith('通过') || u.startsWith('PASS')) return 'pass';
     return c ? 'other' : '';
@@ -262,10 +265,10 @@ window.FeatBoard = (() => {
 
     const tally = (t) => {
       const ri = t ? col(t.head, '结果') : -1;
-      const s = { total: t ? t.rows.length : 0, pass: 0, fail: 0, filled: 0 };
+      const s = { total: t ? t.rows.length : 0, pass: 0, fail: 0, unknown: 0, filled: 0 };
       if (ri >= 0) for (const r of t.rows) {
         const v = verdict(r.cells[ri]?.text || '');
-        s.pass += v === 'pass'; s.fail += v === 'fail'; s.filled += !!v;
+        s.pass += v === 'pass'; s.fail += v === 'fail'; s.unknown += v === 'other'; s.filled += !!v;
       }
       return s;
     };
@@ -384,10 +387,10 @@ window.FeatBoard = (() => {
       }
     } else if (s.startsWith('测试中')) {
       const m = x.manual, a = x.auto;
-      if (m.total > m.filled) add('warn', `人工确认还剩 ${m.total - m.filled} 项未填，在测试页逐项点 OK / NG。`);
+      if (a.unknown || m.unknown) add('warn', `有 ${a.unknown + m.unknown} 项结果未识别，请将结果列写为「通过」或「不通过」，数量与说明放入备注。`);
       if (m.fail || a.fail) add('err', `有 ${m.fail + a.fail} 项不通过：先交给 feat-4-test 记入 §4.3，再在新会话修复。`, `/smallcat-feat-4-test ${id}`);
       else if (x.issues.open) add('err', `§4.3 还有 ${x.issues.open} 个问题未复测通过，修复后复测。`, `/smallcat-feat-3-dev ${id}`);
-      else if (m.total && m.filled === m.total && a.pass === a.total) add('ok', '测试全部通过，可以关闭 Feat。', `/smallcat-feat-5-close ${id}`);
+      else if (m.total && !m.unknown && m.filled === m.total && a.pass === a.total) add('ok', '测试全部通过，可以关闭 Feat。', `/smallcat-feat-5-close ${id}`);
     } else add('warn', `档案头状态「${s || '空'}」不在词表中，请在文档视图修正。`);
     return out;
   }
@@ -428,8 +431,8 @@ window.FeatBoard = (() => {
       1: { badge: x.checks.total ? `${x.checks.done}/${x.checks.total}` : '', tone: '', sum: x.checks.total ? '验收标准' : '验收未写', done: x.checks.done, total: x.checks.total },
       2: { badge: controls ? String(controls) : '', tone: '', sum: controls ? `控件 ${controls}` : meaningful(body(d, '2.1')) ? '已有总纲' : '未开始' },
       3: { badge: x.tasks.total ? `${x.tasks.done}/${x.tasks.total}` : '', tone: x.tasks.waiting ? 'warn' : '', sum: x.tasks.total ? (x.tasks.waiting ? `待确认 ${x.tasks.waiting}` : x.tasks.done === x.tasks.total ? '任务完成' : `完成 ${x.tasks.done}/${x.tasks.total}`) : '未拆任务', done: x.tasks.done, total: x.tasks.total },
-      4: { badge: x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', tone: issues ? 'err' : x.manual.filled < x.manual.total ? 'warn' : '',
-        sum: x.manual.total + x.auto.total ? [x.manual.total ? '人工确认' : '程序自测', x.manual.fail + x.auto.fail ? `NG ${x.manual.fail + x.auto.fail}` : '', x.issues.open ? `问题 ${x.issues.open}` : ''].filter(Boolean).join(' · ') : '未开始',
+      4: { badge: x.manual.total ? `${x.manual.filled}/${x.manual.total}` : '', tone: issues ? 'err' : x.manual.unknown + x.auto.unknown || x.manual.filled < x.manual.total ? 'warn' : '',
+        sum: x.manual.total + x.auto.total ? [x.manual.total ? '人工确认' : '程序自测', x.manual.fail + x.auto.fail ? `NG ${x.manual.fail + x.auto.fail}` : '', x.manual.unknown + x.auto.unknown ? `未识别 ${x.manual.unknown + x.auto.unknown}` : '', x.issues.open ? `问题 ${x.issues.open}` : ''].filter(Boolean).join(' · ') : '未开始',
         done: test[0], total: test[1] },
       5: { badge: released ? '✓' : '', tone: '', sum: released ? '已生成' : '未生成' },
     };
@@ -447,7 +450,7 @@ window.FeatBoard = (() => {
    * （点 + 连线，已过为绿、当前为蓝）。首行完整显示「编号. 中文 / 英文」，次行放摘要与角标；点击切换右侧页面。
    */
   function rail(d) {
-    const cls = (STATUS_CLS.find(([w]) => d.status.startsWith(w)) || [, 'unknown'])[1];
+    const state = Sidebar.featState(d.status);
     const info = stageInfo(d);
     const meta = [['应用', d.app], ['创建', d.created], ['关闭', d.closed]].filter(([, v]) => v)
       .map(([k, v]) => `<div class="fb-meta-item"><i>${k}</i>${esc(v)}</div>`).join('');
@@ -470,7 +473,7 @@ window.FeatBoard = (() => {
     }).join('');
     // 外层撑满高度画背景与分隔线，内层吸顶：内容区滚动时导航保持可见。
     return `<nav class="fb-rail" aria-label="Feat 阶段"><div class="fb-rail-in">
-      <div class="fb-rail-head"><span class="fb-status s-${cls}" data-line="${d.statusN}" title="${esc(d.status)}">${esc(d.status || '无状态')}</span>${d.statusN ? src(d.statusN) : ''}</div>
+      <div class="fb-rail-head"><span class="fb-status feat-state ${state.tone}" data-line="${d.statusN}" title="${esc(d.status || state.label)}">${esc(state.label)}</span>${d.statusN ? src(d.statusN) : ''}</div>
       ${meta ? `<div class="fb-meta">${meta}</div>` : ''}
       <div class="fb-stages" role="tablist" aria-orientation="vertical">${stages}</div>
     </div></nav>`;
@@ -567,8 +570,14 @@ window.FeatBoard = (() => {
       ${card(d, '2.5', '截图', meaningful(shots) ? `<div class="fb-prose">${md(shots.map((l) => l.t).join('\n'))}</div><p class="fb-hint">截图为本地文件，在文件夹中查看。</p>` : empty('开发 / 测试阶段补充截图', ''))}`;
   }
 
-  /** 依赖图排版尺寸：节点保留两行标题，窄栏转为纵向并按可用宽度折行，不缩小字体。 */
-  const G = { w: 188, h: 74, gap: 32, rowGap: 14, pad: 12 };
+  /** 依赖图排版尺寸：节点高度（保留两行标题，不缩小字体）、纵向层距、并排间距、图内边距。 */
+  const G = { h: 74, gap: 32, rowGap: 14, pad: 12 };
+  /**
+   * 自适应排布参数：节点宽度随可用宽度在 minW–maxW 间伸缩；横向图节点可窄到 hMinW（链式任务尽量保持
+   * 从左到右），hGap 为横向图的层距；cols 为纵向图同层最多并排数，gridCols 为独立任务网格每行最多数；
+   * prefer 为横向优先系数（横向高度不超过纵向高度的该倍数时选横向，从左到右读更顺）。
+   */
+  const FIT = { minW: 160, hMinW: 140, maxW: 260, hGap: 36, cols: 5, gridCols: 6, prefer: 1.3 };
 
   /**
    * 输出依赖图节点与连线，保留依赖深度、排序与两端下标；实际坐标由 layoutGraph 根据图容器宽度计算。
@@ -615,7 +624,7 @@ window.FeatBoard = (() => {
         <span class="fb-node-title">${esc(t.title)}</span></button>`;
     }).join('');
     return `<div class="fb-graph" role="group" aria-label="任务依赖关系图"><div class="fb-graph-in">
-      <svg aria-hidden="true"><defs>${['done', 'pending', 'muted'].map(marker).join('')}</defs>${edges.join('')}</svg>${nodes}</div></div>
+      <svg aria-hidden="true"><defs>${['done', 'pending', 'muted'].map(marker).join('')}</defs>${edges.join('')}</svg><span class="fb-graph-cap" hidden>无依赖关系的任务</span>${nodes}</div></div>
       <div class="fb-legend"><span><i class="done"></i>前置已完成</span><span><i class="pending"></i>前置未完成</span><span><i class="muted"></i>前置暂缓 / 取消 / 未识别</span></div>`;
   }
 
@@ -637,47 +646,105 @@ window.FeatBoard = (() => {
   const WIRE = { pitch: 5, max: 10, edge: 4, clear: 14 };
 
   /**
-   * 用实际图宽重排节点与连线：横向能放下全部依赖层时从左到右，否则从上到下，同一层按宽度折为多行。
-   * 跨层依赖走左侧（横向图为上侧）预留的线束带：同一前置发出的线并成一束共用通道，按跨度由短到长分到最内侧的
-   * 空闲通道，层层嵌套不交叉；线束带宽度按实际通道数留出，与节点之间保持空白。
-   * 只更新几何，不重建控件或改变选中状态；ResizeObserver 和每次渲染后调用。隐藏或零宽度时等下次可见再排。
+   * 用实际图宽自适应重排节点与连线，只更新几何，不重建控件或改变选中状态；ResizeObserver 和每次渲染后调用，
+   * 隐藏或零宽度时等下次可见再排。
+   * 1. 分组：既无前置也无后续的独立任务不进依赖层，单独铺成网格（按宽度均匀分列）放在依赖图下方；
+   * 2. 分层：沿用最长前置路径的层号，只有后续的起点任务贴到最近后续的前一层，缩短长连线；
+   * 3. 排序：层内按前置 / 后续的平均位置（重心法）下-上-下各扫一遍，减少连线交叉；
+   * 4. 方向：横向（层为列，从左到右，每列竖直居中）能放下且高度不超过纵向的 FIT.prefer 倍时选横向，
+   *    否则纵向（层为行，从上到下，同层按宽度均衡折行并居中）；节点宽度随可用宽度在 FIT.minW–maxW 间伸缩；
+   * 5. 连线：跨层依赖走左侧（横向图为上侧）预留的线束带，同一前置发出的线并成一束共用通道，按跨度由短到长
+   *    分到最内侧的空闲通道，层层嵌套不交叉；线束带宽度按实际通道数留出，与节点之间保持空白。
    */
   function layoutGraph() {
     const graph = $('feat-board').querySelector('.fb-graph');
     if (!graph || !graph.clientWidth) return;
     const nodes = [...graph.querySelectorAll('.fb-node')], width = graph.clientWidth;
-    const levels = [];
-    nodes.forEach((node, i) => (levels[Number(node.dataset.level)] ||= []).push(i));
-    const horizontal = levels.length * G.w + (levels.length - 1) * G.gap + G.pad * 2 <= width;
-    const level = (i) => Number(nodes[i].dataset.level);
     const edges = [...graph.querySelectorAll('.fb-edge')].map((el) => ({ el, s: Number(el.dataset.source), t: Number(el.dataset.target) }));
+    const preds = nodes.map(() => []), succs = nodes.map(() => []);
+    edges.forEach(({ s, t }) => { preds[t].push(s); succs[s].push(t); });
+    const lv = nodes.map((node) => Number(node.dataset.level));
+    nodes.forEach((_, i) => { if (!preds[i].length && succs[i].length) lv[i] = Math.max(0, Math.min(...succs[i].map((t) => lv[t])) - 1); });
+    const lone = nodes.map((_, i) => i).filter((i) => !preds[i].length && !succs[i].length);
+    const sparse = [];
+    nodes.forEach((_, i) => { if (preds[i].length || succs[i].length) (sparse[lv[i]] ||= []).push(i); });
+    // 压缩成连续的层（tier），跨层判定按压缩后的层号。
+    const tiers = sparse.filter(Boolean), tier = [];
+    tiers.forEach((t, k) => t.forEach((i) => { tier[i] = k; }));
 
-    /** 给定线束带宽度排节点：纵向图在带右侧的剩余宽度内居中折行，横向图整体下移；返回坐标与节点宽度。 */
+    /** 重心法排序：按相邻层邻居的平均归一化位置排序，相同时保持原相对顺序。 */
+    const pos = [];
+    const mark = (t) => t.forEach((i, o) => { pos[i] = (o + 0.5) / t.length; });
+    tiers.forEach(mark);
+    const order = (k, near) => {
+      const bc = new Map(tiers[k].map((i) => { const ns = near(i); return [i, ns.length ? ns.reduce((a, j) => a + pos[j], 0) / ns.length : pos[i]]; }));
+      tiers[k].sort((a, b) => bc.get(a) - bc.get(b) || pos[a] - pos[b]);
+      mark(tiers[k]);
+    };
+    for (let k = 1; k < tiers.length; k++) order(k, (i) => preds[i]);
+    for (let k = tiers.length - 2; k >= 0; k--) order(k, (i) => succs[i]);
+    for (let k = 1; k < tiers.length; k++) order(k, (i) => preds[i]);
+
+    const L = tiers.length, most = Math.max(0, ...tiers.map((t) => t.length));
+    /** count 行节点占用的高度；fit 为宽 avail 时以 minW 能并排的个数（上限 max）。 */
+    const span = (count) => count * (G.h + G.rowGap) - G.rowGap;
+    const fit = (avail, max, w = FIT.minW) => Math.max(1, Math.min(max, Math.floor((avail + G.rowGap + 0.5) / (w + G.rowGap))));
+    /** 均衡折行：count 个节点、每行最多 max 个时的行数与每行个数（5 个、上限 4 → 3 + 2，而非 4 + 1）。 */
+    const wrap = (count, max) => { const r = Math.ceil(count / max); return { r, c: Math.ceil(count / r) }; };
+    const avail0 = width - G.pad * 2;
+    /** 纵向图列数：不超过可放下的个数，也不超过最宽一层的节点数（层都窄时节点加宽，而不是留空列）。 */
+    const vCols = (avail) => Math.min(fit(avail, FIT.cols), Math.max(1, most));
+    const vHeight = tiers.reduce((a, t) => a + span(wrap(t.length, vCols(avail0)).r) + G.gap, -G.gap);
+    const horizontal = L > 0 && L * FIT.hMinW + (L - 1) * FIT.hGap <= avail0 && span(most) <= vHeight * FIT.prefer;
+
+    /**
+     * 给定线束带宽度排节点：纵向图在带右侧的剩余宽度内排，横向图整体下移；独立任务网格接在依赖图下方。
+     * 返回坐标、统一的节点宽度与独立任务说明的位置（只有依赖图和独立任务同时存在时才显示说明）。
+     */
     const place = (band) => {
-      const start = Math.max(G.pad, band), avail = width - G.pad - start;
-      const cols = Math.max(1, Math.min(3, Math.floor((avail + G.rowGap) / (150 + G.rowGap))));
-      const nodeW = horizontal ? G.w : Math.min(300, (avail - (cols - 1) * G.rowGap) / cols);
+      const start = Math.max(G.pad, band), x0 = horizontal ? G.pad : start, avail = width - G.pad - x0;
+      const cols = vCols(avail);
+      const gridMax = fit(avail, FIT.gridCols);
+      const nodeW = Math.min(FIT.maxW, horizontal ? (avail - (L - 1) * FIT.hGap) / L
+        : L ? (avail - (cols - 1) * G.rowGap) / cols
+        : (avail - (wrap(lone.length, gridMax).c - 1) * G.rowGap) / wrap(lone.length, gridMax).c);
       const positions = [];
-      let y = G.pad;
-      levels.forEach((lv, li) => {
-        if (!lv) return;
-        lv.forEach((i, order) => {
-          if (horizontal) positions[i] = { x: G.pad + li * (G.w + G.gap), y: start + order * (G.h + G.rowGap) };
-          else {
-            const row = Math.floor(order / cols), inRow = Math.min(cols, lv.length - row * cols);
-            const left = start + (avail - inRow * nodeW - (inRow - 1) * G.rowGap) / 2;
-            positions[i] = { x: left + (order % cols) * (nodeW + G.rowGap), y: y + row * (G.h + G.rowGap) };
-          }
+      let bottom = G.pad;
+      if (horizontal) {
+        tiers.forEach((t, k) => {
+          const off = (span(most) - span(t.length)) / 2;
+          t.forEach((i, o) => { positions[i] = { x: x0 + k * (nodeW + FIT.hGap), y: start + off + o * (G.h + G.rowGap) }; });
         });
-        if (!horizontal) y += Math.ceil(lv.length / cols) * (G.h + G.rowGap) - G.rowGap + G.gap;
-      });
-      return { positions, nodeW };
+        bottom = start + span(most);
+      } else if (L) {
+        // 整块从线束带右侧靠左排（不在整宽里居中，避免线束与节点之间空出一大段），各行在块宽内居中。
+        const widest = Math.max(...tiers.map((t) => wrap(t.length, cols).c));
+        const block = widest * nodeW + (widest - 1) * G.rowGap;
+        let y = G.pad;
+        tiers.forEach((t) => {
+          const { r, c } = wrap(t.length, cols);
+          t.forEach((i, o) => {
+            const row = Math.floor(o / c), inRow = Math.min(c, t.length - row * c);
+            const left = x0 + (block - inRow * nodeW - (inRow - 1) * G.rowGap) / 2;
+            positions[i] = { x: left + (o % c) * (nodeW + G.rowGap), y: y + row * (G.h + G.rowGap) };
+          });
+          y += span(r) + G.gap;
+        });
+        bottom = y - G.gap;
+      }
+      const cap = L && lone.length ? { x: x0, y: bottom + G.gap - 4 } : null;
+      if (lone.length) {
+        const { c } = wrap(lone.length, fit(avail, FIT.gridCols, nodeW));
+        const top = L ? bottom + G.gap + 18 : G.pad;
+        lone.forEach((i, o) => { positions[i] = { x: x0 + (o % c) * (nodeW + G.rowGap), y: top + Math.floor(o / c) * (G.h + G.rowGap) }; });
+      }
+      return { positions, nodeW, cap };
     };
 
     /** 跨层线按前置分束，记下沿主方向占用的区间（出口到最远目标），按跨度由短到长贪心分配不重叠的通道。 */
     const bundle = ({ positions, nodeW }) => {
       const groups = new Map();
-      edges.filter((e) => level(e.t) - level(e.s) > 1).forEach((e) => {
+      edges.filter((e) => tier[e.t] - tier[e.s] > 1).forEach((e) => {
         const a = positions[e.s], b = positions[e.t];
         const from = horizontal ? a.x + nodeW : a.y + G.h, to = horizontal ? b.x : b.y;
         const g = groups.get(e.s) || { from, to, lane: 0 };
@@ -703,7 +770,10 @@ window.FeatBoard = (() => {
       laid = place(band);
       wires = bundle(laid);
     }
-    const { positions, nodeW } = laid;
+    const { positions, nodeW, cap } = laid;
+    const caption = graph.querySelector('.fb-graph-cap');
+    caption.hidden = !cap;
+    if (cap) Object.assign(caption.style, { left: `${cap.x}px`, top: `${cap.y}px` });
     let height = 0;
     nodes.forEach((node, i) => {
       const p = positions[i];
@@ -727,7 +797,7 @@ window.FeatBoard = (() => {
       const x1 = horizontal ? a.x + nodeW : a.x + nodeW / 2, y1 = horizontal ? a.y + G.h / 2 : a.y + G.h;
       const x2 = horizontal ? b.x - 3 : b.x + nodeW / 2, y2 = horizontal ? b.y + G.h / 2 : b.y - 3;
       const bend = Math.max(16, (horizontal ? x2 - x1 : y2 - y1) / 2);
-      const group = level(t) - level(s) > 1 && wires.groups.get(s);
+      const group = tier[t] - tier[s] > 1 && wires.groups.get(s);
       if (group) {
         // 内侧通道最靠近节点；出口与入口的拐弯都落在相邻两行之间的空隙里，不压到其他节点。
         const lane = group.lane % WIRE.max, rail = Math.max(2, band - WIRE.clear - lane * WIRE.pitch);
@@ -841,7 +911,7 @@ window.FeatBoard = (() => {
       const tip = esc([`${c(0)}. ${c(ti)}`, c(wi) && `方式：${c(wi)}`, `结果：${c(ri) || '未填'}`, note && `备注：${note}`]
         .filter(Boolean).join('\n').replace(/`/g, ''));
       return `<li class="v-${v || 'none'}" data-line="${r.n}"><span class="fb-idx">${esc(c(0))}</span><span class="fb-auto-title">${cell(c(ti))}</span>
-        ${c(wi) ? `<span class="fb-type" title="${tip}">${esc(c(wi))}</span>` : ''}${pill('v-' + (v || 'none'), c(ri) || '未填', c(ri))}
+        ${c(wi) ? `<span class="fb-type" title="${tip}">${esc(c(wi))}</span>` : ''}${pill(v === 'other' ? 'warn' : 'v-' + (v || 'none'), v === 'other' ? '未识别：' + c(ri) : c(ri) || '未填', c(ri))}
         ${note ? `<span class="fb-auto-note" title="${tip}">${cell(note)}${/[\\/]|\.\w{1,4}\b/.test(note) ? `<button class="fb-icon" data-copy="${esc(note)}" title="复制备注（测试文件路径）" aria-label="复制备注">${ICON_COPY}</button>` : ''}</span>` : ''}</li>`;
     }).join('')}</ul>`;
   }
@@ -863,7 +933,8 @@ window.FeatBoard = (() => {
       const broken = !rc || (ni >= 0 && !nc);
       const set = (word) => {
         const cur = rc.text, has = cur.match(VERDICT_WORD);
-        const rest = has ? cur.slice(has[0].length) : (cur ? '；' + cur : '');
+        // 数量摘要整体属于判定，切换/清除时不留作后缀导致重新判回原状态；未知说明仍保留。
+        const rest = has ? cur.slice(has[0].length) : (v === 'other' && cur ? '；' + cur : '');
         const same = verdict(cur) === (word === '通过' ? 'pass' : 'fail');
         st.focusKey = word === '不通过' && !same ? `note-${i}` : `acc-${i}`;
         writeCell(rc, same ? rest.replace(/^[；;\s]+/, '') : word + rest);
@@ -901,8 +972,8 @@ window.FeatBoard = (() => {
     const tools = `<label class="fb-switch"><input type="checkbox" ${st.onlyTodo ? 'checked' : ''} ${act(() => { st.onlyTodo = !st.onlyTodo; render(); })}>只看未填</label>
       <span class="fb-hint" title="焦点在卡片上时可用">J / K 切换 · 1 OK · 2 NG · N 备注</span>`;
     return `<div class="fb-meters">
-        ${meter('程序自测', a.pass, a.total, a.fail ? 'err' : 'ok', a.total ? `通过 ${a.pass} · 不通过 ${a.fail}` : '未开始')}
-        ${meter('人工确认', m.filled, m.total, m.fail ? 'err' : m.filled < m.total ? 'warn' : 'ok', m.total ? `通过 ${m.pass} · 不通过 ${m.fail} · 未填 ${m.total - m.filled}` : '未开始')}
+        ${meter('程序自测', a.pass, a.total, a.fail ? 'err' : a.unknown || a.filled < a.total ? 'warn' : 'ok', a.total ? `通过 ${a.pass} · 不通过 ${a.fail}${a.unknown ? ` · 未识别 ${a.unknown}` : ''}${a.total > a.filled ? ` · 未填 ${a.total - a.filled}` : ''}` : '未开始')}
+        ${meter('人工确认', m.filled - m.unknown, m.total, m.fail ? 'err' : m.unknown || m.filled < m.total ? 'warn' : 'ok', m.total ? `通过 ${m.pass} · 不通过 ${m.fail} · 未填 ${m.total - m.filled}${m.unknown ? ` · 未识别 ${m.unknown}` : ''}` : '未开始')}
         ${meter('问题闭环', q.total - q.open, q.total, q.open ? 'err' : 'ok', q.total ? `未闭环 ${q.open}` : '暂无问题')}
       </div>
       ${card(d, '4.1', '程序自测（Agent 执行）', autoList(d))}

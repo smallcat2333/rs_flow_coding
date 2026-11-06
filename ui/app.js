@@ -208,7 +208,11 @@ function renderCurrentBar() {
   $('node-find').disabled = !st.cur;
   $('btn-flow-pop').disabled = !st.cur;
   const feat = appOf(curFeat.path)?.feats.find((f) => f.path === curFeat.path);
-  $('feat-status').textContent = feat ? feat.status : '';
+  const state = feat ? Sidebar.featState(feat.status) : null;
+  const statusEl = $('feat-status');
+  statusEl.textContent = state ? state.label : '';
+  statusEl.className = state ? `feat-state ${state.tone}` : '';
+  statusEl.title = feat ? (feat.status || '档案未注明状态') : '';
   const badge = $('lock-badge');
   if (st.readOnly) { badge.className = 'agent'; badge.textContent = 'Agent 持锁'; }
   else if (st.holding) { badge.className = 'user'; badge.textContent = '你持锁'; }

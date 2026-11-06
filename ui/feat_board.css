@@ -27,14 +27,9 @@
 .fb-rail-head { display: flex; align-items: center; gap: 4px; }
 .fb-meta { display: flex; flex-direction: column; gap: 1px; padding: 0 4px 8px; border-bottom: 1px solid var(--border2); }
 
-/* 档案头状态徽标 */
-.fb-status { min-width: 0; flex: 0 1 auto; padding: 2px 12px; border-radius: 12px; font-weight: 650; font-size: 13px; border: 1px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fb-status.s-talk, .fb-status.s-req { background: color-mix(in srgb, var(--fb-info) 12%, transparent); color: var(--fb-info); border-color: color-mix(in srgb, var(--fb-info) 35%, transparent); }
-.fb-status.s-dev { background: var(--sel); color: var(--fb-info); border-color: var(--accent-bd); }
-.fb-status.s-test { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-bd); }
-.fb-status.s-closed { background: var(--ok-bg); color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 40%, transparent); }
-.fb-status.s-paused, .fb-status.s-dropped, .fb-status.s-unknown { background: var(--bg2); color: var(--fg2); border-color: var(--border); }
-.fb-status.s-unknown { border-style: dashed; }
+/* 档案头状态徽标：文字和底色复用左侧 feat-state，边框跟随状态文字颜色。 */
+.fb-status { min-width: 0; flex: 0 1 auto; padding: 2px 12px; border-radius: 12px; font-weight: 650; font-size: 13px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-status.muted { border-style: dashed; }
 .fb-meta-item { color: var(--fg2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-meta-item i { font-style: normal; color: var(--muted); margin-right: 4px; }
 .fb-nexts { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px 0; }
@@ -93,6 +88,7 @@
 .fb-tchip.t-paused, .fb-tchip.t-cancelled, .fb-tchip.t-unknown { color: var(--muted); border-style: dotted; }
 /* 各阶段章节目录默认直接展开。 */
 .fb-toc { list-style: none; margin: 0; padding: 2px 0 4px 26px; display: flex; flex-direction: column; }
+.fb-toc li { min-width: 0; max-width: 100%; }
 .fb-toc button { display: block; width: 100%; padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fg2); font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-toc button:hover { background: var(--hover); color: var(--accent); }
 .fb-toc button.blank { color: var(--muted); font-style: italic; }
@@ -201,6 +197,9 @@
 .fb-graph { min-width: 0; border-radius: 6px; background: var(--bg2); }
 .fb-graph-in { position: relative; width: 100%; }
 .fb-graph svg { position: absolute; inset: 0; pointer-events: none; }
+/* 依赖图与独立任务网格之间的小标题，位置由 layoutGraph 写入。 */
+.fb-graph-cap { position: absolute; font-size: 11px; line-height: 16px; color: var(--muted); white-space: nowrap; }
+.fb-graph-cap[hidden] { display: none; }
 .fb-edge { fill: none; stroke-width: 1.6; transition: opacity .15s, stroke-width .15s; }
 .fb-edge.done { stroke: color-mix(in srgb, var(--fb-ok) 70%, transparent); }
 .fb-edge.pending { stroke: var(--warn-bd); }
@@ -359,7 +358,6 @@
 @container board (max-width: 760px) {
   .fb-rail { flex-basis: 160px; }
   .fb-rail-in { padding: 10px 6px; }
-  .fb-meta-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fb-page { padding: 12px; }
   .fb-nexts { padding: 12px 12px 0; }
   .fb-card { padding: 10px; }
