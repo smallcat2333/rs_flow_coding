@@ -98,14 +98,16 @@ pub struct DevStage {
     pub line: usize,
 }
 
-/// 测试阶段：§4.1 自测、§4.2 人工确认的通过 / 不通过 / 总数，§4.3 问题总数与未复测通过数。
+/// 测试阶段：按表格行统计自测/人工的通过、不通过、未识别与总数；不累加子用例数。
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TestStage {
     pub auto_pass: usize,
     pub auto_fail: usize,
+    pub auto_unknown: usize,
     pub auto_total: usize,
     pub manual_pass: usize,
     pub manual_fail: usize,
+    pub manual_unknown: usize,
     pub manual_total: usize,
     pub issues_open: usize,
     pub issues_total: usize,
@@ -227,30 +229,48 @@ fn is_task_id(s: &str, sub: bool) -> bool {
     if sub { ok && digits(parts.next()) && parts.next().is_none() } else { ok && parts.next().is_none() }
 }
 
-/// 测试结果列：通过 / 不通过（失败）/ 未填。返回 (是否通过, 是否不通过)。
+/// 判定标准结果或完整数量摘要；正数失败优先，全零或未知文本不推定通过。返回 (通过, 不通过)。
 fn verdict(cell: &str) -> (bool, bool) {
     let c = cell.trim();
+    let counts: Option<Vec<_>> = c.split(['、', ',', '，', ';', '；', '/']).map(|part| {
+        let part = part.trim();
+        let end = part.find(|ch: char| !ch.is_ascii_digit()).unwrap_or(part.len());
+        if end == 0 { return None; }
+        let positive = part[..end].bytes().any(|ch| ch != b'0');
+        let word = part[end..].trim().to_ascii_uppercase();
+        let pass = match word.as_str() {
+            "通过" | "PASSED" | "PASS" => true,
+            "不通过" | "失败" | "FAILED" | "FAIL" => false,
+            _ => return None,
+        };
+        Some((positive, pass))
+    }).collect();
+    if let Some(counts) = counts {
+        let fail = counts.iter().any(|(positive, pass)| *positive && !pass);
+        return (!fail && counts.iter().any(|(positive, pass)| *positive && *pass), fail);
+    }
     let fail = c.starts_with("不通过") || c.starts_with("失败") || c.to_ascii_uppercase().starts_with("FAIL");
     let pass = !fail && (c.starts_with("通过") || c.to_ascii_uppercase().starts_with("PASS"));
     (pass, fail)
 }
 
-/// 测试表计数：按表头中含「结果」的列判定，没有该列时整行计入总数、不计通过与否。
-fn test_tally(lines: &[&str], head: &str) -> (usize, usize, usize) {
+/// 按结果列统计 (通过, 不通过, 非空未识别, 总数)；每行一项，缺结果列不推定通过。
+fn test_tally(lines: &[&str], head: &str) -> (usize, usize, usize, usize) {
     let (_, body) = region(lines, head, stop_h3);
     let col = body.iter().find(|(_, l)| l.trim().starts_with('|')).and_then(|(_, l)| {
         l.trim().trim_matches('|').split('|').position(|c| c.contains("结果"))
     });
     let rows: Vec<_> = table_rows(&body).into_iter().filter(|(_, c)| !c.first().is_some_and(|x| x.starts_with('<'))).collect();
-    let (mut pass, mut fail) = (0, 0);
+    let (mut pass, mut fail, mut unknown) = (0, 0, 0);
     for (_, cells) in &rows {
         if let Some(cell) = col.and_then(|i| cells.get(i)) {
             let (p, f) = verdict(cell);
             pass += p as usize;
             fail += f as usize;
+            unknown += (!cell.trim().is_empty() && !p && !f) as usize;
         }
     }
-    (pass, fail, rows.len())
+    (pass, fail, unknown, rows.len())
 }
 
 /// §3.2 记录标题 `### YYYY-MM-DD [T<N>] …`：返回 (日期, T 编号)。一条记录可写多个 T（如 `[T2][T3]` 或 `[T2,T3]`）。
@@ -369,12 +389,12 @@ pub fn parse(text: &str, header_status: &str) -> Parsed {
     dev.total = tasks.len() - dev.paused - dev.cancelled;
 
     // 测试：§4.1 / §4.2 结果列，§4.3 以「- 」开头的问题行，含「复测：通过」视为闭环。
-    let (auto_pass, auto_fail, auto_total) = test_tally(&lines, "### 4.1");
-    let (manual_pass, manual_fail, manual_total) = test_tally(&lines, "### 4.2");
+    let (auto_pass, auto_fail, auto_unknown, auto_total) = test_tally(&lines, "### 4.1");
+    let (manual_pass, manual_fail, manual_unknown, manual_total) = test_tally(&lines, "### 4.2");
     let issues: Vec<_> = region(&lines, "### 4.3", stop_h3).1.into_iter().filter(|(_, l)| l.trim_start().starts_with("- ")).collect();
     let issues_open = issues.iter().filter(|(_, l)| !(l.contains("复测：通过") || l.contains("复测:通过"))).count();
     let test = TestStage {
-        auto_pass, auto_fail, auto_total, manual_pass, manual_fail, manual_total,
+        auto_pass, auto_fail, auto_unknown, auto_total, manual_pass, manual_fail, manual_unknown, manual_total,
         issues_open, issues_total: issues.len(),
         line: region(&lines, "## 4.", stop_never).0,
     };
@@ -427,6 +447,32 @@ mod tests {
     use super::*;
 
     const MD: &str = "# Feat_261103_1 示例\n\n> 状态：开发中\n\n## 1. 需求\n\n### 1.3 验收标准\n- [x] 能打开\n- [ ] 能保存\n- [ ] <占位>\n\n### 1.4 初步路线\n\n## 2. 原型\n\n### 2.1 设计总纲\n左右两栏。\n\n### 2.2 控件清单\n| 控件对象名 | 类型 | 用途 |\n| --- | --- | --- |\n| btn_ok | QPushButton | 确定 |\n\n### 2.4 UI 变更日志\n<!-- - 示例 -->\n- 2026-11-03 新增按钮\n\n## 3. 开发任务\n\n### 3.1 任务路线图\n<!--\n| 编号 | 任务 | 依赖 | 可并行 | 状态 |\n| --- | --- | --- | --- | --- |\n| T1 | 模板 | - | - | 待开发/进行中/完成/取消 |\n-->\n| 编号 | 任务 | 依赖 | 可并行 | 状态 |\n| --- | --- | --- | --- | --- |\n| T1 | 解析 | - | T2 | 完成（离线验收） |\n| T2 | 界面 | T1 | - | 进行中 |\n| T3 | 真机 | T2 | - | 待用户确认 |\n| T4 | 旧项 | - | - | 取消 |\n| T5 | 旧写法 | - | - | 已完成 |\n\n### 3.2 开发记录\n### 2026-11-01 [T1] 解析\n- 方案：x\n### 2026-11-03 [T2][T1] 界面\n| 子任务编号 | 执行者 | 目标与产物 | 依赖 | 可写范围 | 状态 / 验证与提交证据 |\n| --- | --- | --- | --- | --- | --- |\n| T2.1 | ar-1 | 表格 | - | ui | 进行中 |\n| T2.2 | 主Harness | 联动 | T2.1 | ui | 待开发 |\n| T2.1 | ar-1 | 表格 | - | ui | 完成；12项通过 |\n\n## 4. 测试记录\n\n### 4.1 程序自测（Agent 执行）\n| # | 自测项 | 方式 | 结果 | 备注 |\n| --- | --- | --- | --- | --- |\n| 1 | a | pytest | 通过 | |\n| 2 | b | pytest | 不通过 | |\n\n### 4.2 人工确认清单（用户执行）\n| # | 测试项 | 操作/输入 | 预期 | 结果 | 备注 |\n| --- | --- | --- | --- | --- | --- |\n| 1 | c | d | e |  | |\n\n### 4.3 问题与修复\n- 2026-11-03 a -> b -> 复测：通过\n- 2026-11-03 c -> d -> 复测：未复测\n\n## 5. 发布说明\n";
+
+    /// Rust/JS 共用同一结果表；同时验证自测与人工的判定、未识别统计及空白边界。
+    #[test]
+    fn shared_test_verdicts() {
+        let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../tests/fixtures/test_verdicts.json")).unwrap();
+        for case in cases {
+            let text = case["text"].as_str().unwrap();
+            let expected = case["verdict"].as_str().unwrap();
+            assert_eq!(verdict(text), (expected == "pass", expected == "fail"), "{text}");
+            let doc = format!("# X\n\n## 4. 测试记录\n\n### 4.1 自测\n| # | 自测项 | 结果 |\n| --- | --- | --- |\n| 1 | 检查 | {text} |\n\n### 4.2 人工\n| # | 测试项 | 结果 |\n| --- | --- | --- |\n| 1 | 检查 | {text} |\n");
+            let t = parse(&doc, "测试中").test;
+            let counts = ((expected == "pass") as usize, (expected == "fail") as usize, (expected == "other") as usize, 1);
+            assert_eq!((t.auto_pass, t.auto_fail, t.auto_unknown, t.auto_total), counts, "自测：{text}");
+            assert_eq!((t.manual_pass, t.manual_fail, t.manual_unknown, t.manual_total), counts, "人工：{text}");
+        }
+    }
+
+    /// 按档案表格的12个测试组统计，混合组有失败即不通过，不累加48个子用例。
+    #[test]
+    fn grouped_test_results() {
+        let values = ["17 通过", "2 通过", "3 通过、5 失败", "2 失败", "4 失败", "1 失败", "4 通过、2 失败", "1 通过、4 失败", "1 失败", "2 失败", "通过（有限验证）", "通过"];
+        let rows = values.iter().enumerate().map(|(i, value)| format!("| {} | 检查 | {value} |", i + 1)).collect::<Vec<_>>().join("\n");
+        let doc = format!("# X\n\n## 4. 测试记录\n\n### 4.1 自测\n| # | 自测项 | 结果 |\n| --- | --- | --- |\n{rows}\n");
+        let t = parse(&doc, "测试中").test;
+        assert_eq!((t.auto_pass, t.auto_fail, t.auto_unknown, t.auto_total), (4, 8, 0, 12));
+    }
 
     /// 状态词按开头匹配，说明写在括号或分号后；近义词与空白为未识别。
     #[test]

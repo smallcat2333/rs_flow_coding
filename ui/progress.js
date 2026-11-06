@@ -71,9 +71,11 @@ window.FeatProgress = (() => {
     } else if (k === 'test') {
       const t = p.test, tot = t.auto_total + t.manual_total, pass = t.auto_pass + t.manual_pass;
       label = tot ? `自测 ${t.auto_pass}/${t.auto_total} · 人工 ${t.manual_pass}/${t.manual_total}` : '未建测试清单';
+      if (t.auto_fail + t.manual_fail) label += ` · 不通过 ${t.auto_fail + t.manual_fail}`;
+      if (t.auto_unknown + t.manual_unknown) label += ` · 未识别 ${t.auto_unknown + t.manual_unknown}`;
       if (t.issues_open) label += ` · 问题 ${t.issues_open}`;
       ratio = tot ? pass / tot : 0;
-      warn = t.auto_fail + t.manual_fail > 0 || t.issues_open > 0;
+      warn = t.auto_fail + t.manual_fail > 0 || t.auto_unknown + t.manual_unknown > 0 || t.issues_open > 0;
     } else if (p.flag === 'dropped') { label = `已废弃 ${p.closed_at}`; phase = 'skip'; }
     else if (p.stage === 'close') { label = `已关闭 ${p.closed_at}`; phase = 'past'; }
     else label = p.close.release ? '发布说明已写' : '未关闭';
