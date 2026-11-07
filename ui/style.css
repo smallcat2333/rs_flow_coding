@@ -147,8 +147,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .empty.mini { padding: 4px 8px; text-align: left; font-size: 12px; }
 .feat { padding: 4px 6px; border-radius: 5px; cursor: pointer; }
 .feat:hover { background: var(--hover); }
-/* Agent 归属色：绑定蓝、游离绿、归档灰；文字标识同时表达状态。 */
+/* Agent 归属色用于机器人与状态标记，名称沿用默认文字色。 */
 .agent-entry { padding: 5px 6px; border-radius: 5px; cursor: pointer; }
+.agent-entry .file-name { color: var(--fg); }
 .agent-entry:hover { background: var(--hover); }
 .agent-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .agent-entry.bound { color: var(--accent); }
@@ -303,16 +304,6 @@ body.pane-dragging .splitter { background: var(--accent); }
 .pane-tool svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .pane-tool.on { color: var(--accent); border-color: var(--accent-bd); background: var(--sel); }
 #btn-flow-close, #btn-feat-close { color: color-mix(in srgb, var(--danger) 70%, transparent); }
-/* 布局菜单：沿用搜索框的悬浮样式。 */
-#layout-menu { position: absolute; z-index: 16; top: calc(100% - 2px); left: 10px; width: min(260px, calc(100% - 20px)); box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 6px 18px var(--shadow); }
-.lm-title { font-size: 12px; color: var(--fg2); }
-.lm-modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-.lm-modes button { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 7px 2px; font-size: 11px; white-space: nowrap; }
-.lm-modes button[aria-checked="true"] { border-color: var(--accent); background: var(--sel); color: var(--accent); }
-.lm-pic { display: grid; gap: 2px; width: 34px; height: 24px; }
-.lm-pic i { border: 1.5px solid currentColor; border-radius: 2px; }
-.lm-pic.row { grid-template-columns: 1fr 1fr; }
-.lm-pic.col { grid-template-rows: 1fr 1fr; }
 .pane-bar, #bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg); min-height: 38px; white-space: nowrap; flex-shrink: 0; }
 .pane-bar > span:not(.spacer) { max-width: 100%; }
 #cur-name, #feat-title { flex: 1 1 100px; }

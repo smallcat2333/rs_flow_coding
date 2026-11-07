@@ -7,8 +7,8 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../ui/layout.js', import.meta.url), 'utf8');
 
 /** 为真实 layout.js 提供最小 DOM，返回布局接口、元素与可切换的本机偏好。 */
-function fixture({ force = false, solo = '', mode = 'row' } = {}) {
-  const flags = { force };
+function fixture({ force = false, solo = '', mode = 'row', layoutPref = {} } = {}) {
+  const flags = { force }, persisted = [];
   const nodes = {};
   /** 构造布局使用的元素接口；保留隐藏、网格与按钮状态供行为断言。 */
   function element() {
@@ -30,7 +30,10 @@ function fixture({ force = false, solo = '', mode = 'row' } = {}) {
   const context = {
     window: {}, URLSearchParams, location: { search: solo ? '?solo=' + solo : '' },
     // 配置输入只有本测试所需的布局字段，其余由生产代码的默认值填充。
-    localStorage: { getItem() { return JSON.stringify({ mode }); } },
+    localStorage: {
+      getItem() { return JSON.stringify({ mode, ...layoutPref }); },
+      setItem(_key, value) { persisted.push(JSON.parse(value)); },
+    },
     Settings: { forceSplit() { return flags.force; } },
     document: {
       getElementById(id) { return nodes[id]; },
@@ -38,7 +41,7 @@ function fixture({ force = false, solo = '', mode = 'row' } = {}) {
     },
   };
   vm.runInNewContext(source, context);
-  return { split: context.window.Split, nodes, flags };
+  return { split: context.window.Split, nodes, flags, persisted };
 }
 
 // 初次只开 Feat 时，首页流程图占位不应挤占正文。
@@ -103,6 +106,34 @@ test('两侧空态随真实打开状态切换，关闭后恢复引导', () => {
     assert.equal(nodes[empty].hidden, false);
     assert.equal(nodes[kind + '-pane'].bar.hidden, true);
   }
+});
+
+test('设置切换排布方向，保留各方向比例和栏顺序', () => {
+  const pref = { order: ['feat', 'flow'], w: { row2: [2, 1], col2: [1, 3] } };
+  const { split, nodes, persisted } = fixture({ layoutPref: pref });
+  split.show('flow'); split.show('feat');
+  const flow = nodes['flow-pane'], feat = nodes['feat-pane'];
+  assert.equal(split.setMode('col'), true);
+  assert.equal(split.mode(), 'col');
+  assert.equal(nodes.panes.style.gridTemplateRows, 'minmax(0, 1fr) 5px minmax(0, 3fr)');
+  assert.equal(nodes['split-a'].dataset.axis, 'y');
+  assert.deepEqual(persisted.at(-1).w, pref.w);
+  assert.deepEqual(persisted.at(-1).order, pref.order);
+  split.setMode('row');
+  assert.equal(nodes.panes.style.gridTemplateColumns, 'minmax(0, 2fr) 5px minmax(0, 1fr)');
+  assert.equal(nodes['flow-pane'], flow);
+  assert.equal(nodes['feat-pane'], feat, '切换方向不移动或重建内容节点');
+});
+
+test('新设置读取旧 fc-layout 偏好，保存后重载仍恢复方向', () => {
+  const first = fixture({ mode: 'col' });
+  assert.equal(first.split.mode(), 'col');
+  first.split.setMode('row');
+  const restored = fixture({ layoutPref: first.persisted.at(-1) });
+  assert.equal(restored.split.mode(), 'row');
+  assert.equal(restored.split.setMode('unknown'), false);
+  assert.equal(restored.persisted.length, 0);
+  assert.equal(restored.split.mode(), 'row');
 });
 
 // 上下布局同样使用两条轨道，关闭强制拆分后归为一栏。

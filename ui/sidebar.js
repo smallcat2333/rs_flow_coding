@@ -385,7 +385,7 @@ window.Sidebar = (() => {
     try { tabs = JSON.parse(value || '{}'); } catch { tabs = null; }
     currentAgent = typeof tabs?.active === 'string' && tabs.active !== 'OV' && Array.isArray(tabs.tabs) && tabs.tabs.includes(tabs.active) ? tabs.active : '';
     $('tree').querySelectorAll('.agent-entry').forEach((row) => {
-      const selected = row.dataset.agent === currentAgent && !agents.get(currentAgent)?.archived_at;
+      const selected = row.dataset.agent === currentAgent && !agents.get(currentAgent)?.archived_at && !agents.get(currentAgent)?.stored_at;
       row.classList.toggle('active', selected);
       row.setAttribute('aria-current', String(selected));
     });
@@ -393,12 +393,12 @@ window.Sidebar = (() => {
 
   /** Agent 行以归属色表示绑定、游离、归档，以紫色边框表示当前会话页签。 */
   function agentRow(s) {
-    const archived = !!s.archived_at, bound = !!(s.feat || s.links.length);
-    const state = archived ? '已归档' : bound ? '绑定' : '游离';
+    const archived = !!s.archived_at, stored = !archived && !!s.stored_at, bound = !!(s.feat || s.links.length);
+    const state = archived ? '已归档' : stored ? '已收纳' : bound ? '绑定' : '游离';
     const source = s.feat || s.links[0]?.flow || s.cwd;
     const detail = s.feat ? s.feat_code : s.links.length ? source.split(/[\\/]/).pop() : s.app;
-    const hint = archived ? `归档于 ${new Date(s.archived_at).toLocaleDateString()}，180 天后清理；右键可取消归档` : '点击打开会话；右键归档或删除';
-    const selected = s.id === currentAgent && !archived;
+    const hint = archived ? `归档于 ${new Date(s.archived_at).toLocaleDateString()}，按设置的保留期限清理；右键可取消归档` : stored ? '已收纳，不自动清理；右键启用后可继续使用' : '点击打开会话；右键收纳或归档';
+    const selected = s.id === currentAgent && !archived && !stored;
     return `<div class="agent-entry ${archived ? 'archived-entry' : bound ? 'bound' : 'free'}${selected ? ' active' : ''}" data-agent="${esc(s.id)}" role="button" tabindex="0" aria-current="${selected}" title="${esc(source + '\n' + hint)}"><div class="agent-line">${svg('sec-icon', ICON_AGENT)}<span class="file-name">${esc(s.title)}</span><span class="agent-kind">${state}</span></div><div class="agent-detail">${esc(detail)}</div></div>`;
   }
 
@@ -407,13 +407,18 @@ window.Sidebar = (() => {
     const all = [...agents.values()].filter((s) => agentApp(s) === a);
     if (flat && !all.length) return '';
     const hit = (s) => !search || `${s.title} ${s.app} ${s.feat} ${s.feat_code} ${s.links.map((l) => l.flow).join(' ')}`.toLowerCase().includes(search);
-    const active = all.filter((s) => !s.archived_at && hit(s)).sort((x, y) => y.created - x.created);
+    const active = all.filter((s) => !s.archived_at && !s.stored_at && hit(s)).sort((x, y) => y.created - x.created);
+    const stored = all.filter((s) => !s.archived_at && s.stored_at && hit(s)).sort((x, y) => y.stored_at - x.stored_at);
     const archived = all.filter((s) => s.archived_at && hit(s) && (!search || prefs.include_archived)).sort((x, y) => y.archived_at - x.archived_at);
-    if (search && !active.length && !archived.length) return '';
-    const key = a.flow_dir + '#agent', archiveKey = key + '#archive';
-    const collapsed = !search && prefs.collapsed.includes(key), expanded = !!search || prefs.expanded_archives.includes(archiveKey);
-    const history = archived.length ? `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(archiveKey)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} 已归档</span><span>${archived.length}</span></button>${expanded ? `<div class="archive-body">${page(archived, archiveKey, agentRow)}</div>` : ''}</div>` : '';
-    return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}"><div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}">${svg('sec-icon', ICON_AGENT)}<span class="sec-title">Agent${flat ? '：' + esc(appName(a)) : ''}</span><span class="sec-count">${all.filter((s) => !s.archived_at).length}</span><button class="agent-new" data-agent-new="${esc(a.flow_dir)}" title="新建 Agent">＋</button></div><div class="sec-body">${page(active, key, agentRow) || '<div class="empty mini">暂无 Agent</div>'}${history}</div></div>`;
+    if (search && !active.length && !stored.length && !archived.length) return '';
+    const key = a.flow_dir + '#agent';
+    const collapsed = !search && prefs.collapsed.includes(key);
+    const group = (rows, suffix, label) => {
+      const groupKey = key + suffix, expanded = !!search || prefs.expanded_archives.includes(groupKey);
+      return rows.length ? `<div class="archive-section"><button class="archive-toggle" data-archive="${esc(groupKey)}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} ${label}</span><span>${rows.length}</span></button>${expanded ? `<div class="archive-body">${page(rows, groupKey, agentRow)}</div>` : ''}</div>` : '';
+    };
+    const history = group(stored, '#stored', '收纳') + group(archived, '#archive', '已归档');
+    return `<div class="sec ${collapsed ? 'collapsed' : ''}" data-key="${esc(key)}"><div class="sec-head" role="button" tabindex="0" aria-expanded="${!collapsed}">${svg('sec-icon', ICON_AGENT)}<span class="sec-title">Agent${flat ? '：' + esc(appName(a)) : ''}</span><span class="sec-count">${all.filter((s) => !s.archived_at && !s.stored_at).length}</span><button class="agent-new" data-agent-new="${esc(a.flow_dir)}" title="新建 Agent">＋</button></div><div class="sec-body">${page(active, key, agentRow) || '<div class="empty mini">暂无 Agent</div>'}${history}</div></div>`;
   }
 
   /** APP 右键和 Agent 组共用新建入口；只预填目录与 APP，仍展示工作流单选表单。 */
@@ -429,20 +434,20 @@ window.Sidebar = (() => {
     requestAnimationFrame(() => { agentRenderQueued = false; render(apps, currentFlow, currentFeat); });
   }
 
-  /** 在 Agent 行右键提供归档/恢复和直接删除；删除复用现有后端范围，不再二次确认。 */
+  /** 在 Agent 行右键提供收纳/启用和归档/恢复。 */
   function openAgentMenu(trigger, x, y) {
     const s = agents.get(trigger.dataset.agent);
     closeMenu();
     menu = document.createElement('div');
     menu.className = 'entry-actions'; menu.setAttribute('role', 'menu'); menu.trigger = trigger;
-    const actions = [[s.archived_at ? 'restore' : 'archive', s.archived_at ? '取消归档' : '归档'], ['delete', '删除']];
+    const actions = s.archived_at ? [['restore', '取消归档']] : [[s.stored_at ? 'enable' : 'store', s.stored_at ? '启用' : '收纳'], ['archive', '归档']];
     menu.innerHTML = actions.map(([action, label]) => `<button role="menuitem" data-action="${action}">${MenuIcons.forLabel(label)}<span>${label}</span></button>`).join('');
     menu.onclick = async (e) => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (!action) return;
       closeMenu();
       try {
-        if (action === 'delete') { await invoke('agent_remove', { id: s.id }); agents.delete(s.id); }
+        if (action === 'store' || action === 'enable') agents.set(s.id, await invoke('agent_store', { id: s.id, stored: action === 'store' }));
         else agents.set(s.id, await invoke('agent_archive', { id: s.id, archived: action === 'archive' }));
         render(apps, currentFlow, currentFeat);
       } catch (error) { sideMsg('Agent 操作失败：' + error); }
@@ -931,7 +936,7 @@ window.Sidebar = (() => {
       window.addEventListener('storage', (event) => {
         if (event.key === 'fc-agent-tabs' || event.key === null) syncAgentSelection(localStorage.getItem('fc-agent-tabs'));
       });
-      const signature = (s) => s && JSON.stringify([s.title, s.app, s.cwd, s.feat, s.feat_code, s.links, s.archived_at]);
+      const signature = (s) => s && JSON.stringify([s.title, s.app, s.cwd, s.feat, s.feat_code, s.links, s.archived_at, s.stored_at]);
       const removed = new Set();
       let loadingAgents = true;
       listen('agent-update', ({ payload: s }) => {
@@ -992,6 +997,7 @@ window.Sidebar = (() => {
         e.stopImmediatePropagation();
         const s = agents.get(agent.dataset.agent);
         if (s.archived_at) sideMsg('该 Agent 已归档，请右键取消归档后打开。');
+        else if (s.stored_at) sideMsg('该 Agent 已收纳，请右键启用后打开。');
         else invoke('open_agent_window', { focus: s.id }).catch((error) => sideMsg(String(error)));
       }
       else if (more) { e.stopImmediatePropagation(); const size = PAGE_SIZE[prefs.layout]; limits.set(more.dataset.more, (limits.get(more.dataset.more) || size) + size); render(apps, currentFlow, currentFeat); }

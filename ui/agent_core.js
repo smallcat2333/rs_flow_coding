@@ -1,5 +1,5 @@
 // Agent 窗口（一）：状态、工具函数、左上动态活动、左下 CLI 会话列表、新建会话。
-// 每个 Claude Code CLI 会话显示状态与本轮摘要两行，可关联 Feat 与流程图节点；数据来自后端 agent.rs：
+// 每个 Claude Code CLI 会话默认单行，设置可开启本轮摘要第二行，可关联 Feat 与流程图节点；数据来自后端 agent.rs：
 // agent_list 初始化，agent-update / agent-act / agent-removed 增量（事件处理在 agent.js）。
 // 与 agent.js 共用全局作用域（普通脚本，按 agent.html 中的顺序加载）。
 'use strict';
@@ -15,7 +15,7 @@ const base = (p) => String(p || '').split(/[\\/]/).pop();
 const key = (p) => String(p || '').replace(/\//g, '\\').toLowerCase();
 const flowName = (p) => base(p).replace(/\.drawio$/i, '');
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const WINDOW = 5 * 60000, LANE_WINDOW = 10 * 60000, STALL = 60000;
+const WINDOW = 5 * 60000, LANE_WINDOW = 30 * 60000, STALL = 60000;
 const TAB_KEY = 'fc-agent-tabs', FOLLOW_KEY = 'fc-agent-follow';
 
 /** 分:秒（超过 1 小时为 时:分:秒）。 */
@@ -37,17 +37,18 @@ const BOT = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6v2" stro
 const bot = () => `<span class="bot">${BOT}</span>`;
 const ICON = {
   stop: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg>',
+  store: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v6.5M5.2 5.8 8 8.6l2.8-2.8M2 9.5 3.3 13h9.4L14 9.5"/></svg>',
   archive: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 5.5h11v8h-11zM1.5 2.5h13v3h-13zM6 8h4" stroke-linejoin="round"/></svg>',
-  trash: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 4h11M6 2h4l1 2M4 4l.7 10h6.6L12 4M6.5 6.5v5M9.5 6.5v5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  graph: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="3" cy="4" r="2"/><circle cx="3" cy="12" r="2"/><circle cx="13" cy="8" r="2"/><path d="M5 4.6 11 7.4M5 11.4 11 8.6"/></svg>',
+  graph: '<svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="6" y="1" width="6" height="5" rx="1"/><path d="M9 6v4M3 10h12M3 10v3M15 10v3"/><rect x="1" y="13" width="4" height="4" rx="1"/><rect x="13" y="13" width="4" height="4" rx="1"/></svg>',
   feat: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4zM9 1.5v3h3M6 7h4M6 10h4" stroke-linejoin="round"/></svg>',
+  tabOpen: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"/></svg>',
   x: '<svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.4"><path d="M2 2l6 6M8 2 2 8"/></svg>',
   plus: '<svg width="13" height="13" viewBox="0 0 14 14" stroke="currentColor" stroke-width="1.5"><path d="M7 2v10M2 7h10"/></svg>',
   pin: '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M9.8 1.2 14.8 6.2 13.7 7.3 12.6 6.9 9.9 9.6 10.4 12.9 9.3 14 6.1 10.8 2.3 14.6 1.4 13.7 5.2 9.9 2 6.7 3.1 5.6 6.4 6.1 9.1 3.4 8.7 2.3Z"/></svg>',
 };
 const KIND = { prompt: '提问', read: '读取', edit: '编辑', cmd: '命令', commit: '提交', worker: 'worker', tool: '工具', msg: '协作', note: '通知', compact: '压缩' };
 const TICK = { prompt: 'prompt', read: 'read', edit: 'edit', cmd: 'cmd', commit: 'commit', msg: 'msg', worker: 'cmd', tool: 'cmd', note: 'cmd', compact: 'cmd' };
-const ORDER = { wait: 0, err: 1, stall: 2, run: 3, tool: 3, boot: 3, idle: 4, off: 5 };
+const ORDER = { wait: 0, apierr: 1, err: 1, stall: 2, run: 3, tool: 3, boot: 3, interrupted: 4, idle: 4, off: 5 };
 
 // ---------------- 状态 ----------------
 const S = new Map();      // 会话 id → 视图（acts 为最近活动）
@@ -71,10 +72,12 @@ function vs(s) {
 }
 const lastT = (s) => (s.acts.length ? s.acts[s.acts.length - 1].t : (s.since || s.created));
 const byUrgency = (a, b) => ORDER[vs(a)] - ORDER[vs(b)] || lastT(b) - lastT(a);
-/** 活跃会话供列表、总览和画布联动使用；归档记录仍保留在 S 中，等待恢复或删除事件。 */
-const list = () => [...S.values()].filter((s) => !s.archived_at);
+/** 启用会话参与概览、动态和画布联动；收纳与归档只保留在列表分组中。 */
+const list = () => [...S.values()].filter((s) => !s.archived_at && !s.stored_at);
+const expandedGroups = new Set();
+const sessionState = (s) => s.archived_at ? '已归档' : s.stored_at ? '已收纳' : stText(s);
 function stText(s) {
-  return { wait: '等你确认', err: '异常退出', stall: '可能停滞', tool: '执行中', run: '运行中', boot: '启动中', idle: '空闲', off: '待命' }[vs(s)];
+  return { wait: '等你确认', apierr: 'API 错误', err: '异常退出', stall: '可能停滞', tool: '执行中', run: '运行中', boot: '启动中', interrupted: '已中断', idle: '空闲', off: '待命' }[vs(s)];
 }
 function timeText(s) {
   const n = now(), v = vs(s);
@@ -136,7 +139,8 @@ function saveTabs() { localStorage.setItem(TAB_KEY, JSON.stringify({ tabs: openT
 
 // ---------------- 左上：概况、泳道、最新动态 ----------------
 function renderToday() {
-  const ss = list(), files = new Set(), run = ss.filter((s) => s.running).length;
+  const ss = list(), files = new Set(), errors = ss.filter((s) => vs(s) === 'apierr').length;
+  const online = ss.filter((s) => s.running).length;
   let commits = 0, tools = 0;
   for (const s of ss) for (const a of s.acts) {
     if (a.kind === 'edit' && a.path) files.add(key(a.path));
@@ -144,26 +148,27 @@ function renderToday() {
     if (a.kind !== 'prompt' && a.kind !== 'msg') tools++;
   }
   const wr = ss.reduce((n, s) => n + (s.workers || []).filter((w) => w.running).length, 0);
-  $('#today').textContent = `${run} 个会话运行中，本次改动 ${files.size} 个文件，提交 ${commits} 次，工具调用 ${tools} 次${wr ? `，${wr} 个 worker 在跑` : ''}`;
+  $('#today').textContent = `${online} 个会话在线${errors ? `，${errors} 个 API 错误` : ''}，本次改动 ${files.size} 个文件，提交 ${commits} 次，工具调用 ${tools} 次${wr ? `，${wr} 个 worker 在跑` : ''}`;
   $('#today').title = $('#today').textContent;
 }
 function renderMix() {
   const ss = list().filter((s) => s.running || vs(s) === 'err'), c = {};
   ss.forEach((s) => { const v = vs(s) === 'tool' || vs(s) === 'boot' ? 'run' : vs(s); c[v] = (c[v] || 0) + 1; });
-  const name = { wait: '等你', err: '异常', stall: '停滞', run: '运行', idle: '空闲' };
+  const name = { wait: '等你', apierr: 'API 错误', err: '异常', stall: '停滞', run: '运行', interrupted: '已中断', idle: '空闲' };
   $('#mix').innerHTML = `<div class="units">${ss.sort(byUrgency).map((s) => `<i class="unit v-${vs(s)}" data-open="${s.id}" title="${esc(s.title)}：${stText(s)}"></i>`).join('')}</div>
-    <div class="counts">${ss.length ? ['wait', 'err', 'stall', 'run', 'idle'].filter((k) => c[k]).map((k) => `<span class="c-${k}"><b>${c[k]}</b>${name[k]}</span>`).join('') : '<span>没有运行中的会话</span>'}</div>`;
+    <div class="counts">${ss.length ? ['wait', 'apierr', 'err', 'stall', 'run', 'interrupted', 'idle'].filter((k) => c[k]).map((k) => `<span class="c-${k}"><b>${c[k]}</b>${name[k]}</span>`).join('') : '<span>没有运行中的会话</span>'}</div>`;
 }
 let laneGeom = { w: 0, mpp: 1 }, laneEls = [];
 const T0 = now();
 const lx = (t) => (t - T0) / laneGeom.mpp;
-const tickHtml = (a, pop) => `<i class="tk ${TICK[a.kind] || 'cmd'}${pop ? ' pop' : ''}" style="left:${lx(a.t).toFixed(1)}px"></i>`;
+// 对齐到相邻的 2px 色条格，避免密集活动之间出现零碎留缝。
+const tickHtml = (a, pop) => `<i class="tk ${TICK[a.kind] || 'cmd'}${pop ? ' pop' : ''}" style="left:${Math.floor(lx(a.t) / 2) * 2}px"></i>`;
 function laneSt(o) {
   if (o.w) return o.w.running ? clock(now() - o.w.t0) : '完成';
   const v = vs(o.s), tk = `<span data-tk="${o.s.id}">${esc(timeText(o.s))}</span>`;
-  return { wait: `等你 ${tk}`, stall: `停滞 ${tk}`, tool: tk, run: tk, err: '异常退出', idle: '空闲', boot: '启动中', off: '已结束' }[v];
+  return { wait: `等你 ${tk}`, stall: `停滞 ${tk}`, tool: tk, run: tk, apierr: 'API 错误', err: '异常退出', interrupted: '已中断', idle: '空闲', boot: '启动中', off: '已结束' }[v];
 }
-/** 泳道：运行中 / 异常 / 近 10 分钟有活动的会话各一条，worker 为缩进子泳道；刻度随时间向左平移。 */
+/** 最近 30 分钟每个会话一条轨道，worker 缩进；名称、轨道和状态使用同一列宽。 */
 function renderLanes() {
   const box = $('#lanes'), n = now(), rows = [];
   list().filter((s) => (s.running || vs(s) === 'err' || n - lastT(s) < LANE_WINDOW) && (s.acts.length || s.running)).sort(byUrgency).forEach((s) => {
@@ -173,15 +178,14 @@ function renderLanes() {
   box.innerHTML = rows.length ? rows.map((o) => `<div class="lane ${o.w ? 'sub ' + (o.w.running ? 'v-run' : 'done') : 'v-' + vs(o.s)}" data-o="${esc(o.id)}">
       <span class="lane-name" title="${esc(o.w ? o.w.desc : o.s.title)}">${o.w ? '↳ ' + esc(o.w.desc) : esc(o.s.title)}</span>
       <div class="track"><div class="layer"></div><i class="head"></i></div>
-      <span class="lane-st">${laneSt(o)}</span></div>`).join('') : '<p class="none">近 10 分钟没有活动</p>';
-  $('.axis').style.setProperty('--lane-gutter', `${box.offsetWidth - box.clientWidth}px`);
+      <span class="lane-st">${laneSt(o)}</span></div>`).join('') : '<p class="none">近 30 分钟没有活动</p>';
   const tr = box.querySelector('.track');
   laneGeom.w = tr ? tr.clientWidth : 0;
   laneGeom.mpp = LANE_WINDOW / Math.max(1, laneGeom.w);
-  const lo = n - LANE_WINDOW - 4000;
+  const lo = n - LANE_WINDOW;
   laneEls = rows.map((o) => {
     const el = box.querySelector(`.lane[data-o="${CSS.escape(o.id)}"]`), layer = el.querySelector('.layer');
-    const acts = o.s.acts.filter((a) => a.t > lo && (o.w ? a.worker === o.w.id : !a.worker));
+    const acts = o.s.acts.filter((a) => a.t >= lo && a.t <= n && (o.w ? a.worker === o.w.id : !a.worker));
     const v = o.w ? '' : vs(o.s);
     const bt = v === 'wait' ? o.s.since : v === 'stall' ? o.s.beat : v === 'tool' ? o.s.tool_since : 0;
     layer.innerHTML = acts.map((a) => tickHtml(a)).join('') + (bt ? `<i class="band ${v}" style="left:${lx(bt).toFixed(1)}px"></i>` : '');
@@ -189,24 +193,23 @@ function renderLanes() {
   });
   paintLanes();
 }
+/** 增量插入矩形活动条，保留其余刻度与滚动位置。 */
 function addTick(s, a) {
-  const L = laneEls.find((l) => l.o.s === s && (a.worker ? l.o.w?.id === a.worker : !l.o.w));
-  if (L) L.layer.insertAdjacentHTML('beforeend', tickHtml(a, true)); else renderLanes();
+  const lane = laneEls.find((l) => l.o.s === s && (a.worker ? l.o.w?.id === a.worker : !l.o.w));
+  if (!lane) { renderLanes(); return; }
+  lane.layer.insertAdjacentHTML('beforeend', tickHtml(a, true));
 }
+/** 所有轨道共用真实时间比例，矩形活动条随时间向左平移。 */
 function paintLanes() {
   if (!laneGeom.w) return;
   const n = now(), tx = laneGeom.w - (n - T0) / laneGeom.mpp;
-  for (const L of laneEls) {
-    L.layer.style.transform = `translateX(${tx.toFixed(1)}px)`;
-    if (L.band) L.band.style.width = Math.max(0, (n - L.bt) / laneGeom.mpp).toFixed(1) + 'px';
+  for (const lane of laneEls) {
+    lane.layer.style.transform = `translateX(${tx.toFixed(1)}px)`;
+    if (lane.band) lane.band.style.width = Math.max(0, (n - lane.bt) / laneGeom.mpp).toFixed(1) + 'px';
   }
 }
+/** 按动画帧平移刻度，不重新生成轨道 DOM。 */
 function frame() { paintLanes(); requestAnimationFrame(frame); }
-function renderTicker() {
-  let best = null;
-  for (const s of list()) { const a = s.acts[s.acts.length - 1]; if (a && (!best || a.t > best.a.t)) best = { s, a }; }
-  $('#ticker').innerHTML = best ? `最新 <b>${esc(best.s.title)}</b> ${KIND[best.a.kind] || ''} ${esc(best.a.text)}<span class="ago" data-ago="${best.a.t}">${ago(now() - best.a.t)}</span>` : '<span class="muted">会话有新动作时显示在这里</span>';
-}
 
 // ---------------- 左下：CLI 会话列表 ----------------
 function hlText(t, q) {
@@ -238,12 +241,12 @@ function rowUpdated(s) {
   return Math.max(0, ...[s.created, s.since, s.beat, s.done, s.acts.at(-1)?.t].filter(Number.isFinite));
 }
 function rowHtml(s, q, hits) {
-  const v = vs(s), src = sourceOf(s), refs = refsOf(s);
+  const v = s.archived_at || s.stored_at ? 'off' : vs(s), src = sourceOf(s), refs = refsOf(s);
   const summary = rowSummary(s), updated = rowUpdated(s), date = new Date(updated);
   const workers = (s.workers || []).filter((w) => w.running);
   const co = recentCollab(s), cf = conflicts().find((c) => c.ss.includes(s));
   const details = [s.title, `${src.label} · ${stText(s)} ${timeText(s)}`.trim(), s.app, src.path,
-    ...refs.map(refLabel), s.wait_text,
+    ...refs.map(refLabel), s.wait_text, s.api_error,
     workers.length ? `执行中的子代理：${workers.map((w) => w.desc).join('、')}` : '',
     co?.text, s.queued ? `${s.queued} 条协作消息排队中` : '',
     cf ? `与「${cf.ss.find((x) => x !== s).title}」同改 ${base(cf.path)}` : '',
@@ -253,23 +256,32 @@ function rowHtml(s, q, hits) {
     ? `<button class="source-icon" data-feat="${s.id}" aria-label="打开 Feat：${esc(s.title)}" title="${esc(s.feat_code || 'Feat')}：${esc(src.path)}">${ICON.feat}</button>`
     : src.kind === 'flow'
       ? `<button class="source-icon" data-ref="${esc(src.path)}" data-node="" aria-label="打开流程图：${esc(s.title)}" title="流程图：${esc(src.path)}">${ICON.graph}</button>` : '';
-  return `<li class="row v-${v}${src.locked ? ' is-bound' : ''}${mainMatch(s) ? ' is-main' : ''}${active === s.id ? ' is-open' : ''}${s.id === enterId ? ' enter' : ''}" data-s="${s.id}" data-app="${esc(s.app)}" tabindex="0" aria-current="${active === s.id}" aria-label="${esc(s.title + '，' + src.label + '，' + stText(s))}" title="${esc(details)}">
+  return `<li class="row v-${v}${src.locked ? ' is-bound' : ''}${mainMatch(s) ? ' is-main' : ''}${active === s.id ? ' is-open' : ''}${s.id === enterId ? ' enter' : ''}" data-s="${s.id}" data-app="${esc(s.app)}" tabindex="0" aria-current="${active === s.id}" aria-label="${esc(s.title + '，' + src.label + '，' + sessionState(s))}" title="${esc(details)}">
     ${bot()}<div class="row-main">${source}<span class="nm" title="${esc(s.title)}">${hlText(s.title, q)}</span>
       <button class="pin${s.pinned ? ' on' : ''}" data-pin="${s.id}" title="${s.pinned ? '取消置顶' : '置顶'}" aria-label="${s.pinned ? '取消置顶' : '置顶'} ${esc(s.title)}" aria-pressed="${s.pinned}">${ICON.pin}</button></div>
     <time class="row-time"${updated ? ` datetime="${date.toISOString()}"` : ''} title="${updated ? esc('更新于 ' + date.toLocaleString()) : '暂无更新时间'}">${updated ? hms(updated).slice(0, 5) : '--:--'}</time>
-    <span class="row-status">${stText(s)}</span>
+    <span class="row-status">${sessionState(s)}</span>
     <div class="row-summary${summary.full ? '' : ' empty'}" title="${esc(summary.full || summary.text)}">${hlText(summary.text, q)}</div>
+    <div class="row-actions">${s.archived_at ? `<button data-session-action="restore" data-id="${s.id}">取消归档</button>` : `<button data-session-action="${s.stored_at ? 'enable' : 'store'}" data-id="${s.id}">${s.stored_at ? '启用' : '收纳'}</button><button data-session-action="archive" data-id="${s.id}">归档</button>`}</div>
   </li>`;
 }
 /** 列表：置顶区在上（按置顶先后），其余按紧急程度排序；排序变化用 FLIP 平滑移动。 */
 function renderRows() {
   const el = $('#rows'), q = query;
-  const items = list().map((s) => ({ s, m: matchInfo(s, q) })).filter((x) => x.m.ok);
-  const pinned = items.filter((x) => x.s.pinned).sort((a, b) => a.s.pin_at - b.s.pin_at);
-  const rest = items.filter((x) => !x.s.pinned).sort((a, b) => byUrgency(a.s, b.s));
+  const items = [...S.values()].map((s) => ({ s, m: matchInfo(s, q) })).filter((x) => x.m.ok);
+  const enabled = items.filter((x) => !x.s.archived_at && !x.s.stored_at);
+  const pinned = enabled.filter((x) => x.s.pinned).sort((a, b) => a.s.pin_at - b.s.pin_at);
+  const rest = enabled.filter((x) => !x.s.pinned).sort((a, b) => byUrgency(a.s, b.s));
+  const group = (name, label, rows) => {
+    if (!rows.length) return '';
+    const expanded = !!q || expandedGroups.has(name);
+    return `<li class="session-group"><button class="session-group-toggle" data-session-group="${name}" aria-expanded="${expanded}"><span>${expanded ? '▾' : '▸'} ${label}</span><span>${rows.length}</span></button>${expanded ? `<ul>${rows.map((x) => rowHtml(x.s, q, x.m.hits)).join('')}</ul>` : ''}</li>`;
+  };
+  const stored = items.filter((x) => !x.s.archived_at && x.s.stored_at).sort((a, b) => b.s.stored_at - a.s.stored_at);
+  const archived = items.filter((x) => x.s.archived_at).sort((a, b) => b.s.archived_at - a.s.archived_at);
   const before = new Map($$('.row', el).map((r) => [r.dataset.s, r.getBoundingClientRect().top]));
   el.innerHTML = items.length
-    ? [...pinned, ...rest].map((x) => rowHtml(x.s, q, x.m.hits)).join('')
+    ? [...pinned, ...rest].map((x) => rowHtml(x.s, q, x.m.hits)).join('') + group('stored', '收纳', stored) + group('archived', '已归档', archived)
     : S.size ? `<li class="empty-row">没有匹配“${esc(q)}”的会话</li>`
       : '<li class="empty-row">从 Feat 或流程图点击机器人，直接创建同名主 Agent。<br>也可以点「新建会话」开始独立会话。</li>';
   enterId = '';
@@ -300,8 +312,7 @@ async function openNewBox(pre = {}) {
   $('#nbName').value = '';
   $('#nbName').readOnly = false;
   $('#nbName').dataset.draft = '';
-  $('#nbPin').checked = false;
-  $$('input[name="nbWorkflow"]').forEach((input) => { input.checked = false; });
+  $$('input[name="nbWorkflow"]').forEach((input) => { input.checked = input.value === ''; });
   $('#nbLink').value = '';
   fillApps(pre.root ?? (apps[0]?.root || ''), pre.flowDir);
   renderNbChips();
@@ -310,7 +321,7 @@ async function openNewBox(pre = {}) {
   $('#newwrap').classList.add('open');
   $('#newBtn').classList.add('on');
   $('#newBtn').setAttribute('aria-expanded', 'true');
-  setTimeout(() => $('#nbName').focus(), 60);
+  setTimeout(() => { if ($('#newwrap').classList.contains('open')) $('#nbName').focus({ preventScroll: true }); }, 60);
 }
 function closeNewBox() {
   $('#newwrap').inert = true;
@@ -324,13 +335,12 @@ function renderNbChips() {
   if (nb.feat) chips.push(`<span class="chip"><span>${esc(nb.feat.id + ' ' + nb.feat.title)}</span><button data-rm="feat" aria-label="移除">×</button></span>`);
   nb.links.forEach((l, i) => chips.push(`<span class="chip"><span>${esc(refLabel(l))}</span><button data-rm="${i}" aria-label="移除">×</button></span>`));
   $('#nbChips').innerHTML = chips.join('');
-  const name = $('#nbName'), hint = $('#nbNameHint');
+  const name = $('#nbName');
   const locked = !!(nb.feat || nb.links.length);
   if (locked && !name.readOnly) name.dataset.draft = name.value;
   if (locked) name.value = nb.feat?.title || flowName(nb.links[0].flow);
   else if (name.readOnly) name.value = name.dataset.draft || '';
   name.readOnly = locked;
-  hint.textContent = locked ? '主 Agent 名称跟随来源，来源改名后自动同步。' : '关联 Feat 或流程图后，名称自动跟随来源。';
 }
 /** 关联候选：未归档的 Feat 与流程图，root 所属 APP 排前面，最多 12 条。 */
 function linkCandidates(q, root) {
@@ -381,7 +391,7 @@ async function createFromSource(pre = {}) {
     const a = appOfPath(source) || apps.find((x) => x.root === pre.root);
     const root = pre.root || a?.root;
     if (!root) { toast('无法确定来源的 APP 目录，请在新建会话中选择目录。'); return openNewBox(pre); }
-    const existing = list().find((s) => sourceOf(s).kind === (pre.feat ? 'feat' : 'flow') && key(sourceOf(s).path) === key(source));
+    const existing = [...S.values()].find((s) => !s.archived_at && sourceOf(s).kind === (pre.feat ? 'feat' : 'flow') && key(sourceOf(s).path) === key(source));
     if (existing) return openFocusedSession(existing.id);
     return submitSession({ root, feat: pre.feat, links: pre.links || [], title: '', pinned: false, direct: true });
   })();
@@ -401,7 +411,7 @@ async function createSession() {
   const button = $('#newbox [data-nb="ok"]');
   button.disabled = true;
   try {
-    await submitSession({ root, appName: $('#nbApp').selectedOptions[0].dataset.app, feat: nb.feat, links: [...nb.links], title: $('#nbName').value.trim(), pinned: $('#nbPin').checked, workflow: $('input[name="nbWorkflow"]:checked')?.value || null });
+    await submitSession({ root, appName: $('#nbApp').selectedOptions[0].dataset.app, feat: nb.feat, links: [...nb.links], title: $('#nbName').value.trim(), pinned: false, workflow: $('input[name="nbWorkflow"]:checked').value || null });
   } finally { creatingManual = false; button.disabled = false; }
 }
 /** 创建并打开会话；可选 workflow 仅传给本次启动，不随来源入口或后续续接重放。 */

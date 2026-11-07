@@ -35,19 +35,11 @@
       <span class="side-tools-divider" aria-hidden="true"></span>
       <nav aria-label="工具入口">
         <button id="btn-search" class="icon-button" title="搜索名称或 Feat 编号" aria-label="搜索" aria-controls="tree-filter" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
-        <button id="btn-layout" class="icon-button" title="排布方式" aria-label="排布方式" aria-haspopup="true" aria-controls="layout-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M10.5 4.5v15M10.5 12h10"/></svg></button>
         <button id="btn-agent" class="icon-button" title="Agent 窗口" aria-label="Agent 窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M10.5 4h3M9.5 12.5v1.5M14.5 12.5v1.5M3 12v3M21 12v3"/></svg></button>
         <button id="btn-guide" class="icon-button" title="使用说明" aria-label="使用说明" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.5C10.5 5.3 8.3 4.5 5 4.5H3v14h2c3.3 0 5.5.8 7 2 1.5-1.2 3.7-2 7-2h2v-14h-2c-3.3 0-5.5.8-7 2zM12 6.5v14"/></svg></button>
         <button id="btn-settings" class="icon-button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.6 2.2-2 .9-2-.6-2 3.5 1.6 1.6-.2 2.3-1.4 1.6 2 3.5 2.2-.6 1.9 1 .6 2.1h4l.6-2.2 2-.9 2 .6 2-3.5-1.6-1.6.2-2.3 1.4-1.6-2-3.5-2.2.6-1.9-1L13.5 3z"/><circle cx="11.5" cy="12" r="3"/></svg></button>
         <button id="btn-stats-mode" class="icon-button" title="当前：Chart 节点统计；点击切换为 Feat" aria-label="切换为 Feat 统计" aria-pressed="false" aria-controls="totals"><svg id="stats-mode-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 15h14M4 12V8M9 12V3M14 12V6"/></svg></button>
       </nav>
-      <div id="layout-menu" role="group" aria-label="布局" hidden>
-        <div class="lm-title">排布方式</div>
-        <div class="lm-modes">
-          <button role="menuitemradio" data-layout-mode="row" aria-checked="true" title="各栏左右并排"><span class="lm-pic row"><i></i><i></i></span>左右</button>
-          <button role="menuitemradio" data-layout-mode="col" aria-checked="false" title="各栏上下堆叠"><span class="lm-pic col"><i></i><i></i></span>上下</button>
-        </div>
-      </div>
       <div id="tree-filter" role="search" hidden>
         <input id="tree-search" type="search" placeholder="搜索名称或 Feat 编号" aria-label="搜索名称或 Feat 编号">
         <label><input id="search-archived" type="checkbox">搜索含历史</label>
@@ -211,6 +203,7 @@
         <li role="treeitem" aria-expanded="true" tabindex="-1"><span class="settings-node">常规</span>
           <ul role="group">
             <li role="treeitem" data-settings-tab="appearance" aria-selected="true" tabindex="0"><span class="settings-node">外观</span></li>
+            <li role="treeitem" data-settings-tab="layout" aria-selected="false" tabindex="-1"><span class="settings-node">排布方式</span></li>
             <li role="treeitem" data-settings-tab="sidebar" aria-selected="false" tabindex="-1"><span class="settings-node">侧栏</span></li>
             <li role="treeitem" data-settings-tab="links" aria-selected="false" tabindex="-1"><span class="settings-node">链接与页签</span></li>
             <li role="treeitem" data-settings-tab="updates" aria-selected="false" tabindex="-1"><span class="settings-node">内容更新</span></li>
@@ -240,6 +233,16 @@
         <section data-settings-panel="appearance" aria-label="外观">
           <h3>外观</h3><p>侧栏、Markdown 和流程图编辑器使用同一主题。</p>
           <div class="settings-well"><label for="settings-theme">界面主题</label><select id="settings-theme"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select><p>选择后立即保存，独立窗口同步生效。</p></div>
+        </section>
+        <section data-settings-panel="layout" aria-label="排布方式" hidden>
+          <h3 id="settings-layout-title">排布方式</h3><p>流程图与 Feat 同时打开时，按所选方向排布。</p>
+          <div class="settings-well">
+            <fieldset class="settings-layout-options" aria-labelledby="settings-layout-title">
+              <label class="settings-layout-option"><input type="radio" name="settings-layout-mode" value="row"><span class="settings-layout-pic row" aria-hidden="true"><i></i><i></i></span><span>左右</span></label>
+              <label class="settings-layout-option"><input type="radio" name="settings-layout-mode" value="col"><span class="settings-layout-pic col" aria-hidden="true"><i></i><i></i></span><span>上下</span></label>
+            </fieldset>
+            <p>修改后立即生效并自动保存，保留各方向原有的分隔比例。</p>
+          </div>
         </section>
         <section data-settings-panel="sidebar" aria-label="侧栏" hidden>
           <h3>侧栏</h3><p>分组和 APP 可在侧栏中上下拖动排序，双击名称修改显示名。</p>
@@ -273,7 +276,10 @@
           <h3>Claude Code</h3><p>Agent 窗口用这里的设置启动会话。模型、权限模式等未在额外参数中指定的配置，仍读取 Claude Code 自己的 settings.json。</p>
           <div class="settings-well"><label for="settings-claude-path">claude 路径</label><input id="settings-claude-path" type="text" spellcheck="false" placeholder="留空自动查找"><p id="settings-claude-found"></p></div>
           <div class="settings-well"><label for="settings-claude-args">额外启动参数</label><input id="settings-claude-args" type="text" spellcheck="false" placeholder="例如 --model opus --permission-mode acceptEdits"><p>追加到每次新建和续接的启动命令，空格分隔，含空格的值用双引号括起。只影响之后启动的会话，运行中的会话停止后重新启动才生效。</p></div>
-          <div class="settings-actions settings-claude-actions"><button id="settings-claude-test">测试连接</button><button id="settings-claude-save">保存</button></div>
+          <div class="settings-well"><label for="settings-claude-view">显示模式</label><select id="settings-claude-view" aria-describedby="settings-claude-view-hint"><option value="default">标准</option><option value="focus">专注</option></select><p id="settings-claude-view-hint">标准显示完整对话；专注使用 Claude Code 原生全屏视图，保留最近提问、一行工具调用摘要和最终回复。保存后对之后启动或续接的会话生效。</p></div>
+          <div class="settings-well"><label class="settings-check"><input id="settings-claude-bypass" type="checkbox" aria-describedby="settings-claude-bypass-hint">跳过权限确认（bypassPermissions）</label><p id="settings-claude-bypass-hint">默认关闭。开启后使用 --permission-mode bypassPermissions，工具执行无需逐次确认；优先于额外参数里的权限模式。保存后对新建或续接会话生效，关闭后沿用额外参数及 Claude Code 自身设置。</p></div>
+          <div class="settings-actions settings-claude-actions"><button id="settings-claude-test">测试连接</button><button id="settings-claude-save">保存</button><button id="settings-claude-restart">保存并重开会话…</button></div>
+          <p class="settings-claude-hint">“保存并重开会话”可让运行中的会话立即使用新设置，续接已保存的对话，Flow Coding 程序继续运行。</p>
           <p class="settings-claude-hint">测试使用当前输入，无需先保存。会发送一条简短请求，消耗少量额度，最长约 70 秒。</p>
           <div id="settings-claude-result" class="settings-claude-result" role="status" aria-live="polite" aria-atomic="true" hidden>
             <strong id="settings-claude-result-title"></strong>
@@ -294,12 +300,20 @@
         </section>
         <section data-settings-panel="agent-lifecycle" aria-label="会话策略" hidden>
           <h3>会话策略</h3><p>会话保留在列表中，CLI 进程按需启动；点击左侧会话或页签会自动恢复对话。</p>
+          <div class="settings-well"><label class="settings-check"><input id="settings-agent-follow" type="checkbox" checked>跟随主窗口</label><p>选中流程图节点或打开 Feat 时，Agent 窗口切到对应会话。关闭后保留当前会话，修改立即生效。</p></div>
+          <div class="settings-well"><label class="settings-check"><input id="settings-agent-summary" type="checkbox" aria-describedby="settings-agent-summary-hint">双行摘要</label><p id="settings-agent-summary-hint">左侧会话列表默认单行。开启后第二行显示本轮对话摘要，超出省略，悬停查看完整内容；修改立即生效。</p></div>
           <div class="settings-well">
             <label for="settings-agent-idle-hours">CLI 进程空闲存活时间（小时）</label>
             <input id="settings-agent-idle-hours" type="number" min="0" max="8760" step="any" value="1" disabled aria-describedby="settings-agent-idle-hint">
             <p id="settings-agent-idle-hint">默认 1 小时，0 表示不自动关闭，可填写小数。仅在连续空闲、等待输入时计时；回答、工具执行、压缩和等待确认期间不会关闭。修改后自动保存，并作用于当前进程。</p>
           </div>
           <p class="settings-terminal-note">到期仅结束 CLI 进程，保留会话与已保存的对话。再次点击会话自动恢复，无需手动续接。</p>
+          <div class="settings-well">
+            <label for="settings-agent-archive-days">归档保留天数</label>
+            <input id="settings-agent-archive-days" type="number" min="0" max="36500" step="1" value="180" disabled aria-describedby="settings-agent-archive-hint">
+            <p id="settings-agent-archive-hint">默认 180 天，从归档时间开始计算；0 表示永久保留。到期自动清理 Flow Coding 中的会话记录，Claude Code 对话文件保留。缩短期限后，已到期记录会在下一次清理时删除。</p>
+          </div>
+          <p class="settings-terminal-note">收纳用于暂时停用并保留会话，不参与到期清理。关闭 Feat 自动收纳其会话，也可手动收纳或启用。</p>
         </section>
         <section data-settings-panel="database" aria-label="数据库" hidden>
           <div class="storage-heading"><h3>数据库</h3><button data-storage-refresh>更新统计</button></div><p id="storage-path"></p>
@@ -414,8 +428,9 @@
           <ol>
             <li>先在本机安装并完成 Claude Code 登录。运行目录中需有与 Flow Coding 配套的 <code>flowctl.exe</code>。</li>
             <li>主窗口打开「设置 → Agent → Claude Code」。「claude 路径」留空时自动查找；找不到时填可执行文件路径，保存后核对显示的查找结果。</li>
+            <li>「显示模式」默认标准。选择专注时，使用原生全屏视图，只显示最近提问、一行工具摘要及最终回复；保存后在下次启动或续接生效。切换已有会话时，可点「保存并重开会话…」，确认后用新配置续接已保存的对话，Flow Coding 程序和其他会话继续运行。</li>
             <li>需要自定义启动选项时填写「额外启动参数」：空格分隔，含空格的值用双引号括起。未指定的配置沿用 Claude Code 自身设置；修改只在之后启动或续接时生效。</li>
-            <li>在 Agent 窗口点「新建会话」，选择 APP 工作目录，或选「其他目录…」输入绝对路径；可填写名称、关联 Feat 或流程图、勾选置顶，再点「启动」。名称留空时使用 Feat 名，未关联 Feat 时叫「新会话」。</li>
+            <li>在 Agent 窗口点「新建会话」，默认选中「临时」，也可选择 Feat、Fix 或 Perf 流程。选择 APP 工作目录，或选「其他目录…」输入绝对路径；可填写名称、关联 Feat 或流程图，再点「启动」。关联后名称跟随来源，独立会话名称留空时叫「新会话」。</li>
           </ol>
           <p>「测试连接」使用当前输入，无需先保存：检查 CLI 版本并发送简短请求，展示耗时、回复或失败原因，最长约 70 秒，会消耗少量额度；测试通过后仍需点「保存」保留配置。</p>
           <p>选择 Feat 会同时带入同 APP 下挂了该 Feat 标签的节点。关联档案路径与节点会在启动时加入会话提示；启动后，在右侧终端输入任务并按 Enter 发送，Shift+Enter 换行。权限请求和其他确认直接在终端内操作。</p>

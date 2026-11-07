@@ -19,11 +19,18 @@
       const text = window.__mock.mds[s.feat] || '';
       s.title = (text.match(/^#\s+(?:Feat_\d+_\d+\s+)?(.+)$/m) || [])[1] || s.title;
     } else if (s.source_kind === 'flow') s.title = stem(s.source_path);
+    if (!s.archived_at) {
+      const text = s.feat ? window.__mock.mds[s.feat] : null;
+      const closed = text == null ? null : /已关闭/.test((text.match(/^.*状态.*$/m) || [''])[0]);
+      if (s.storage_override === true || (s.storage_override == null && closed === true)) s.stored_at ||= Date.now();
+      else if (s.storage_override === false || closed === false) s.stored_at = 0;
+      if (s.stored_at) { s.running = false; s.status = 'off'; }
+    }
     return s;
   }
   function make(p) {
     return sync({ id: crypto.randomUUID(), title: p.title || '新会话', cwd: p.cwd || '/mock', app: p.app || 'rs_bot_sever', feat: p.feat || '', feat_code: p.featCode || '', links: p.links || [], pinned: !!p.pinned, pin_at: Date.now(), created: Date.now(), started: true,
-      running: false, archived_at: 0, status: 'off', since: Date.now(), beat: Date.now(), turn: 0, tool: '', tool_since: 0, wait_text: '', focus: null, task: null, workers: [], exit_code: null, done: 0, seen: 0, queued: 0, acts: [] });
+      running: false, archived_at: 0, stored_at: 0, storage_override: null, status: 'off', since: Date.now(), beat: Date.now(), turn: 0, tool: '', tool_since: 0, wait_text: '', focus: null, task: null, workers: [], exit_code: null, done: 0, seen: 0, queued: 0, acts: [] });
   }
   const feat = Object.keys(window.__mock.mds)[0], flows = Object.keys(window.__mock.files);
   const add = p => { const s = make(p); sessions.set(s.id, s); return s; };
@@ -36,6 +43,7 @@
     calls.push({ cmd, args });
     const s = sessions.get(args.id);
     if (cmd === 'open_agent_window') return;
+    if (cmd === 'agent_clipboard') return window.__mock.agentClipboard || { kind: 'text' };
     if (cmd === 'summary') return (await original(cmd, args)).map(a => ({ ...a, root: a.root || (a.app === 'rs_bot_sever' ? '/mock' : '/mock/' + a.app) }));
     if (cmd === 'agent_list') {
       if (startup === 'error') throw 'Agent 服务启动超时（30 秒），请稍后重试';
@@ -56,16 +64,28 @@
       return update(s);
     }
     if (cmd === 'agent_buffer') return { data: '\x1b[36m浏览器模拟终端\x1b[0m\r\n这里用于验证侧栏与会话交互，不会调用 Claude Code。\r\n', seq: 0 };
-    if (cmd === 'agent_archive') {
-      if (!args.archived && [...sessions.values()].some(x => x.id !== s.id && !x.archived_at && s.source_kind && x.source_kind === s.source_kind && key(x.source_path) === key(s.source_path))) throw '该来源已有主会话';
-      s.archived_at = args.archived ? s.archived_at || Date.now() : 0;
-      if (args.archived) { s.running = false; s.status = 'off'; }
+    if (cmd === 'agent_archive' || cmd === 'agent_remove') {
+      const archived = cmd === 'agent_remove' || args.archived;
+      if (!archived && [...sessions.values()].some(x => x.id !== s.id && !x.archived_at && s.source_kind && x.source_kind === s.source_kind && key(x.source_path) === key(s.source_path))) throw '该来源已有主会话';
+      s.archived_at = archived ? s.archived_at || Date.now() : 0;
+      if (archived) { s.running = false; s.status = 'off'; }
+      return update(s);
+    }
+    if (cmd === 'agent_store') {
+      if (s.archived_at) throw '会话已归档，请先取消归档';
+      s.storage_override = args.stored;
+      s.stored_at = args.stored ? s.stored_at || Date.now() : 0;
       return update(s);
     }
     if (cmd === 'agent_start' && s.archived_at) throw '会话已归档，请先取消归档';
+    if (cmd === 'agent_start' && s.stored_at) throw '会话已收纳，请先启用';
+    if (cmd === 'agent_restart') {
+      if (!s || s.archived_at || s.stored_at) throw '会话不存在或已停用';
+      s.running = true; s.status = 'idle';
+      await update(s); await emit('agent-focus', { id: s.id }); return;
+    }
     if (cmd === 'agent_start' || cmd === 'agent_stop') { s.running = cmd === 'agent_start'; s.status = s.running ? 'idle' : 'off'; await update(s); return; }
     if (cmd === 'agent_seen' || cmd === 'agent_resize' || cmd === 'agent_write') return;
-    if (cmd === 'agent_remove') { sessions.delete(args.id); await emit('agent-removed', { id: args.id }); return; }
     if (cmd === 'rename_entry') {
       const result = await original(cmd, args);
       for (const x of sessions.values()) {

@@ -740,6 +740,12 @@ function applyFeat() {
   renderNodeBar();
 }
 
+/** 页面打开成功后通知 Agent；页签两栏切换中先合并，待事务结束只通知最终页面。 */
+function notifyAgentPage(kind, path) {
+  if (tabChanging || !path) return;
+  emit('agent-main-select', { path, page: kind });
+}
+
 /**
  * 打开流程图并可选定位节点：本窗口负责流程图栏时本地打开；否则交给主窗口路由
  * （独立窗口发 ui-route 给主窗口；主窗口在流程图已弹出时转给弹出窗口）。
@@ -774,6 +780,7 @@ async function routeDiagram(path, node, options = {}) {
           if (node) post({ action: 'fc-select-cell', id: node });
           flowNavigating = false;
         }
+        if (!node) notifyAgentPage('flow', path);
       } catch (error) {
         flowNavigating = false;
         setDiagramLoading(false);
@@ -831,7 +838,8 @@ async function routeFeat(path, node, line = 0) {
   if (ownsFeat()) {
     contentRoute = contentRoute.catch(() => {}).then(async () => {
       if (st.cur && appOf(st.cur) !== appOf(path)) await closeFlow();
-      return FeatPane.open(path, { node, line });
+      await FeatPane.open(path, { node, line });
+      notifyAgentPage('feat', path);
     });
     return contentRoute;
   }
@@ -853,6 +861,8 @@ const tabApi = {
     if (st.cur && st.ready && (st.loaded || $('editor-wrap').classList.contains('frozen'))) {
       post({ action: 'fc-render-ready', path: st.cur });
     } else if (!st.cur) setDiagramLoading(false);
+    const feat = FeatPane.curPath();
+    notifyAgentPage(feat ? 'feat' : 'flow', feat || st.cur);
   },
   /** 同一 APP 使用同一个规范化目录键，同名 APP 或不同分组不混淆。 */
   project: (path) => (appOf(path)?.flow_dir || '').replace(/\\/g, '/').toLowerCase(),

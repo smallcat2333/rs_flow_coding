@@ -2,6 +2,7 @@
 //! 以及 App 的 Tauri 命令与文件监听。
 
 pub mod agent;
+mod agent_clipboard;
 pub mod db;
 pub mod feat;
 pub mod float;
@@ -423,6 +424,7 @@ fn read_md(path: String) -> Result<MdDoc, String> {
 }
 
 /// 保存 Feat 档案：与流程图同口径加用户锁后原子写盘；Agent 持锁时返回 LOCKED 错误。返回新哈希。
+/// 就地改动状态行（已关闭 ↔ 开启）即刻同步关联会话的自动收纳，不依赖文件监听时序。
 #[tauri::command]
 fn save_md(path: String, text: String) -> Result<String, String> {
     let p = PathBuf::from(&path);
@@ -430,6 +432,7 @@ fn save_md(path: String, text: String) -> Result<String, String> {
         return Err(format!("LOCKED:{} 正在编辑（pid {}）", holder.owner, holder.pid));
     }
     write_atomic(&p, &text)?;
+    agent::source_changed(&p);
     Ok(db::hash(&text))
 }
 
@@ -547,8 +550,9 @@ pub fn run() {
             lifecycle::set_chart_enabled, lifecycle::set_feat_status, lifecycle::save_sidebar,
             maintenance::get_storage_stats, maintenance::clean_database, maintenance::clear_scan_cache,
             float::get_float_enabled, float::set_float_enabled, float::float_activate,
-            agent::agent_list, agent::agent_create, agent::agent_start, agent::agent_stop, agent::agent_write,
-            agent::agent_resize, agent::agent_buffer, agent::agent_seen, agent::agent_update, agent::agent_archive, agent::agent_remove, agent::open_agent_window,
+            agent_clipboard::agent_clipboard,
+            agent::agent_list, agent::agent_create, agent::agent_start, agent::agent_stop, agent::agent_restart, agent::agent_write,
+            agent::agent_resize, agent::agent_buffer, agent::agent_seen, agent::agent_update, agent::agent_archive, agent::agent_store, agent::agent_remove, agent::open_agent_window,
             agent::agent_get_settings, agent::agent_set_settings, agent::agent_test_settings,
             agent::agent_get_lifecycle, agent::agent_set_lifecycle
         ])

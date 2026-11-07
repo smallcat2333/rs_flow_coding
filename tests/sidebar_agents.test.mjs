@@ -81,7 +81,7 @@ test('绑定蓝、游离绿；归档默认折叠且不计入活跃数量', () =>
   api.seed([a], sessions, { expanded_archives: [a.flow_dir + '#agent#archive'] });
   html = api.agentSection(a);
   assert.match(html, /agent-entry archived-entry/);
-  assert.match(html, /180 天后清理/);
+  assert.match(html, /按设置的保留期限清理/);
 });
 
 test('同扫描根的不同 APP 不串会话；绑定项按真实来源确定归属', () => {
@@ -112,17 +112,19 @@ test('APP 新建入口只预填所选 APP，工作目录保持原值', async () 
   assert.equal(calls[0].args.prefill.root, 'E:/root');
 });
 
-test('右键删除单次点击直接移除，归档和恢复分别传入正确状态', async () => {
+test('右键仅提供收纳、启用和归档恢复，不提供删除', async () => {
   const { api, calls, menu } = setup(), a = app('a');
-  for (const [action, archived] of [['archive', true], ['restore', false], ['delete', null]]) {
-    api.seed([a], [session('s', { archived_at: action === 'restore' ? 1000 : 0 })]);
+  for (const [action, archived] of [['archive', true], ['restore', false], ['store', null], ['enable', null]]) {
+    api.seed([a], [session('s', { archived_at: action === 'restore' ? 1000 : 0, stored_at: action === 'enable' ? 500 : 0 })]);
     api.openAgentMenu({ dataset: { agent: 's' }, isConnected: false }, 5, 5);
+    assert.doesNotMatch(menu().innerHTML, /删除|data-action="delete"/);
     await menu().onclick(clickAction(action));
     const call = calls.at(-1);
-    assert.equal(call.cmd, archived === null ? 'agent_remove' : 'agent_archive');
+    assert.equal(call.cmd, archived === null ? 'agent_store' : 'agent_archive');
     assert.equal(call.args.id, 's');
     if (archived !== null) assert.equal(call.args.archived, archived);
-    else assert.equal(api.has('s'), false);
+    else assert.equal(call.args.stored, action === 'store');
+    assert.equal(api.has('s'), true);
   }
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
 });

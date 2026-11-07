@@ -21,6 +21,24 @@ const session = (id, patch = {}) => ({ id, title: id, app: 'app_a', status: 'run
 const nodes = (m, kind) => m.nodes.filter((n) => n.kind === kind);
 const edges = (m, kind) => m.edges.filter((n) => n.kind === kind);
 
+test('收纳和归档会话连同 Feat 与子代理从概览移除', () => {
+  const model = build([session('stored', { stored_at: 1, feat: 'f.md', workers: [{ id: 'w', running: true }] }), session('archived', { archived_at: 1, feat: 'a.md' }), session('enabled')], [], new Map(), null, at);
+  assert.deepEqual([...nodes(model, 'session')].map(n => n.session), ['enabled']);
+  assert.equal(nodes(model, 'feat').length, 0);
+  assert.equal(nodes(model, 'worker').length, 0);
+});
+
+test('主窗口选中收纳来源也不会重新加入概览，手动启用后允许显示', () => {
+  const feat = 'C:/app/docs/feat/Feat_1.md';
+  const s = session('stored', { stored_at: 1, feat });
+  const c = vm.createContext({ window: {}, key, base, mainSel: { featPath: feat }, S: new Map([[s.id, s]]),
+    sourceOf: s => ({ kind: 'feat', path: s.feat }), list: () => s.stored_at ? [] : [s], featEntry: () => ({ status: '已关闭' }) });
+  vm.runInContext(source.replace('return { build, render, activity, init, invalidate };', 'return { overviewSelection };'), c);
+  assert.equal(c.window.AgentOverview.overviewSelection(), null);
+  s.stored_at = 0;
+  assert.equal(c.window.AgentOverview.overviewSelection().featPath, feat);
+});
+
 test('总览加载真实后端扁平关联节点，保留节点 ID 并补齐关系', async () => {
   const feat = 'C:/app/docs/feat/Feat_1.md', calls = [];
   const catalog = [{ app: 'app_a', flow_dir: 'C:/app/docs/flow', feats: [{ path: feat, id: 'Feat_1', title: '订单' }] }];

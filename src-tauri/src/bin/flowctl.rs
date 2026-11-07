@@ -15,7 +15,11 @@
 //!   flowctl focus <图文件>#<节点id>     标记当前处理的节点，主窗口在该节点上显示本会话；--clear 清除
 //!   flowctl focus <Feat档案>#T<编号>    标记当前处理的 Feat 任务（如 #T3、#T3.1），Feat 控件页在该任务卡片上显示本会话
 //!   flowctl peers                     列出同 APP 的其他会话
-//!   flowctl send <会话名> <消息>       给同 APP 会话发协作消息（对方运行中则排队到它本轮结束）
+//!   flowctl send <会话名或ID> <消息>   一般协作，按需续接并排队，返回请求 ID
+//!   flowctl scope <职责> <路径>...     图主 Agent 声明业务及代码范围
+//!   flowctl request <图路径或ID> <目标> --contract <接口约定> --acceptance <验收条件>
+//!   flowctl requests                  查询本会话的协作任务和结果
+//!   flowctl reply <请求ID> <accept|run|done|blocked> <说明> [--verify <验证>] [--file <文件>]...
 //!   flowctl agent-hook <事件>          Claude Code hook 回报（stdin 为 hook JSON），始终退出码 0
 //!
 //! 约定：Agent 修改流程图或 Feat 档案必须 `lock → 编辑 → unlock`；编辑超 10 分钟需重新 lock 刷新。
@@ -222,11 +226,59 @@ fn cmd_agent_hook(args: &[String]) -> ExitCode {
     let mut payload: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
     let event = args.get(2).cloned().unwrap_or_default();
     if event == "StatusLine" { agent::enrich_statusline(&mut payload); }
+    agent::enrich_plan_hook(&event, &mut payload);
     let _ = agent::client(serde_json::json!({ "op": "hook", "event": event, "payload": payload }));
     ExitCode::SUCCESS
 }
 
-/// focus / peers / send：转发给 App 并输出结果 JSON。
+/// 解析协作命令的成对选项，拒绝未知选项；只有 --file 可以重复。
+fn collaboration_options(args: &[String], start: usize, allowed: &[&str]) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let mut options = std::collections::HashMap::<String, Vec<String>>::new();
+    let mut i = start;
+    while i < args.len() {
+        let name = &args[i];
+        if !allowed.contains(&name.as_str()) { return Err(format!("未知协作选项：{name}")); }
+        let value = args.get(i + 1).ok_or_else(|| format!("{name} 缺少值"))?;
+        if value.starts_with("--") { return Err(format!("{name} 缺少值")); }
+        let values = options.entry(name.clone()).or_default();
+        if name != "--file" && !values.is_empty() { return Err(format!("{name} 不能重复")); }
+        values.push(value.clone()); i += 2;
+    }
+    Ok(options)
+}
+
+/// 把模块协作命令转换成结构化协议；消息正文保留中文、空格和换行，不经 shell 二次解析。
+fn collaboration_request(args: &[String]) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    match args[1].as_str() {
+        "scope" => {
+            let description = arg(args, 2, "业务职责")?;
+            if args.len() < 4 { return Err("scope 至少需要一个现有目录/文件".into()); }
+            Ok(json!({ "op": "scope", "description": description, "paths": &args[3..] }))
+        }
+        "requests" if args.len() == 2 => Ok(json!({ "op": "requests" })),
+        "requests" => Err("用法：flowctl requests".into()),
+        "request" => {
+            let to = arg(args, 2, "模块图路径或会话ID")?;
+            let text = arg(args, 3, "任务目标")?;
+            let options = collaboration_options(args, 4, &["--contract", "--acceptance"])?;
+            let required = |key: &str| options.get(key).map(|v| v[0].clone()).ok_or_else(|| format!("缺少 {key}"));
+            Ok(json!({ "op": "request", "to": to, "text": text, "contract": required("--contract")?, "acceptance": required("--acceptance")? }))
+        }
+        "reply" => {
+            let request = arg(args, 2, "请求ID")?;
+            let state = arg(args, 3, "accept/run/done/blocked")?;
+            let text = arg(args, 4, "回报说明")?;
+            let options = collaboration_options(args, 5, &["--verify", "--file"])?;
+            Ok(json!({ "op": "reply", "request": request, "state": state, "text": text,
+                "verification": options.get("--verify").map(|v| v[0].as_str()).unwrap_or(""),
+                "files": options.get("--file").cloned().unwrap_or_default() }))
+        }
+        _ => Err("未知协作命令".into()),
+    }
+}
+
+/// focus / peers / send 及模块协作命令：转发给 App 并输出结果 JSON。
 fn cmd_agent(args: &[String]) -> Result<ExitCode, String> {
     let req = match args[1].as_str() {
         "focus" => {
@@ -234,6 +286,7 @@ fn cmd_agent(args: &[String]) -> Result<ExitCode, String> {
             serde_json::json!({ "op": "focus", "ref": arg(args, 2, "图文件#节点id 或 Feat档案#T编号")?, "cwd": cwd })
         }
         "peers" => serde_json::json!({ "op": "peers" }),
+        "scope" | "request" | "requests" | "reply" => collaboration_request(args)?,
         _ => serde_json::json!({ "op": "send", "to": arg(args, 2, "会话名")?, "text": args.get(3..).map(|a| a.join(" ")).unwrap_or_default() }),
     };
     let v = agent::client(req)?;
@@ -259,8 +312,46 @@ fn main() -> ExitCode {
         Some("check") => cmd_check(&args),
         Some("links") => cmd_links(&args),
         Some("agent-hook") => return cmd_agent_hook(&args),
-        Some("focus" | "peers" | "send") => cmd_agent(&args),
-        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check|links|focus|peers|send> ...（详见源码顶部说明）".into()),
+        Some("focus" | "peers" | "send" | "scope" | "request" | "requests" | "reply") => cmd_agent(&args),
+        _ => Err("用法: flowctl <lock|unlock|status|stats|nodes|new|feat|check|links|focus|peers|send|scope|request|requests|reply> ...（详见源码顶部说明）".into()),
     };
     r.unwrap_or_else(fail)
+}
+
+#[cfg(test)]
+mod collaboration_tests {
+    use super::*;
+
+    /// 测试结构化参数解析，无需 App 服务或真实 Agent 进程。
+    fn parse(words: &[&str]) -> Result<serde_json::Value, String> {
+        collaboration_request(&words.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    /// 任务目标及接口约定保留空格和换行，不能被合并成含糊的单条消息。
+    #[test]
+    fn request_keeps_contract_and_acceptance() {
+        let value = parse(&["flowctl", "request", "docs/flow/数据查询.drawio", "增加条件\n保留原字段", "--contract", "增加 status 参数", "--acceptance", "旧调用正常"]).unwrap();
+        assert_eq!(value["text"], "增加条件\n保留原字段");
+        assert_eq!(value["contract"], "增加 status 参数");
+        assert_eq!(value["acceptance"], "旧调用正常");
+    }
+
+    /// 完成回报保留多个改动文件；缺少验证说明由后端完成状态校验拒绝。
+    #[test]
+    fn reply_keeps_multiple_files() {
+        let value = parse(&["flowctl", "reply", "request-id", "done", "已处理", "--verify", "cargo test 通过", "--file", "src/a.rs", "--file", "src/中文 文件.rs"]).unwrap();
+        assert_eq!(value["files"], serde_json::json!(["src/a.rs", "src/中文 文件.rs"]));
+        assert_eq!(value["verification"], "cargo test 通过");
+    }
+
+    /// 拼错、缺失和重复选项直接报错，避免把不完整任务送给另一个 Agent。
+    #[test]
+    fn malformed_options_fail_fast() {
+        assert!(parse(&["flowctl", "request", "module", "目标", "--contract", "接口"]).is_err());
+        assert!(parse(&["flowctl", "reply", "id", "done", "完成", "--verify"]).is_err());
+        assert!(parse(&["flowctl", "reply", "id", "done", "完成", "--unknown", "值"]).is_err());
+        assert!(parse(&["flowctl", "reply", "id", "done", "完成", "--verify", "一", "--verify", "二"]).is_err());
+        assert!(parse(&["flowctl", "scope"]).is_err());
+        assert!(parse(&["flowctl", "scope", "说明"]).is_err());
+    }
 }

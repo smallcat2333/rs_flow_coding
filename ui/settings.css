@@ -34,8 +34,20 @@
 .settings-well p { margin-top: 12px !important; }
 .settings-well button { min-height: 32px; }
 .settings-well p + button { margin-top: 12px; }
+.settings-layout-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; border: 0; }
+.settings-well label.settings-layout-option { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 0; padding: 14px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); cursor: pointer; }
+.settings-layout-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.settings-well .settings-layout-option:hover { border-color: var(--accent-bd); }
+.settings-well .settings-layout-option:has(input:checked) { border-color: var(--accent); background: var(--sel); color: var(--accent); }
+.settings-layout-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-layout-pic { display: grid; gap: 3px; width: 38px; height: 28px; }
+.settings-layout-pic i { border: 1.5px solid currentColor; border-radius: 2px; }
+.settings-layout-pic.row { grid-template-columns: 1fr 1fr; }
+.settings-layout-pic.col { grid-template-rows: 1fr 1fr; }
 .settings-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
-.settings-claude-actions { gap: 8px; }
+.settings-claude-actions { gap: 8px; flex-wrap: wrap; }
+.settings-restart-dialog label { flex-direction: column; align-items: stretch; gap: 8px; }
+.settings-restart-dialog select { width: 100%; min-width: 0; }
 #settings-dialog .settings-claude-hint { margin: 8px 0 12px; }
 .settings-claude-result { padding: 12px 14px; background: var(--bg2); border-radius: 6px; border-left: 3px solid var(--accent); }
 .settings-claude-result[data-state="success"] { border-left-color: var(--ok-fg); }

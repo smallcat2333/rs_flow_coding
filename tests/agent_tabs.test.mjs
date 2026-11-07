@@ -9,7 +9,8 @@ const section = (start, end) => source.slice(source.indexOf(start), source.index
 
 /** 控制启动回执和渲染帧，验证状态过滤、持久化清理及停止后切回总览。 */
 function setup({ sessions, tabs, active, invoke = async () => {} }) {
-  const host = { innerHTML: '' }, frames = [], saved = [], events = [], messages = [];
+  const scroller = { scrollLeft: 0 };
+  const host = { innerHTML: '', scrollLeft: 0, querySelector: selector => selector === '.session-tabs' ? scroller : null }, frames = [], saved = [], events = [], messages = [];
   const c = vm.createContext({
     S: new Map(sessions.map(s => [s.id, s])), openTabs: tabs, active, invoke,
     $: selector => selector === '#tabs' ? host : null,
@@ -30,6 +31,21 @@ function setup({ sessions, tabs, active, invoke = async () => {} }) {
 const session = (id, extra = {}) => ({ id, title: id, running: false, started: true, archived_at: 0, status: 'off', ...extra });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('总览固定在会话滚动区之外，刷新保留会话滚动并清除外层偏移', () => {
+  const f = setup({ sessions: [session('a', { running: true })], tabs: ['a'], active: 'a' });
+  f.host.scrollLeft = 12;
+  f.host.querySelector('.session-tabs').scrollLeft = 180;
+  f.c.renderTabs();
+  assert.ok(f.host.innerHTML.indexOf('data-tab="OV"') < f.host.innerHTML.indexOf('class="session-tabs"'));
+  assert.ok(f.host.innerHTML.indexOf('data-tab="a"') > f.host.innerHTML.indexOf('class="session-tabs"'));
+  assert.equal(f.host.scrollLeft, 0);
+  assert.equal(f.host.querySelector('.session-tabs').scrollLeft, 180);
+  f.c.activate('OV');
+  assert.equal(f.host.scrollLeft, 0);
+  assert.equal(f.host.querySelector('.session-tabs').scrollLeft, 180);
+  assert.match(f.host.innerHTML, /data-tab="OV" role="tab" aria-selected="true"/);
+});
+
 test('恢复页签时移除未运行、归档及已删除会话，并保存清理结果', () => {
   const f = setup({ sessions: [session('off'), session('run', { running: true, status: 'idle' }), session('old', { running: true, archived_at: 1 })], tabs: ['off', 'run', 'old', 'missing'], active: 'off' });
   f.c.renderTabs();
@@ -38,6 +54,17 @@ test('恢复页签时移除未运行、归档及已删除会话，并保存清�
   assert.ok(f.host.innerHTML.includes('data-tab="run"'));
   assert.ok(!f.host.innerHTML.includes('data-tab="off"'));
   assert.deepEqual(f.saved.at(-1), { tabs: ['run'], active: 'OV' });
+});
+
+test('收纳会话即使残留运行标记也不恢复页签，点击不自动启动', () => {
+  let starts = 0;
+  const f = setup({ sessions: [session('stored', { stored_at: 1, running: true })], tabs: ['stored'], active: 'stored', invoke: async () => { starts++; } });
+  f.c.renderTabs();
+  assert.deepEqual([...f.c.openTabs], []);
+  assert.equal(f.c.active, 'OV');
+  f.c.openSession('stored');
+  assert.equal(starts, 0);
+  assert.match(f.messages[0], /会话已收纳/);
 });
 
 test('已打开会话停止后移除页签并退出终端，不自动重启', () => {

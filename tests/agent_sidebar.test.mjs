@@ -19,11 +19,39 @@ function setup(invoke) {
     setTimeout() {}, openSession: id => opened.push(id), openFocusedSession: id => opened.push(id),
     upsert: s => context.add(s),
   });
-  vm.runInContext(source + '\nObject.assign(globalThis, { sourceOf, rowSummary, rowUpdated, createFromSource, renderNbChips, renderRows, add: s => S.set(s.id, s), setApps: v => { apps = v; }, setDraft: v => Object.assign(nb, v), get: id => S.get(id) });', context);
+  vm.runInContext(source + '\nObject.assign(globalThis, { list, expandedGroups, sourceOf, rowSummary, rowUpdated, createFromSource, renderNbChips, renderRows, add: s => S.set(s.id, s), setApps: v => { apps = v; }, setDraft: v => Object.assign(nb, v), get: id => S.get(id) });', context);
   context.setApps([{ app: 'app_orders', root: 'E:/orders', files: [], feats: [] }]);
   return { context, element, opened };
 }
+test('API 错误覆盖停滞和旧工具状态，列表保留错误原因并能恢复', () => {
+  const { context: c, element } = setup(async () => {});
+  const failed = session('api', { running: true, status: 'apierr', api_error: 'API error · Retrying in 0s · attempt 1/10', beat: 1, tool: 'Bash' });
+  assert.equal(c.vs(failed), 'apierr');
+  assert.equal(c.stText(failed), 'API 错误');
+  c.add(failed); c.renderRows();
+  assert.match(element('#rows').innerHTML, /row v-apierr/);
+  assert.match(element('#rows').innerHTML, /API error · Retrying/);
+  assert.doesNotMatch(element('#rows').innerHTML, /可能停滞/);
+  c.renderToday();
+  assert.match(element('#today').textContent, /1 个会话在线，1 个 API 错误/);
+  const resumed = { ...failed, status: 'run', api_error: '', tool: '', beat: Date.now() };
+  assert.equal(c.stText(resumed), '运行中');
+});
+
 const session = (id, extra = {}) => ({ id, title: id, app: 'app_orders', created: 1, acts: [], links: [], status: 'off', ...extra });
+
+test('已中断停止执行显示，在线进程不再计作执行中', () => {
+  const { context: c, element } = setup(async () => {});
+  const s = session('interrupt', { running: true, status: 'interrupted', tool: 'Bash', turn: 100, since: 200, done: 0, beat: 1 });
+  c.add(s); c.renderRows(); c.renderMix(); c.renderToday();
+  assert.equal(c.vs(s), 'interrupted');
+  assert.equal(c.stText(s), '已中断');
+  assert.equal(c.laneSt({ s }), '已中断');
+  assert.match(element('#rows').innerHTML, /row v-interrupted/);
+  assert.match(element('#mix').innerHTML, /已中断/);
+  assert.match(element('#today').textContent, /1 个会话在线/);
+  assert.doesNotMatch(element('#today').textContent, /会话运行中/);
+});
 
 test('来源直接创建，连续点击只提交一次，不打开命名表单', async () => {
   let finish;
@@ -62,6 +90,19 @@ test('Feat 直接创建保留来源与关联节点，不提交自定义名字', 
   assert.equal(created.links[0].node, 'n1');
 });
 
+test('新建自动聚焦不滚动页面，面板提前关闭后不再抢焦点', async () => {
+  const { context: c, element } = setup(async () => {});
+  const timers = [], focused = [], classes = new Set();
+  c.setTimeout = callback => timers.push(callback);
+  element('#newwrap').classList = { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) };
+  element('#nbName').focus = options => focused.push(options);
+  await c.openNewBox(); timers.shift()();
+  assert.equal(focused.length, 1);
+  assert.equal(focused[0].preventScroll, true);
+  await c.openNewBox(); c.closeNewBox(); timers.shift()();
+  assert.equal(focused.length, 1, '快速取消后不聚焦隐藏输入框');
+});
+
 test('手动表单选来源锁定名字，解除关联恢复独立会话草稿', () => {
   const { context: c, element } = setup(async () => {});
   element('#nbName').value = '临时排查';
@@ -78,7 +119,7 @@ test('手动表单选来源锁定名字，解除关联恢复独立会话草稿',
   assert.equal(element('#nbName').value, '临时排查');
 });
 
-test('侧栏每个会话两行显示，不显示分组，来源图标可定位且置顶不重复', () => {
+test('启用会话保留摘要字段，来源图标可定位且置顶不重复', () => {
   const { context: c, element } = setup(async () => {});
   c.add(session('free'));
   c.add(session('graph', { links: [{ flow: 'x.drawio', node: '' }], title: '<支付流程>' }));
@@ -87,7 +128,7 @@ test('侧栏每个会话两行显示，不显示分组，来源图标可定位�
   c.add(session('archived', { archived_at: Date.now() }));
   c.renderRows();
   const html = element('#rows').innerHTML;
-  assert.equal((html.match(/<li /g) || []).length, 4, '每个可见会话恰好一个列表项');
+  assert.equal((html.match(/<li class="row /g) || []).length, 4, '每个可见会话恰好一个会话行，归档分组标题不计入');
   assert.ok(!html.includes('class="sep"'));
   assert.ok(!html.includes('Feat 主 Agent'));
   assert.ok(!html.includes('class="rs"') && !html.includes('class="wk'), '不展开辅助行和子代理行');
@@ -105,6 +146,35 @@ test('侧栏每个会话两行显示，不显示分组，来源图标可定位�
   assert.ok(!html.includes('<支付流程>'));
   assert.equal(c.sourceOf(session('old', { feat: 'f.md' })).locked, true);
   assert.equal(c.sourceOf(session('old', { links: [{ flow: 'first.drawio' }, { flow: 'second.drawio' }] })).path, 'first.drawio');
+});
+
+test('收纳与归档默认折叠，不参与启用列表；展开后提供恢复入口', () => {
+  const { context: c, element } = setup(async () => {});
+  c.add(session('enabled'));
+  c.add(session('stored', { stored_at: 1000, pinned: true }));
+  c.add(session('archived', { stored_at: 1000, archived_at: 2000 }));
+  c.renderRows();
+  let html = element('#rows').innerHTML;
+  assert.deepEqual([...c.list()].map(s => s.id), ['enabled']);
+  assert.ok(html.includes('data-session-group="stored" aria-expanded="false"'));
+  assert.ok(html.includes('data-session-group="archived" aria-expanded="false"'));
+  assert.ok(!html.includes('data-s="stored"') && !html.includes('data-s="archived"'));
+  c.expandedGroups.add('stored'); c.expandedGroups.add('archived'); c.renderRows();
+  html = element('#rows').innerHTML;
+  assert.equal((html.match(/data-s="stored"/g) || []).length, 1);
+  assert.ok(html.includes('data-session-action="enable" data-id="stored"'));
+  assert.ok(html.includes('data-session-action="restore" data-id="archived"'));
+  assert.ok(!html.includes('删除'));
+});
+
+test('收纳来源再次点击复用原会话，不创建第二个主会话', async () => {
+  let calls = 0;
+  const { context: c, opened } = setup(async () => { calls++; });
+  const links = [{ flow: 'E:/orders/docs/flow/订单.drawio', node: '' }];
+  c.add(session('stored-main', { links, stored_at: 1000 }));
+  await c.createFromSource({ root: 'E:/orders', links });
+  assert.equal(calls, 0);
+  assert.deepEqual(opened, ['stored-main']);
 });
 
 test('摘要只取当前轮提问首句，长提问在 tooltip 中保留，清空后不回显上一轮', () => {

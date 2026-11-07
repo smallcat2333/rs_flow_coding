@@ -196,7 +196,8 @@
 /* §3.1 依赖关系图：宽区横向、窄区纵向，同层按可用宽度换行，无图内滚动条。 */
 .fb-graph { min-width: 0; border-radius: 6px; background: var(--bg2); }
 .fb-graph-in { position: relative; width: 100%; }
-.fb-graph svg { position: absolute; inset: 0; pointer-events: none; }
+/* 绝对定位只用于连线层，卡片中的机器人等 SVG 保持自身布局。 */
+.fb-graph-in > svg { position: absolute; inset: 0; pointer-events: none; }
 /* 依赖图与独立任务网格之间的小标题，位置由 layoutGraph 写入。 */
 .fb-graph-cap { position: absolute; font-size: 11px; line-height: 16px; color: var(--muted); white-space: nowrap; }
 .fb-graph-cap[hidden] { display: none; }

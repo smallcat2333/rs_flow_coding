@@ -6,16 +6,19 @@ import vm from 'node:vm';
 
 const appSource = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
 const tabsSource = readFileSync(new URL('../ui/tabs.js', import.meta.url), 'utf8');
+const pageNotify = appSource.slice(appSource.indexOf('function notifyAgentPage('), appSource.indexOf('/**\n * 打开流程图'));
+const tabApiSource = appSource.slice(appSource.indexOf('const tabApi ='), appSource.indexOf('/** 供 FeatPane'));
 const flowRoute = appSource.slice(appSource.indexOf('async function routeDiagram('), appSource.indexOf('/** 右上角挂载标记'));
 const featRoute = appSource.slice(appSource.indexOf('async function routeFeat('), appSource.indexOf('/** 页签接口'));
 
 /** 为生产路由提供两个不同 APP，记录保存关闭和打开顺序；可注入慢读取重现交错点击。 */
 function fixture({ flow = '', feat = '', newTab = false, read = async () => {} } = {}) {
-  const apps = { a: {}, b: {} }, calls = [];
+  const apps = { a: {}, b: {} }, calls = [], events = [];
   let featPath = feat;
   const c = {
     SOLO: '', st: { cur: flow, loaded: !!flow, saving: false, pendingXml: null },
-    flowNavigating: false, selCells: [], flowBack: [],
+    flowNavigating: false, tabChanging: false, selCells: [], flowBack: [],
+    emit: (name, payload) => events.push({ name, payload }),
     Settings: { projectsNewTab: () => newTab }, Sidebar: { select() {} },
     Tabs: { isOtherProject: () => true, openNew: (...args) => calls.push(['new', ...args]) },
     ownsFlow: () => true, ownsFeat: () => true,
@@ -30,8 +33,8 @@ function fixture({ flow = '', feat = '', newTab = false, read = async () => {} }
     async closeFlow() { calls.push(['save-close-flow', c.st.cur]); c.st.cur = ''; c.st.loaded = false; c.flowNavigating = false; },
     async openDiagram(path) { c.st.cur = path; c.st.loaded = true; c.flowNavigating = false; calls.push(['flow', path]); },
   };
-  vm.runInNewContext('let contentRoute = Promise.resolve();\n' + flowRoute + featRoute, c);
-  return { c, calls, feat: () => featPath };
+  vm.runInNewContext('let contentRoute = Promise.resolve();\n' + pageNotify + flowRoute + featRoute + tabApiSource + '\nglobalThis.tabUnderTest = tabApi;', c);
+  return { c, calls, events, feat: () => featPath };
 }
 
 test('替换为异 APP 图时先保存关闭旧 Feat', async () => {
@@ -83,6 +86,39 @@ test('目标图读取失败时保留原来的同 APP 配对', async () => {
   assert.equal(f.c.st.cur, 'a/old.drawio');
   assert.equal(f.feat(), 'a/feat.md');
   assert.deepEqual(f.calls, []);
+});
+
+/** 页面通知只在成功打开后发出；配对页签两栏合并成一次，空页签不发送伪来源。 */
+test('打开纯流程图或 Feat 页面均发送完整路径，无需节点或已打开的另一栏', async () => {
+  const f = fixture();
+  await f.c.routeDiagram('a/page.drawio');
+  assert.equal(JSON.stringify(f.events.at(-1)), JSON.stringify({ name: 'agent-main-select', payload: { path: 'a/page.drawio', page: 'flow' } }));
+  await f.c.routeFeat('b/page.md');
+  assert.equal(JSON.stringify(f.events.at(-1)), JSON.stringify({ name: 'agent-main-select', payload: { path: 'b/page.md', page: 'feat' } }));
+});
+
+test('页签两栏加载中不跟随中间页面，完成后以 Feat 为当前上下文', async () => {
+  const f = fixture();
+  await f.c.tabUnderTest.begin();
+  await f.c.routeDiagram('a/page.drawio');
+  await f.c.routeFeat('a/page.md');
+  assert.equal(f.events.length, 0);
+  f.c.tabUnderTest.end();
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].payload.page, 'feat');
+  assert.equal(f.events[0].payload.path, 'a/page.md');
+});
+
+test('切回纯图页签跟随整图，空页签和打开失败不发送通知', async () => {
+  const f = fixture({ flow: 'a/page.drawio' });
+  f.c.tabUnderTest.end();
+  assert.equal(f.events[0].payload.page, 'flow');
+  f.c.st.cur = '';
+  f.c.tabUnderTest.end();
+  assert.equal(f.events.length, 1);
+  const broken = fixture({ read: async () => { throw new Error('不可读'); } });
+  await broken.c.routeDiagram('a/missing.drawio');
+  assert.equal(broken.events.length, 0);
 });
 
 /** 执行完整 tabs.js 的启动恢复，仅模拟页签所需 DOM 和已存在文件目录。 */

@@ -11,6 +11,7 @@
       const t = localStorage.getItem('fc-theme') || 'auto';
       const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      document.documentElement.dataset.agentSummary = String(localStorage.getItem('fc-agent-summary') === '1');
     })();
   </script>
   <link rel="stylesheet" href="vendor/xterm/xterm.css">
@@ -19,22 +20,11 @@
 </head>
 <body>
 <div class="app">
-  <aside class="left">
+  <aside class="left" id="agent-sidebar">
     <section class="pulse" aria-label="会话活动">
-      <header class="ph">
-        <h1><img src="agent.svg" width="18" height="18" alt="">Agent</h1>
-        <span class="today" id="today"></span>
-        <label class="follow" title="开启后，主窗口选中节点或打开 Feat 时，这里切到对应会话">
-          <input type="checkbox" id="follow"><span class="sw" aria-hidden="true"></span><span id="followText">跟随主窗口</span>
-        </label>
-      </header>
+      <div class="today" id="today"></div>
       <div class="mix" id="mix"></div>
-      <div class="lanes" id="lanes"></div>
-      <div class="axis" aria-hidden="true">
-        <div class="axis-time"><span>10 分钟前</span><span>现在</span></div>
-        <div class="lg"><span><i class="l-edit"></i>编辑</span><span><i class="l-cmd"></i>命令</span><span><i class="l-read"></i>读取</span><span><i class="l-commit"></i>提交</span><span><i class="l-msg"></i>协作</span><span><i class="l-prompt"></i>提问</span></div>
-      </div>
-      <div class="ticker" id="ticker"></div>
+      <div class="lanes" id="lanes" tabindex="0" aria-label="最近 30 分钟的会话活动"></div>
     </section>
     <section class="roster" aria-label="CLI 会话">
       <div class="rh">
@@ -44,31 +34,32 @@
       <div class="newwrap" id="newwrap" inert><div>
         <div class="newbox" id="newbox">
           <div class="nb-t">新建 Claude Code 会话</div>
-          <span id="nbWorkflowLabel">流程</span><div class="nb-workflow" role="radiogroup" aria-labelledby="nbWorkflowLabel" title="可不选；选择后首次启动进入对应流程">
+          <span id="nbWorkflowLabel">流程</span><div class="nb-workflow" role="radiogroup" aria-labelledby="nbWorkflowLabel">
+            <label><input type="radio" name="nbWorkflow" value="" checked>临时</label>
             <label><input type="radio" name="nbWorkflow" value="feat">Feat</label>
             <label><input type="radio" name="nbWorkflow" value="fix">Fix</label>
             <label><input type="radio" name="nbWorkflow" value="perf">Perf</label>
           </div>
           <label for="nbName">名称</label><input type="text" id="nbName" placeholder="留空则叫「新会话」" autocomplete="off">
-          <p class="nb-name-hint" id="nbNameHint">关联 Feat 或流程图后，名称自动跟随来源。</p>
           <label for="nbApp">目录</label><select id="nbApp"></select>
           <label for="nbLink">关联</label>
           <div class="nb-links" id="nbLinks"><span id="nbChips"></span><input id="nbLink" placeholder="搜索 Feat 或流程图，可留空" autocomplete="off"></div>
           <div class="drop" id="nbDrop" hidden></div>
-          <div class="nb-opt"><label><input type="checkbox" id="nbPin">置顶</label><span class="muted">关联的 Feat 档案与节点会写进会话的系统提示</span></div>
           <div class="nb-act"><button class="btn" data-nb="cancel">取消</button><button class="btn primary" data-nb="ok">启动</button></div>
         </div>
       </div></div>
       <ul class="rows" id="rows"></ul>
     </section>
   </aside>
+  <div id="agent-sidebar-split" class="sidebar-split" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整会话侧栏宽度" aria-controls="agent-sidebar" title="左右拖动调整侧栏宽度；双击恢复默认"></div>
   <main class="work">
-    <div class="bar"><div class="tabs" id="tabs" role="tablist" aria-label="会话页签"></div></div>
+    <div class="bar"><div class="tabs" id="tabs" role="tablist" aria-label="会话页签"></div><button class="info-toggle" id="agentInfoToggle" aria-label="会话信息" aria-controls="agentMetrics" aria-expanded="true" title="收起会话信息" hidden><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M10 3v10"/></svg></button></div>
     <div class="pane" id="pane">
-      <div id="head"></div>
-      <div id="agentMetrics" class="am-strip" hidden aria-label="会话运行信息"></div>
       <div class="ov" id="ov"></div>
-      <div class="terms" id="terms" hidden></div>
+      <div class="session-body" id="sessionBody" hidden>
+        <div class="terms" id="terms" hidden></div>
+        <aside id="agentMetrics" class="am-sidebar" hidden aria-label="会话信息"></aside>
+      </div>
     </div>
   </main>
 </div>
@@ -80,8 +71,11 @@
 <script src="terminal_themes.js"></script>
 <script src="feat_state.js"></script>
 <script src="agent_core.js"></script>
+<script src="agent_layout.js"></script>
 <script src="agent_overview.js"></script>
+<script src="agent_info_layout.js"></script>
 <script src="agent_metrics.js"></script>
+<script src="agent_ime.js"></script>
 <script src="agent.js"></script>
 </body>
 </html>

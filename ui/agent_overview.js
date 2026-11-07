@@ -9,6 +9,7 @@ window.AgentOverview = (() => {
 
   /** 按完整路径和会话 ID 建模；标签关联、独立会话、同名 Feat 和多子代理不会互相覆盖。 */
   function build(ss, catalog, tagged, selection, at = now()) {
+    ss = ss.filter((s) => !s.archived_at && !s.stored_at);
     const nodes = new Map(), edges = new Map(), sessionNodes = [];
     const featIndex = new Map(catalog.flatMap((a) => a.feats.map((f) => [key(f.path), { ...f, app: a.app }])));
     const findFeat = (path) => featIndex.get(key(path));
@@ -85,14 +86,43 @@ window.AgentOverview = (() => {
     return { nodes: [...nodes.values()], edges: [...edges.values()], sessions: sessionNodes };
   }
 
-  let model = { nodes: [], edges: [], sessions: [] }, selected = '', mode = 'graph', signature = '';
+  let model = { nodes: [], edges: [], sessions: [] }, selected = '', signature = '';
   const tagged = new Map(), loads = new Map(), hot = new Map();
   let drawQueued = false;
+  // 下方操作区：所选 Agent 的真实终端（与会话页签共用同一 xterm 实例）；子代理没有独立 PTY，归入父会话。
+  const DOCK_KEY = 'fc-agent-ov-dock', SPLIT_KEY = 'fc-agent-ov-split';
+  const read = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+  const write = (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) { /* 存储不可用时只保留本次选择 */ } };
+  const DOCK_VISIBLE_KEY = 'fc-agent-overview-dock-visible';
+  let dockId = read(DOCK_KEY), dockSig = '', dockVisible = read(DOCK_VISIBLE_KEY) !== '0';
+  // 只为新出现的卡片和连线播放一次入场；状态刷新、尺寸变化重画不重复播放。
+  // 记录首次出现时间：入场期间若被重画，按已过时间续播，不因频繁刷新被截断或重来。
+  const seenNodes = new Map(), seenEdges = new Map(), INTRO = 640;
+  /** 返回入场类名与续播延迟；超过入场时长返回 null。 */
+  function intro(seen, id) {
+    const t = performance.now();
+    if (!seen.has(id)) seen.set(id, t);
+    const age = t - seen.get(id);
+    return age < INTRO ? { delay: age > 0 ? ` style="animation-delay:${-Math.round(age)}ms"` : '' } : null;
+  }
+  /** 卡片对应的终端归属：会话即自身，子代理归父会话；流程图与 Feat 没有输入通道。 */
+  const dockTarget = (n) => (n && (n.kind === 'session' || n.kind === 'worker') ? n.session : '');
+
+  /** 收纳或归档的来源不因主窗口选中而重新进入概览；手动启用的会话仍可显示。 */
+  function overviewSelection() {
+    if (!mainSel) return null;
+    const kind = mainSel.featPath ? 'feat' : 'flow', path = mainSel.featPath || mainSel.path;
+    const owners = [...S.values()].filter((s) => sourceOf(s).kind === kind && key(sourceOf(s).path) === key(path));
+    if (owners.length && !owners.some((s) => !s.archived_at && !s.stored_at)) return null;
+    if (mainSel.featPath && /^已关闭/.test(featEntry(path)?.status || '') && !list().some((s) => key(s.feat) === key(path))) return null;
+    return mainSel;
+  }
 
   /** 只加载参与总览的 Feat 标签节点；失败显示可重试入口，不把失败当作无关联。 */
   function loadRelations() {
     const paths = new Set(list().map((s) => s.feat).filter(Boolean));
-    if (mainSel?.featPath) paths.add(mainSel.featPath);
+    const selection = overviewSelection();
+    if (selection?.featPath) paths.add(selection.featPath);
     for (const path of paths) {
       const k = key(path), f = featEntry(path);
       if (!f || loads.has(k)) continue;
@@ -135,45 +165,130 @@ window.AgentOverview = (() => {
     if (!g) return;
     const set = selected && chain(selected);
     g.classList.toggle('filtered', !!set);
-    $$('.rel-node', g).forEach((el) => { el.classList.toggle('lit', !!set && set.has(el.dataset.rel)); el.classList.toggle('selected', el.dataset.rel === selected); el.setAttribute('aria-pressed', String(el.dataset.rel === selected)); });
+    $$('.rel-node', g).forEach((el) => { el.classList.toggle('lit', !!set && set.has(el.dataset.rel)); el.classList.toggle('selected', el.dataset.rel === selected); el.classList.toggle('docked', !!dockId && el.dataset.rel === sessionId(dockId)); el.setAttribute('aria-pressed', String(el.dataset.rel === selected)); });
     $$('[data-from]', g).forEach((el) => el.classList.toggle('lit', !!set && set.has(el.dataset.from) && set.has(el.dataset.to)));
   }
 
-  /** 卡片完整路径与状态放在原生提示中，图上仅保留标题、状态、打开按钮。 */
+  /** 卡片完整路径与状态放在原生提示中，图上仅保留标题、状态、打开按钮；新卡片按列先后入场。 */
   function card(n) {
     const main = n.kind === 'flow' ? !mainSel?.featPath && key(mainSel?.path) === key(n.path) : n.kind === 'feat' && key(mainSel?.featPath) === key(n.path);
     const clockHtml = n.kind === 'session' ? `<span data-tk="${esc(n.session)}">${esc(timeText(n.source))}</span>` : n.kind === 'worker' && n.source.running ? `<span data-wk="${esc(n.session)}/${esc(n.worker)}">${clock(now() - n.source.t0)}</span>` : '';
-    const icon = n.kind === 'flow' ? flowIcon : n.kind === 'feat' ? '<i class="rel-dot" aria-hidden="true"></i>' : bot();
-    return `<div class="rel-node rel-${n.kind} v-${n.state}" data-rel="${esc(n.id)}" tabindex="0" role="button" aria-pressed="false" aria-label="${esc(n.label + '，' + n.detail)}" title="${esc([n.label, n.detail, n.kind === 'flow' || n.kind === 'feat' ? n.path : '', '单击高亮关联，双击打开'].filter(Boolean).join('\n'))}">
-      ${icon}<div class="rel-copy"><b>${esc(n.label)}</b><small><span>${esc(n.detail)}</span>${clockHtml}</small></div>${main ? '<span class="mt">主窗口</span>' : ''}${n.kind === 'session' ? `<button class="rel-open" data-open="${esc(n.session)}">打开</button>` : ''}</div>`;
-  }
-
-  /** 关系图的可访问列表视图；打开和定位仍使用原有委托事件。 */
-  function tableView() {
-    return `<div class="rel-table-wrap"><table class="rel-table"><caption>会话与流程图、Feat 的关联</caption><thead><tr><th>会话</th><th>Feat</th><th>流程图 / 节点</th><th>状态</th></tr></thead><tbody>${list().sort(byUrgency).map((s) => `<tr><td><button data-open="${esc(s.id)}">${esc(s.title)}</button></td><td>${s.feat ? `<button data-feat="${esc(s.id)}">${esc(s.feat_code || base(s.feat))}</button>` : '—'}</td><td>${refsOf(s).map((r) => `<button data-ref="${esc(r.flow)}" data-node="${esc(r.node)}">${esc(refLabel(r))}</button>`).join(' ') || '—'}</td><td>${stText(s)} <span data-tk="${esc(s.id)}">${esc(timeText(s))}</span></td></tr>`).join('')}</tbody></table></div>`;
+    const icon = n.kind === 'flow' ? flowIcon : n.kind === 'feat' ? `<span class="rel-icon rel-feat-icon" aria-hidden="true">${ICON.feat}</span>` : bot();
+    const fresh = intro(seenNodes, n.id);
+    const tip = n.kind === 'session' ? '单击在下方终端操作，双击在页签打开' : n.kind === 'worker' ? '子代理随父会话运行；单击在下方显示父会话终端' : '单击高亮关联，双击打开';
+    return `<div class="rel-node rel-${n.kind} v-${n.state}${fresh ? ' rel-in' : ''}" data-rel="${esc(n.id)}"${fresh ? fresh.delay : ''} tabindex="0" role="button" aria-pressed="false" aria-label="${esc(n.label + '，' + n.detail)}" title="${esc([n.label, n.detail, n.source?.api_error, n.kind === 'flow' || n.kind === 'feat' ? n.path : '', tip].filter(Boolean).join('\n'))}">
+      ${icon}<div class="rel-copy"><b>${esc(n.label)}</b><small><span>${esc(n.detail)}</span>${clockHtml}</small></div>${main ? '<span class="mt">主窗口</span>' : ''}${n.kind === 'session' ? `<button class="rel-open" data-open="${esc(n.session)}" title="在会话页签中打开" aria-label="在页签中打开 ${esc(n.label)}">${ICON.tabOpen}</button>` : ''}</div>`;
   }
 
   /** 按结构签名更新总览，普通心跳不重建卡片；关联查询与状态事件只补真实数据。 */
   function render() {
     const ov = $('#ov');
-    if (!ov.querySelector('.rel-content')) {
-      ov.innerHTML = '<div class="attn"></div><div class="rel-tools"><span class="rel-load" role="status"></span><button class="rel-mode" data-rel-mode="1">列表视图</button></div><div class="rel-content"></div>';
-      signature = '';
-    }
-    const items = attnItems(), notice = `<span class="attn-l">${items.length ? '需要你处理' : '目前没有需要你处理的会话'}</span>${items.join('')}`;
-    if ($('.attn', ov).innerHTML !== notice) $('.attn', ov).innerHTML = notice;
+    if (!ov.querySelector('.rel-content')) shell(ov);
     loadRelations();
-    model = build(list(), apps, tagged, mainSel);
+    model = build(list(), apps, tagged, overviewSelection());
     if (!model.nodes.some((n) => n.id === selected)) selected = '';
     const errors = [...loads.values()].filter((v) => v.error), pending = [...loads.values()].some((v) => v.pending);
     $('.rel-load', ov).innerHTML = errors.length ? '<button data-rel-retry="1">部分 Feat 关联读取失败，点击重试</button>' : pending ? '读取 Feat 关联中…' : '';
-    const sig = JSON.stringify([mode, mainSel, model.nodes.map(({ source, owners, ...n }) => n), model.edges]);
+    const sig = JSON.stringify([mainSel, model.nodes.map(({ source, owners, ...n }) => n), model.edges]);
     if (sig !== signature) {
       signature = sig;
-      $('.rel-mode', ov).textContent = mode === 'graph' ? '列表视图' : '关系图';
-      $('.rel-content', ov).innerHTML = !model.nodes.length ? '<div class="ovempty">还没有会话。点「新建会话」，关联流程图或 Feat 后即可查看关系。</div>' : mode === 'table' ? tableView() : `<div class="rel-scroll"><div class="rel-graph" id="rel-graph" role="group" aria-label="流程图、Feat 与 Claude Code 会话关系图"><svg class="rel-edges" aria-hidden="true"></svg><h3>流程图</h3><h3>Feat</h3><h3>Claude Code 会话</h3><div class="rel-col">${model.nodes.filter((n) => n.kind === 'flow').map(card).join('') || '<p class="rel-empty">尚未关联流程图</p>'}</div><div class="rel-col">${model.nodes.filter((n) => n.kind === 'feat').map(card).join('') || '<p class="rel-empty">未关联 Feat 的会话直接连接流程图</p>'}</div><div class="rel-col">${model.sessions.map(card).join('') || '<p class="rel-empty">暂无关联会话</p>'}</div></div></div><div class="rel-legend"><span><i class="live"></i>运行中</span><span><i class="wait"></i>等待确认</span><span><i class="conflict"></i>异常 / 同文件修改</span><span><i class="collab"></i>协作消息</span><span><i class="worker"></i>子代理</span></div><p class="hint">单击高亮关联，再点一次或点空白处恢复；双击图、Feat 或会话打开。连线依据实际关联和最近 30 分钟活动，同文件提醒不代表已发生内容冲突。</p>`;
+      const flows = model.nodes.filter((n) => n.kind === 'flow'), feats = model.nodes.filter((n) => n.kind === 'feat');
+      const arcs = model.edges.some((e) => e.kind === 'collab' || e.kind === 'conflict');
+      $('.rel-content', ov).innerHTML = !model.nodes.length ? '<div class="ovempty">还没有会话。点「新建会话」，关联流程图或 Feat 后即可查看关系。</div>' : `<div class="rel-scroll"><div class="rel-graph${arcs ? ' has-arcs' : ''}" id="rel-graph" role="group" aria-label="流程图、Feat 与 Claude Code 会话关系图"><svg class="rel-edges" aria-hidden="true"></svg><div class="rel-col c0" aria-label="流程图">${flows.map(card).join('') || '<p class="rel-empty">尚未关联流程图</p>'}</div><div class="rel-col c1" aria-label="Feat">${feats.map(card).join('') || '<p class="rel-empty">未关联 Feat 的会话直接连接流程图</p>'}</div><div class="rel-col c2" aria-label="会话">${model.sessions.map(card).join('') || '<p class="rel-empty">暂无关联会话</p>'}</div></div></div>`;
+    }
+    syncDock();
+    scheduleDraw();
+  }
+
+  /** 总览骨架只建一次：上方关系图、可拖动分隔条、下方终端操作区；终端容器在重绘间保持不变。 */
+  function shell(ov) {
+    ov.innerHTML = `<div class="ov-top"><div class="rel-tools"><span class="rel-load" role="status"></span><button data-dock-toggle="1" aria-controls="ovDock" aria-expanded="true">隐藏底栏</button></div><div class="rel-content"></div></div>
+      <div class="ov-split" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整关系图与终端高度" title="上下拖动调整高度；双击恢复默认"></div>
+      <section class="ov-dock" id="ovDock" aria-label="Agent 终端"><header class="dock-head"></header><div class="dock-body"><div class="dock-term" id="ovTerm"></div><div class="dock-empty"></div></div></section>`;
+    signature = ''; dockSig = '';
+    const ratio = parseFloat(read(SPLIT_KEY));
+    if (ratio > 0 && ratio < 1) ov.style.setProperty('--dock', ratio * 100 + '%');
+    new ResizeObserver(() => { if (active === 'OV' && dockVisible && dockId) fitTerm(dockId); }).observe($('#ovTerm', ov));
+    setDockVisible(dockVisible, false);
+  }
+
+  /** 显隐底栏与分隔条并记住选择；保留所选会话及终端实例，重新显示时恢复尺寸。 */
+  function setDockVisible(visible, remember = true) {
+    dockVisible = visible;
+    if (remember) write(DOCK_VISIBLE_KEY, visible ? '1' : '0');
+    const ov = $('#ov'), button = $('[data-dock-toggle]', ov);
+    $('.ov-dock', ov).hidden = !visible;
+    $('.ov-split', ov).hidden = !visible;
+    button.textContent = visible ? '隐藏底栏' : '显示底栏';
+    button.setAttribute('aria-expanded', String(visible));
+    if (visible) {
+      syncDock();
+      requestAnimationFrame(() => { if (active === 'OV' && dockVisible && dockId) fitTerm(dockId); });
     }
     scheduleDraw();
+  }
+
+  /** 操作区标题：会话切换入口、状态与启动 / 重试，以及在页签打开。不显示聊天气泡或推测回复。 */
+  function dockHead(ss, s) {
+    if (!ss.length) return '<span class="dock-title">暂无 Agent 会话</span>';
+    const picks = ss.map((x) => `<button class="dock-pick v-${vs(x)}${x === s ? ' on' : ''}" data-dock="${esc(x.id)}" aria-pressed="${x === s}" title="${esc(x.title + '：' + stText(x))}">${bot()}<span>${esc(x.title)}</span></button>`).join('');
+    let state = '';
+    if (s) {
+      const starting = startingSessions.has(s.id), error = startErrors.get(s.id) || (vs(s) === 'err' ? `CLI 异常退出（代码 ${s.exit_code ?? '?'}）` : '');
+      state = s.running ? `<span class="dock-st v-${vs(s)}" title="${esc(s.api_error || '')}">${stText(s)} <span data-tk="${esc(s.id)}">${esc(timeText(s))}</span></span>`
+        : starting ? '<span class="dock-st v-boot">正在连接 CLI…</span>'
+        : `<span class="dock-st${error ? ' v-err' : ''}" title="${esc(error)}">${esc(error || '待命，按 Enter 启动')}</span><button class="dock-btn" data-dock-start="${esc(s.id)}">${error ? '重试' : '启动'}</button>`;
+      state += `<button class="dock-icon" data-open="${esc(s.id)}" title="在会话页签中打开" aria-label="在页签中打开 ${esc(s.title)}">${ICON.tabOpen}</button>`;
+    }
+    return `<div class="dock-picks" role="group" aria-label="选择 Agent">${picks}</div>${state}`;
+  }
+
+  /** 同步操作区：所选会话被收纳、归档或删除时退回选择入口；只在终端换容器时重排，普通刷新不触碰终端。 */
+  function syncDock() {
+    const ov = $('#ov'), host = $('#ovTerm', ov);
+    if (!host) return;
+    const ss = list().sort(byUrgency);
+    if (dockId && !ss.some((x) => x.id === dockId)) setDock('');
+    const s = dockId ? S.get(dockId) : null;
+    const sig = JSON.stringify([dockId, ss.map((x) => [x.id, x.title, vs(x)]), s && [s.running, s.api_error, startingSessions.has(s.id), startErrors.get(s.id) || '', s.exit_code]]);
+    if (sig !== dockSig) {
+      dockSig = sig;
+      $('.dock-head', ov).innerHTML = dockHead(ss, s);
+      $('.dock-empty', ov).innerHTML = ss.length
+        ? `${bot()}<b>选择一个 Agent，直接在这里输入</b><span>单击上方 Agent 卡片或这一栏的会话名 · <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>`
+        : '<b>新建会话后，可以在这里直接与 Agent 对话</b><button class="dock-btn" data-dock-new="1">新建会话</button>';
+    }
+    $('.ov-dock', ov).classList.toggle('docked', !!s);
+    if (!s || active !== 'OV' || !dockVisible) return;
+    const moved = !terms.has(s.id) || terms.get(s.id).el.parentNode !== host;
+    const t = mountTerm(s.id, host);
+    if (moved) {
+      t.el.classList.remove('term-in'); void t.el.offsetWidth; t.el.classList.add('term-in');
+      fitTerm(s.id);
+      requestAnimationFrame(() => fitTerm(s.id));
+    }
+  }
+
+  /** 切换操作区会话：原终端回到页签容器（隐藏），新会话挂入；同一实例保留内容、滚动与未发送输入。 */
+  function setDock(id, focus) {
+    const host = $('#ovTerm');
+    if (id !== dockId) {
+      if (host) for (const x of terms.values()) if (x.el.parentNode === host) { x.el.hidden = true; $('#terms').appendChild(x.el); }
+      dockId = id;
+      write(DOCK_KEY, id);
+    }
+    if (host) syncDock();
+    applyHighlight();
+    if (focus && dockVisible && id && S.get(id)) terms.get(id)?.term.focus();
+  }
+
+  /** 拖动或方向键调整上下比例；终端至少保留可输入高度，关系图保留可读高度。 */
+  function resizeSplit(ov, clientY) {
+    const r = ov.getBoundingClientRect();
+    const dock = Math.min(r.height - 120, Math.max(180, r.bottom - clientY));
+    const ratio = Math.min(.85, Math.max(.15, dock / r.height));
+    ov.style.setProperty('--dock', ratio * 100 + '%');
+    return ratio;
   }
 
   /** 从实际卡片边界计算曲线；滚动、缩放、窗口改尺寸后仍准确连接，右侧弧线保留独立空间。 */
@@ -197,7 +312,11 @@ window.AgentOverview = (() => {
       const showCaption = arc && !captions.has(e.label);
       if (showCaption) captions.add(e.label);
       const caption = showCaption ? `<text class="rel-edge-label" data-from="${esc(e.from)}" data-to="${esc(e.to)}" x="${Math.max(a.r, b.r) + 14}" y="${(a.y + b.y) / 2 - 5}"><title>${esc(e.label)}</title>${esc(label.length > 15 ? label.slice(0, 14) + '…' : label)}</text>` : '';
-      return `<path class="rel-edge ${e.kind} v-${e.state}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" d="${d}"><title>${esc(e.label)}</title></path>${caption}`;
+      // 新关系只入场一次：实线用描边生长，虚线（运行、异常、子代理、同文件）淡入，避免改写虚线节奏。
+      const fresh = intro(seenEdges, e.id);
+      const dashed = e.kind === 'worker' || e.kind === 'conflict' || (e.kind === 'session' && ['run', 'tool', 'boot', 'err'].includes(e.state));
+      const cls = fresh ? (dashed ? ' rel-fade' : ' rel-grow') : '';
+      return `<path class="rel-edge ${e.kind} v-${e.state}${cls}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" d="${d}"${cls === ' rel-grow' ? ' pathLength="1"' : ''}${fresh ? fresh.delay : ''}><title>${esc(e.label)}</title></path>${caption}`;
     });
     const svg = $('.rel-edges', g);
     svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
@@ -217,7 +336,7 @@ window.AgentOverview = (() => {
     $$('#rel-graph .rel-node').forEach((el) => { if (el.dataset.rel === id) el.classList.toggle('hot', on); });
     $$('#rel-graph .rel-edge').forEach((el) => { if (el.dataset.from === id || el.dataset.to === id) el.classList.toggle('hot', on); });
   }
-  /** 真实活动让会话和所属图短暂高亮；同一对象的新活动延长本次显示，不累积定时器。 */
+  /** 真实活动让会话和所属图短暂高亮并扩散一圈；同一对象的新活动重新起跳并延长显示，不累积定时器。 */
   function activity(s, a) {
     if (active !== 'OV') return;
     const ids = [sessionId(s.id)];
@@ -225,7 +344,8 @@ window.AgentOverview = (() => {
     for (const id of ids) {
       clearTimeout(hot.get(id));
       applyHot(id, true);
-      hot.set(id, setTimeout(() => { hot.delete(id); applyHot(id, false); }, 900));
+      $$('#rel-graph .rel-node').forEach((el) => { if (el.dataset.rel === id) { el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); } });
+      hot.set(id, setTimeout(() => { hot.delete(id); applyHot(id, false); }, 1400));
     }
   }
 
@@ -244,18 +364,53 @@ window.AgentOverview = (() => {
   /** 一次性安装委托，渲染替换卡片不会累积监听或影响其他会话页签。 */
   function init() {
     const ov = $('#ov');
+    const target = (id) => dockTarget(model.nodes.find((x) => x.id === id));
     ov.addEventListener('click', (e) => {
-      if (e.target.closest('[data-rel-mode]')) { mode = mode === 'graph' ? 'table' : 'graph'; render(); return; }
+      if (e.target.closest('[data-dock-toggle]')) { setDockVisible(!dockVisible); return; }
       if (e.target.closest('[data-rel-retry]')) { for (const [k, v] of loads) if (v.error) loads.delete(k); render(); return; }
       if (e.target.closest('[data-open]')) return;
+      const pick = e.target.closest('[data-dock]');
+      if (pick) { selected = sessionId(pick.dataset.dock); setDock(pick.dataset.dock, true); return; }
+      const start = e.target.closest('[data-dock-start]');
+      if (start) { startErrors.delete(start.dataset.dockStart); startSession(start.dataset.dockStart); terms.get(start.dataset.dockStart)?.term.focus(); return; }
+      if (e.target.closest('[data-dock-new]')) { openNewBox(); return; }
       const n = e.target.closest('[data-rel]');
-      if (n) highlight(n.dataset.rel); else if (e.target.closest('.rel-graph')) { selected = ''; applyHighlight(); }
+      if (n) { highlight(n.dataset.rel); const id = target(n.dataset.rel); if (id) setDock(id, true); }
+      else if (e.target.closest('.rel-graph')) { selected = ''; applyHighlight(); }
     });
-    ov.addEventListener('dblclick', (e) => { const n = e.target.closest('[data-rel]'); if (n && !e.target.closest('[data-open]')) openNode(n.dataset.rel); });
+    ov.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.ov-split')) { ov.style.removeProperty('--dock'); write(SPLIT_KEY, ''); return; }
+      const n = e.target.closest('[data-rel]'); if (n && !e.target.closest('[data-open]')) openNode(n.dataset.rel);
+    });
     ov.addEventListener('keydown', (e) => {
+      // 终端内的 Esc、Enter 属于 CLI（中断、发送），不交给关系图处理。
+      if (e.target.closest('.ov-dock')) return;
+      const split = e.target.closest('.ov-split');
+      if (split && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const dock = $('.ov-dock', ov).getBoundingClientRect();
+        write(SPLIT_KEY, String(resizeSplit(ov, dock.top + (e.key === 'ArrowUp' ? -24 : 24))));
+        return;
+      }
       const n = e.target.closest('[data-rel]');
       if (e.key === 'Escape') { selected = ''; applyHighlight(); }
-      if (n && e.target === n && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); if (e.key === ' ') highlight(n.dataset.rel); else openNode(n.dataset.rel); }
+      if (n && e.target === n && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        if (e.key === ' ') { highlight(n.dataset.rel); const id = target(n.dataset.rel); if (id) setDock(id, false); } else openNode(n.dataset.rel);
+      }
+    });
+    ov.addEventListener('pointerdown', (e) => {
+      const split = e.target.closest('.ov-split');
+      if (!split || e.button !== 0) return;
+      e.preventDefault();
+      split.setPointerCapture(e.pointerId);
+      split.classList.add('drag');
+      let ratio = 0;
+      const move = (ev) => { ratio = resizeSplit(ov, ev.clientY); };
+      const up = () => { split.classList.remove('drag'); split.removeEventListener('pointermove', move); if (ratio) write(SPLIT_KEY, String(ratio)); };
+      split.addEventListener('pointermove', move);
+      split.addEventListener('pointerup', up, { once: true });
+      split.addEventListener('pointercancel', up, { once: true });
     });
     new ResizeObserver(scheduleDraw).observe(ov);
     window.addEventListener('resize', scheduleDraw);

@@ -7,6 +7,20 @@
       "runtimeArgs": ["scripts/dev_server.py", "--port", "8765", "--samples", "tests/samples"],
       "port": 8765,
       "url": "http://127.0.0.1:8765"
+    },
+    {
+      "name": "focus-mode-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/dev_server.py", "--port", "19770", "--samples", "tests/samples"],
+      "port": 19770,
+      "url": "http://127.0.0.1:19770"
+    },
+    {
+      "name": "agent-info-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/dev_server.py", "--port", "19771", "--samples", "tests/samples"],
+      "port": 19771,
+      "url": "http://127.0.0.1:19771"
     }
   ]
 }

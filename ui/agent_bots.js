@@ -14,15 +14,19 @@
   const sessions = new Map();
   // 初次列表返回前，机器人显示启动状态并禁止创建，避免把“尚未加载”误认成“没有主会话”。
   let ready = false, startupError = '';
-  const RANK = { err: 0, wait: 1, multi: 2, run: 3, done: 4, has: 5, none: 6 };
-  const TEXT = { err: '异常退出', wait: '等你确认', multi: '多个 subagent 运行中', run: '运行中', done: '运行完成，还没查看', has: '空闲', none: '还没有会话' };
-  const SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="an" d="M8 1.7v2"/><circle class="ab" cx="8" cy="1.4" r="1"/>'
+  const RANK = { apierr: 0, err: 0, wait: 1, multi: 2, run: 3, interrupted: 4, done: 4, has: 5, none: 6 };
+  const TEXT = { apierr: 'API 错误', err: '异常退出', wait: '等你确认', multi: '多个 subagent 运行中', run: '运行中', interrupted: '已中断', done: '运行完成，还没查看', has: '空闲', none: '还没有会话' };
+  // 图形含天线和底部描边，以 y=7 为视窗中心，保持机器人在圆形容器中视觉居中。
+  const SVG = '<svg viewBox="0 -1 16 16" aria-hidden="true"><path class="an" d="M8 1.7v2"/><circle class="ab" cx="8" cy="1.4" r="1"/>'
     + '<rect class="hd" x="2.4" y="3.7" width="11.2" height="9.4" rx="2.7"/><circle class="ey" cx="5.9" cy="8.3" r="1.1"/><circle class="ey" cx="10.1" cy="8.3" r="1.1"/>'
     + '<path class="ar" d="M.9 7.4v2.6M15.1 7.4v2.6"/></svg>';
   const key = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
 
   /** 单个会话的颜色状态；输入为后端会话视图，输出为 RANK 的键（none 除外）。 */
   function stateOf(s) {
+    if (s.stored_at) return 'has';
+    if (s.running && s.status === 'interrupted') return 'interrupted';
+    if (s.running && s.status === 'apierr') return 'apierr';
     if (s.status === 'err') return 'err';
     if (s.running && s.status === 'wait') return 'wait';
     if (s.running && (s.status === 'run' || s.status === 'boot')) {
@@ -47,7 +51,7 @@
     const k = key(path), all = [...sessions.values()].filter((s) => !s.archived_at);
     return {
       main: oldest(all.filter((s) => !s.feat && key(s.links?.[0]?.flow) === k)),
-      guests: all.filter((s) => (s.feat || key(s.links?.[0]?.flow) !== k) && touches(s, k)),
+      guests: all.filter((s) => !s.stored_at && (s.feat || key(s.links?.[0]?.flow) !== k) && touches(s, k)),
     };
   }
 
@@ -68,17 +72,17 @@
     const fb = document.getElementById('btn-feat-bot');
     fb.disabled = !featPath || !ready;
     const fm = featPath ? featMain(featPath) : null;
-    paint(fb, fm ? stateOf(fm) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : fm ? `主会话「${fm.title}」：${TEXT[stateOf(fm)]}，点击打开` : '这个 Feat 还没有会话，点击新建');
+    paint(fb, fm ? stateOf(fm) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : fm ? `主会话「${fm.title}」：${fm.stored_at ? '已收纳，打开后可启用' : TEXT[stateOf(fm)] + (fm.api_error ? '\n' + fm.api_error : '')}，点击打开` : '这个 Feat 还没有会话，点击新建');
 
     const flowPath = st.cur || '';
     const mb = document.getElementById('btn-flow-bot'), gb = document.getElementById('btn-flow-guest');
     mb.disabled = !flowPath || !ready;
     const { main, guests } = flowPath ? flowParts(flowPath) : { main: null, guests: [] };
-    paint(mb, main ? stateOf(main) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : main ? `主会话「${main.title}」：${TEXT[stateOf(main)]}，点击打开` : '这张图还没有主会话，点击新建');
+    paint(mb, main ? stateOf(main) : 'none', !ready ? startupError || 'Agent 正在启动…（最多 30 秒）' : main ? `主会话「${main.title}」：${main.stored_at ? '已收纳，打开后可启用' : TEXT[stateOf(main)] + (main.api_error ? '\n' + main.api_error : '')}，点击打开` : '这张图还没有主会话，点击新建');
     gb.hidden = !guests.length;
     if (guests.length) {
       const running = guests.filter((s) => ['run', 'multi', 'wait'].includes(stateOf(s))).length;
-      const lines = guests.map((s) => `「${s.title}」${s.feat_code ? ' ' + s.feat_code : ''}：${TEXT[stateOf(s)]}`);
+      const lines = guests.map((s) => `「${s.title}」${s.feat_code ? ' ' + s.feat_code : ''}：${TEXT[stateOf(s)]}${s.api_error ? '\n' + s.api_error : ''}`);
       paint(gb, stateOf(urgent(guests)), `客会话（来自其他 Feat 或主图，协作处理本图），${running} 个运行中：\n${lines.join('\n')}\n点击打开最需要处理的一个`, `客 ${running}`);
     }
   }
@@ -116,12 +120,12 @@
   /** 运行中、正在处理当前 Feat 某个任务的会话，按紧急程度排序。 */
   function taskSessions(featPath) {
     const k = key(featPath);
-    return [...sessions.values()].filter((s) => !s.archived_at && s.running && s.task && key(s.task.feat) === k).sort(byUrgency);
+    return [...sessions.values()].filter((s) => !s.archived_at && !s.stored_at && s.running && s.task && key(s.task.feat) === k).sort(byUrgency);
   }
   /** 运行中、属于当前 Feat（关联了该 Feat，或正在做它的某个任务）的会话，按紧急程度排序。 */
   function featSessions(featPath) {
     const k = key(featPath);
-    return [...sessions.values()].filter((s) => !s.archived_at && s.running && (key(s.feat) === k || (s.task && key(s.task.feat) === k))).sort(byUrgency);
+    return [...sessions.values()].filter((s) => !s.archived_at && !s.stored_at && s.running && (key(s.feat) === k || (s.task && key(s.task.feat) === k))).sort(byUrgency);
   }
   /** 会话「正在做」的一行文字：等你确认 / 异常优先，其次最近活动，都没有时用状态名。 */
   function doingText(s) {

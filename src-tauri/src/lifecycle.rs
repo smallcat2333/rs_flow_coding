@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-use crate::{db, feat, lock, scan, write_atomic};
+use crate::{agent, db, feat, lock, scan, write_atomic};
 
 /// 状态变更串行锁，避免多个窗口同时读改写同一份 Chart 元数据。
 static STATUS_WRITE: Mutex<()> = Mutex::new(());
@@ -90,7 +90,7 @@ pub fn set_feat_status(app: tauri::AppHandle, path: String, status: String, expe
     if !path.is_file() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("md")) {
         return Err("Feat 档案不存在或不是 Markdown 文件".into());
     }
-    write_locked(path, || {
+    let result = write_locked(path, || {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         if db::hash(&text) != expected_hash { return Err("档案已变化，请刷新后重试".into()); }
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -99,7 +99,12 @@ pub fn set_feat_status(app: tauri::AppHandle, path: String, status: String, expe
         app.emit("md-changed", crate::ChangeEvent {
             path: path.to_string_lossy().into_owned(), hash: db::hash(&text), source: "user".into(),
         }).map_err(|e| e.to_string())
-    })
+    });
+    if result.is_ok() {
+        // 状态行变化可能改变关联 Agent 会话的自动收纳（已关闭收纳、重开恢复），不依赖文件监听时序。
+        agent::source_changed(path);
+    }
+    result
 }
 
 /// 保存本机侧栏折叠与历史筛选，保留项目根目录及扫描缓存。

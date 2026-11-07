@@ -309,20 +309,27 @@
 
   const storedIdleHours = Number(localStorage.getItem('fc-mock-agent-idle-hours') ?? '1');
   let mockIdleHours = Number.isFinite(storedIdleHours) && storedIdleHours >= 0 && storedIdleHours <= 8760 ? storedIdleHours : 1;
-  let mockClaude = { claudePath: '', extraArgs: '', found: '(浏览器模拟) claude.exe', error: '' };
+  let mockClaude = { claudePath: '', extraArgs: '', viewMode: 'default', bypassPermissions: false, found: '(浏览器模拟) claude.exe', error: '' };
   Object.assign(api, {
     get_float_enabled: async () => localStorage.getItem('fc-mock-float') !== '0',
     set_float_enabled: async ({ enabled }) => { localStorage.setItem('fc-mock-float', enabled ? '1' : '0'); },
-    agent_get_lifecycle: async () => ({ idleHours: mockIdleHours }),
-    agent_set_lifecycle: async ({ idleHours }) => {
-      if (!Number.isFinite(idleHours) || idleHours < 0 || idleHours > 8760) throw '空闲存活时间须为 0～8760 小时';
-      mockIdleHours = idleHours;
-      localStorage.setItem('fc-mock-agent-idle-hours', String(idleHours));
-      return { idleHours };
+    agent_get_lifecycle: async () => ({ idleHours: mockIdleHours, archiveRetentionDays: Number(localStorage.getItem('fc-mock-archive-days') ?? '180') }),
+    agent_set_lifecycle: async ({ idleHours, archiveRetentionDays }) => {
+      if (idleHours != null) {
+        if (!Number.isFinite(idleHours) || idleHours < 0 || idleHours > 8760) throw '空闲存活时间须为 0～8760 小时';
+        mockIdleHours = idleHours;
+        localStorage.setItem('fc-mock-agent-idle-hours', String(idleHours));
+      }
+      if (archiveRetentionDays != null) {
+        if (!Number.isInteger(archiveRetentionDays) || archiveRetentionDays < 0 || archiveRetentionDays > 36500) throw '归档保留天数须为 0～36500 的整数';
+        localStorage.setItem('fc-mock-archive-days', String(archiveRetentionDays));
+      }
+      return { idleHours: mockIdleHours, archiveRetentionDays: Number(localStorage.getItem('fc-mock-archive-days') ?? '180') };
     },
     agent_get_settings: async () => ({ ...mockClaude }),
-    agent_set_settings: async ({ claudePath, extraArgs }) => {
-      mockClaude = { claudePath, extraArgs, found: claudePath || '(浏览器模拟) claude.exe', error: '' };
+    agent_set_settings: async ({ claudePath, extraArgs, viewMode = mockClaude.viewMode, bypassPermissions = mockClaude.bypassPermissions }) => {
+      if (!['default', 'focus'].includes(viewMode)) throw '显示模式应为标准或专注';
+      mockClaude = { claudePath, extraArgs, viewMode, bypassPermissions, found: claudePath || '(浏览器模拟) claude.exe', error: '' };
       return { ...mockClaude };
     },
     agent_test_settings: async ({ claudePath, extraArgs }) => {

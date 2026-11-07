@@ -24,8 +24,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[path = "agent_collab.rs"]
+mod collab;
 #[path = "agent_probe.rs"]
 mod probe;
+#[path = "agent_plan.rs"]
+mod plan;
+#[path = "agent_usage.rs"]
+mod usage;
+#[path = "agent_restart.rs"]
+mod restart;
+#[path = "agent_error.rs"]
+mod error_output;
+#[path = "agent_state.rs"]
+mod state;
+#[cfg(test)]
+#[path = "agent_state_native_test.rs"]
+mod state_native_tests;
+pub use plan::{enrich_hook as enrich_plan_hook, PlanSnapshot};
 
 /// 使用设置页当前输入检查 Claude CLI 启动和实际回复，不保存配置。
 #[tauri::command]
@@ -85,9 +101,18 @@ pub struct Meta {
     /// 续接时用 cli_session_id 指到最新对话记录。
     #[serde(default)]
     pub cli_session_id: String,
-    /// 归档时间（毫秒）；0 为活跃记录，归档满 180 天后清理 Flow Coding 记录。
+    /// 归档时间（毫秒）；0 为活跃记录，归档满保留天数（默认 180 天，可在设置中调整）后清理 Flow Coding 记录。
     #[serde(default)]
     pub archived_at: i64,
+    /// 收纳时间（毫秒）；0 为未收纳。收纳是会话退出概览但保留记录与来源占用的中间状态，
+    /// 与归档不同：不释放主会话名额、不参与到期清理，启用后原样恢复。
+    #[serde(default)]
+    pub stored_at: i64,
+    /// 手动收纳覆盖：None 跟随关联 Feat 的「已关闭」状态（自动收纳/恢复）；
+    /// Some(true) 手动收纳（Feat 未关闭也退出概览）；Some(false) 手动启用（Feat 已关闭仍留在概览）。
+    /// 用户请求与自动状态一致时回落为 None，恢复跟随。
+    #[serde(default)]
+    pub storage_override: Option<bool>,
 }
 
 /// 一条活动：时间、类型（prompt/read/edit/cmd/commit/worker/tool/msg/note/compact）、简述、
@@ -130,6 +155,10 @@ pub struct Metrics {
     pub used_tokens: Option<u64>,
     pub capacity: Option<u64>,
     pub used_percentage: Option<f64>,
+    /// CLI 按标价估算的本会话费用（美元），不等于实际账单。
+    pub cost_usd: Option<f64>,
+    /// 对话记录累计的主对话 token、请求数与耗时；记录不可读时为未知。
+    pub usage: Option<usage::Usage>,
     pub updated_at: i64,
 }
 
@@ -155,6 +184,8 @@ impl Metrics {
             used_tokens,
             capacity,
             used_percentage: used_tokens.zip(capacity).map(|(used, size)| used as f64 / size as f64 * 100.0),
+            cost_usd: p["cost"]["total_cost_usd"].as_f64().filter(|c| c.is_finite() && *c >= 0.0),
+            usage: None,
             updated_at: t,
         }
     }
@@ -182,7 +213,8 @@ pub fn enrich_statusline(p: &mut Value) {
     p["flow_coding_git_branch"] = json!(branch);
 }
 
-/// 运行状态（不持久化）。status：off 未运行 | boot 启动中 | idle 空闲 | run 运行中 | wait 等你确认 | err 异常退出。
+/// 运行状态（不持久化）：off 待命 | boot 启动中 | idle 空闲 | run 运行中 | wait 等待用户 | interrupted 已中断 | err 异常退出。
+/// apierr 为 API 重试或最终失败；interrupted 与 apierr 均可能仍在线，都不代表本轮正常完成。
 /// 停滞由前端按 beat 推导：run 且没有执行中的工具、60 秒没有 hook 活动。
 #[derive(Debug, Clone, Serialize)]
 pub struct Live {
@@ -195,12 +227,16 @@ pub struct Live {
     pub tool: String,
     pub tool_since: i64,
     pub wait_text: String,
+    /// 最近一次从终端输出识别到的 API 错误原文；为空表示没有待处理的错误。
+    pub api_error: String,
     pub focus: Option<NodeRef>,
     /// 正在处理的 Feat 任务（进程退出时清除）。
     pub task: Option<TaskRef>,
     pub workers: Vec<Worker>,
     /// 最近一次结构化状态上报；重启、清空或压缩上下文时失效，下一次状态上报恢复。
     pub metrics: Option<Metrics>,
+    /// CLI 原生任务列表的只读快照；与 Feat focus 的 task 字段独立。
+    pub plan: Option<PlanSnapshot>,
     pub exit_code: Option<u32>,
     /// 最近一轮结束（Stop）的时间；大于 seen 表示「运行完成、你还没看」。
     pub done: i64,
@@ -227,6 +263,10 @@ struct Entry {
     gen: u64,
     /// 用户点了停止：进程随后的退出算正常结束（TerminateProcess 的退出码是 1）。
     stopping: bool,
+    /// Esc/Ctrl+C 只登记中断请求；必须等明确 TUI 输出或 Hook 证据才转换状态。
+    interrupt_requested: bool,
+    /// 主回合在途工具（调用 ID、名称、开始时间），用于并行与迟到回报匹配。
+    tools: Vec<(String, String, i64)>,
     /// 持续空闲的起算点：进入 idle 的时间，或 idle 状态下最后一次用户终端输入的时间；
     /// /clear 等 SessionStart 也重算。空闲回收只认它，终端输出不动它（TUI 重绘不算活跃）。
     idle_since: i64,
@@ -235,12 +275,13 @@ struct Entry {
 }
 
 /// 全局会话表与 hooks 通道参数；idle_hours 缓存空闲超时设置（f64 位表示，小时，0 = 不回收），
-/// 供后台回收线程读，避免每次检查都读盘。
+/// archive_retention_days 缓存归档保留天数（0 = 不清理），供后台清扫线程读，避免每次检查都读盘。
 struct Hub {
     entries: Mutex<HashMap<String, Entry>>,
     port: u16,
     token: String,
     idle_hours: AtomicU64,
+    archive_retention_days: AtomicU64,
 }
 
 static HUB: OnceLock<Hub> = OnceLock::new();
@@ -330,7 +371,7 @@ fn hub() -> Result<&'static Hub, String> {
 
 /// 未运行状态的初始 Live。
 fn idle_live() -> Live {
-    Live { status: "off".into(), since: now(), turn: 0, turn_prompt: String::new(), beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), focus: None, task: None, workers: Vec::new(), metrics: None, exit_code: None, done: 0, seen: 0 }
+    Live { status: "off".into(), since: now(), turn: 0, turn_prompt: String::new(), beat: 0, tool: String::new(), tool_since: 0, wait_text: String::new(), api_error: String::new(), focus: None, task: None, workers: Vec::new(), metrics: None, plan: None, exit_code: None, done: 0, seen: 0 }
 }
 
 /// 读会话元数据文件；不存在返回空表，损坏直接报错（不覆盖用户数据）。
@@ -361,7 +402,7 @@ fn view(e: &Entry, with_acts: bool) -> Value {
         o.insert("title_locked".into(), json!(!kind.is_empty()));
         o.insert("source_kind".into(), json!(kind));
         o.insert("source_path".into(), json!(source));
-        o.insert("queued".into(), json!(e.queue.len()));
+        o.insert("queued".into(), json!(e.queue.len() + collab::queued(&e.meta.id)));
         o.insert("running".into(), json!(e.proc.is_some()));
         o.insert("compacting".into(), json!(e.compacting));
         if with_acts {
@@ -403,14 +444,18 @@ fn build_hub() -> Result<(), String> {
     let metas = load_metas()?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Agent 端口监听失败: {e}"))?;
     let port = listener.local_addr().map_err(|e| format!("读取 Agent 监听地址失败: {e}"))?.port();
+    // 空闲超时与归档保留天数缓存进 Hub，清扫线程不用每轮读盘；文件值非法时回落默认。
+    let settings = load_settings().unwrap_or_default();
+    let idle_hours = valid_idle_hours(settings.idle_hours).unwrap_or_else(|_| default_idle_hours());
+    let retention_days = valid_archive_retention_days(settings.archive_retention_days).unwrap_or_else(|_| default_archive_retention_days());
     let mut map = HashMap::new();
     let mut renamed = false;
     for m in metas {
-        let mut e = Entry { meta: m, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false };
+        let mut e = Entry { meta: m, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false, interrupt_requested: false, tools: Vec::new() };
         renamed |= normalize(&mut e);
         map.insert(e.meta.id.clone(), e);
     }
-    let expired = expired_archives(&map, now());
+    let expired = expired_archives(&map, now(), retention_ms(retention_days));
     if let Err(error) = remove_entries(&mut map, &expired) {
         eprintln!("清理归档 Agent 失败: {error}");
     }
@@ -419,20 +464,21 @@ fn build_hub() -> Result<(), String> {
             eprintln!("同步会话名写盘失败: {e}");
         }
     }
-    // 空闲超时缓存进 Hub，清扫线程不用每轮读盘；文件值非法时回落默认 1 小时。
-    let idle_hours = load_settings().ok().and_then(|s| valid_idle_hours(s.idle_hours).ok()).unwrap_or_else(default_idle_hours);
-    let _ = HUB.set(Hub { entries: Mutex::new(map), port, token: new_uuid(), idle_hours: AtomicU64::new(idle_hours.to_bits()) });
+    collab::init()?;
+    let _ = HUB.set(Hub { entries: Mutex::new(map), port, token: new_uuid(), idle_hours: AtomicU64::new(idle_hours.to_bits()), archive_retention_days: AtomicU64::new(retention_days as u64) });
     std::thread::spawn(move || {
         for s in listener.incoming().flatten() {
             std::thread::spawn(move || handle_conn(s));
         }
     });
     std::thread::spawn(idle_sweeper);
+    collab::start();
     Ok(())
 }
 
 /// 主窗口关闭、App 退出前保存 Agent 窗口位置并结束全部会话进程；对话历史由 Claude Code 保存，下次可续接。
 pub fn shutdown() {
+    collab::stop();
     if let Err(error) = save_window_geometry() {
         eprintln!("保存 Agent 窗口状态失败: {error}");
     }
@@ -466,24 +512,52 @@ fn default_idle_hours() -> f64 {
     1.0
 }
 
+/// 归档保留默认值：180 天。
+pub const DEFAULT_ARCHIVE_RETENTION_DAYS: u32 = 180;
+
+/// 默认归档保留天数（serde 缺省值用）。
+fn default_archive_retention_days() -> u32 {
+    DEFAULT_ARCHIVE_RETENTION_DAYS
+}
+
+/// 归档保留天数上限：36500 天（约 100 年），0 表示不自动清理。
+const ARCHIVE_RETENTION_DAYS_MAX: u32 = 36500;
+
+fn default_view_mode() -> String { "default".into() }
+
+fn valid_view_mode(mode: &str) -> Result<(), String> {
+    if matches!(mode, "default" | "focus") { Ok(()) }
+    else { Err("显示模式应为标准或专注".into()) }
+}
+
 /// 设置页「Claude Code」的启动项，存 `<数据目录>/agent/settings.json`。
 /// - `claude_path`：claude 可执行文件，空 = 自动查找；`.cmd` 结尾经 cmd.exe 启动；
 /// - `extra_args`：追加到每次启动（新建与续接）的命令行参数，空格分隔，含空格的值用双引号括起；
-/// - `idle_hours`：CLI 连续空闲该小时数后自动结束进程（0 = 不自动结束），由后台清扫线程执行。
+/// - `idle_hours`：CLI 连续空闲该小时数后自动结束进程（0 = 不自动结束），由后台清扫线程执行；
+/// - `archive_retention_days`：归档记录保留天数（0 = 不自动清理），到期由后台清扫线程删除 Flow Coding 记录。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeSettings {
     #[serde(default)]
     pub claude_path: String,
     #[serde(default)]
     pub extra_args: String,
+    /// Flow Coding 内的原生显示模式，旧配置保持标准；不修改 Claude Code 全局设置。
+    #[serde(default = "default_view_mode")]
+    pub view_mode: String,
+    /// 仅托管 CLI 启动时跳过权限确认，默认关闭，不修改全局配置。
+    #[serde(default)]
+    pub bypass_permissions: bool,
     /// 缺省 1 小时；旧版 settings.json 没有该字段时也按 1 小时处理。
     #[serde(default = "default_idle_hours")]
     pub idle_hours: f64,
+    /// 缺省 180 天；旧版 settings.json 没有该字段时也按 180 天处理。
+    #[serde(default = "default_archive_retention_days")]
+    pub archive_retention_days: u32,
 }
 
 impl Default for ClaudeSettings {
     fn default() -> Self {
-        Self { claude_path: String::new(), extra_args: String::new(), idle_hours: default_idle_hours() }
+        Self { claude_path: String::new(), extra_args: String::new(), view_mode: default_view_mode(), bypass_permissions: false, idle_hours: default_idle_hours(), archive_retention_days: default_archive_retention_days() }
     }
 }
 
@@ -496,6 +570,14 @@ fn valid_idle_hours(h: f64) -> Result<f64, String> {
         return Err("空闲小时数应在 0 - 8760 之间（0 表示不自动结束）".into());
     }
     Ok(h)
+}
+
+/// 校验归档保留天数：0–36500（0 = 不自动清理归档记录），整数由参数类型保证。
+fn valid_archive_retention_days(d: u32) -> Result<u32, String> {
+    if d > ARCHIVE_RETENTION_DAYS_MAX {
+        return Err(format!("归档保留天数应在 0 - {ARCHIVE_RETENTION_DAYS_MAX} 之间（0 表示不自动清理）"));
+    }
+    Ok(d)
 }
 
 /// 读启动项：文件不存在用默认（自动查找、无额外参数）；文件损坏直接报错，避免带着错误配置静默启动。
@@ -533,6 +615,24 @@ fn split_args(text: &str) -> Result<Vec<String>, String> {
     }
     if has {
         out.push(cur);
+    }
+    Ok(out)
+}
+
+/// 生成托管会话参数：开启勾选项时替换显式权限模式，其他参数及 `--` 后的正文保持原样。
+fn session_extra_args(set: &ClaudeSettings) -> Result<Vec<String>, String> {
+    let args = split_args(&set.extra_args)?;
+    if !set.bypass_permissions { return Ok(args); }
+    let mut out = vec!["--permission-mode".into(), "bypassPermissions".into()];
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            out.push(arg);
+            out.extend(args);
+            break;
+        }
+        if arg == "--permission-mode" { args.next(); }
+        else if !arg.starts_with("--permission-mode=") { out.push(arg); }
     }
     Ok(out)
 }
@@ -600,21 +700,29 @@ fn transcript_exists(id: &str) -> bool {
     std::fs::read_dir(base.join("projects")).into_iter().flatten().flatten().any(|d| d.path().join(&name).is_file())
 }
 
-/// 写 hooks 配置文件：各事件都调 `flowctl agent-hook <事件>`，5 秒超时；hook 失败不影响 Claude Code。
-fn hooks_file(flowctl: &str) -> Result<PathBuf, String> {
+/// 每次启动的 CLI 设置：显示模式与 hooks、状态行放在同一份配置中。
+fn cli_settings(flowctl: &str, view_mode: &str) -> Result<Value, String> {
+    valid_view_mode(view_mode)?;
     let mut hooks = serde_json::Map::new();
-    for ev in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SubagentStop", "PreCompact", "SessionEnd"] {
+    for ev in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Notification", "Stop", "StopFailure", "SubagentStop", "PreCompact", "SessionEnd"] {
         let mut item = json!({ "hooks": [{ "type": "command", "command": format!("\"{flowctl}\" agent-hook {ev}"), "timeout": 5 }] });
-        if ev == "PreToolUse" || ev == "PostToolUse" {
+        if matches!(ev, "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionDenied") {
             item["matcher"] = json!("*");
         }
         hooks.insert(ev.into(), json!([item]));
     }
-    let f = dir()?.join("hooks.json");
-    crate::write_atomic(&f, &serde_json::to_string_pretty(&json!({
+    Ok(json!({
         "hooks": hooks,
-        "statusLine": { "type": "command", "command": format!("\"{flowctl}\" agent-hook StatusLine") }
-    })).unwrap())?;
+        "statusLine": { "type": "command", "command": format!("\"{flowctl}\" agent-hook StatusLine") },
+        "viewMode": view_mode
+    }))
+}
+
+/// 各模式使用独立设置文件，切换模式后不改写运行中另一模式的配置。
+fn hooks_file(flowctl: &str, view_mode: &str) -> Result<PathBuf, String> {
+    let settings = cli_settings(flowctl, view_mode)?;
+    let f = dir()?.join(format!("hooks-{view_mode}.json"));
+    crate::write_atomic(&f, &serde_json::to_string_pretty(&settings).unwrap())?;
     Ok(f)
 }
 
@@ -632,8 +740,11 @@ fn system_prompt(m: &Meta, flowctl: &str) -> String {
     s += &format!(
         "开始处理某个流程图节点对应的业务时，运行 '{f}' focus <图文件路径>#<节点id> 标记位置，主窗口会在该节点上显示你；\
          开始做 Feat 路线图中的某个任务时，运行 '{f}' focus <Feat档案路径>#T<编号>（子任务如 #T3.1），Feat 控件页会在该任务卡片上显示你，换任务时重新运行；\
-         '{f}' peers 列出同 APP 的其他会话；'{f}' send <会话名> <消息> 给对方发协作消息（对方运行中会排队到它本轮结束）。\
-         和同 APP 的会话改同一个文件前先用 send 协调。",
+         '{f}' peers 列出同 APP 会话的稳定 ID、图主身份和已声明模块职责。图主 Agent 长期负责该图的业务模块，先读图和代码，再用 '{f}' scope <职责说明> <现有目录或文件>... 声明代码边界；职责重叠先协调单一写入者。\
+         Feat 主 Agent 负责需求拆分、跨模块协调和最终验收。跨模块用 '{f}' request <图路径或会话ID> <目标> --contract <接口约定> --acceptance <验收条件>，有效图从未绑定 Agent 时自动新建图主，对方未运行会自动续接，忙碌时排队；收纳或归档负责人等待用户在 Flow Coding 确认重新启用，Agent 不得代替用户答 YES。\
+         '{f}' requests 查询自己的收发任务；收到请求先用 '{f}' reply <请求ID> accept <接单说明>，处理中用 run，完成用 done <结果> --verify <验证结果> [--file <文件>]，受阻用 blocked <原因>。\
+         不把启动、送达或本轮结束当作完成；建议跨模块改动先协调对应负责人，公共文件约定一个写入者，职责分工不是文件权限沙箱。派发下游任务后不要循环轮询，结束当前轮次等待结果通知。\
+         '{f}' send <会话ID或唯一名称> <消息> 用于一般协作，也会自动续接并要求明确回报；协作结果通知无需回复确认，避免相互回信循环。",
         f = flowctl
     );
     s
@@ -646,6 +757,13 @@ fn terminal_color_env(cmd: &mut CommandBuilder) {
     cmd.env("CLICOLOR", "1");
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+}
+
+/// 专注视图需要全屏渲染；环境只作用于当前子进程。
+fn terminal_view_env(cmd: &mut CommandBuilder, view_mode: &str) {
+    let focus = view_mode == "focus";
+    cmd.env("CLAUDE_CODE_NO_FLICKER", if focus { "1" } else { "0" });
+    if focus { cmd.env_remove("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"); }
 }
 
 /// 把新建表单的可选流程转为首条技能指令，并带入工作目录和关联档案；未知流程在创建前报错。
@@ -675,6 +793,9 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
         if e.meta.archived_at > 0 {
             return Err("会话已归档，请先取消归档".into());
         }
+        if e.meta.stored_at > 0 {
+            return Err("会话已收纳，请先启用".into());
+        }
         if e.proc.is_some() {
             return Ok(());
         }
@@ -685,9 +806,9 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
         return Err(format!("工作目录不存在：{}", meta.cwd));
     }
     let flowctl = flowctl_path()?;
-    let settings = hooks_file(&flowctl)?;
     let set = load_settings()?;
-    let extra = split_args(&set.extra_args)?;
+    let settings = hooks_file(&flowctl, &set.view_mode)?;
+    let extra = session_extra_args(&set)?;
     let mut cmd = match find_claude(&set)? {
         Exe::Direct(p) => CommandBuilder::new(p),
         Exe::Cmd(p) => {
@@ -724,6 +845,7 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
     cmd.env("FLOW_AGENT_PORT", h.port.to_string());
     cmd.env("FLOW_AGENT_TOKEN", &h.token);
     terminal_color_env(&mut cmd);
+    terminal_view_env(&mut cmd, &set.view_mode);
     #[cfg(test)]
     eprintln!("startup prepare_ms={}", started_at.elapsed().as_millis());
 
@@ -746,8 +868,8 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
             let _ = child.kill();
             return Err("会话已删除，已取消启动".into());
         };
-        // 启动期间被归档、删除，或已有另一次启动完成时，销毁本次新进程，避免后台残留。
-        if e.meta.archived_at > 0 || e.gen != start_gen {
+        // 启动期间被归档、收纳、删除，或已有另一次启动完成时，销毁本次新进程，避免后台残留。
+        if e.meta.archived_at > 0 || e.meta.stored_at > 0 || e.gen != start_gen {
             let _ = child.kill();
             return Err("会话状态已变化，已取消本次启动".into());
         }
@@ -758,12 +880,15 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
         e.idle_since = 0;
         e.meta.started = true;
         e.buf.clear();
+        collab::input_submitted(id);
         e.live.metrics = None;
         e.live.status = "boot".into();
         e.live.since = now();
         e.live.beat = now();
-        e.live.tool.clear();
+        state::clear_tools(e);
+        e.interrupt_requested = false;
         e.live.exit_code = None;
+        e.live.api_error.clear();
         e.queue.clear();
         save_metas(&map)?;
         let e = &map[id];
@@ -778,6 +903,8 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
     std::thread::spawn(move || {
         let mut chunk = [0u8; 16384];
         let mut pend: Vec<u8> = Vec::new();
+        let mut errors = error_output::ErrorOutput::default();
+        let mut output_turn = 0;
         // ConPTY 启动时先发光标位置查询（ESC[6n），收到回复前子进程不会开始运行。
         // 终端页签不一定打开，由后端回复这一次握手，并且不转发给前端，避免 xterm 再回复一次变成输入。
         let mut handshake = true;
@@ -821,6 +948,29 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
                     }
                     e.buf.drain(..cut);
                 }
+                // 中断独立于工具结束 Hook：只有本轮真实 Esc/Ctrl+C 后的明确 TUI 标记才采信。
+                let active = matches!(e.live.status.as_str(), "boot" | "run" | "wait" | "apierr");
+                if !active || output_turn != e.live.turn || errors.detected() && e.live.api_error.is_empty() {
+                    errors.reset();
+                    output_turn = e.live.turn;
+                }
+                let api_line = active.then(|| errors.feed(&text)).flatten();
+                let interrupted = errors.take_interrupt();
+                let mut changed = false;
+                if interrupted && e.interrupt_requested {
+                    changed = state::interrupt(e);
+                    if changed {
+                        let a = push_act(e, "note", "用户已中断本轮".into(), String::new());
+                        emit_act(&rid, &a);
+                    }
+                } else if e.live.tool.is_empty() && e.live.status != "wait" {
+                    if let Some(line) = api_line {
+                        changed = e.live.api_error != line || e.live.status != "apierr";
+                        e.live.api_error = line;
+                        set_status(e, "apierr");
+                    }
+                }
+                if changed { emit_update(e); }
                 e.seq
             };
             if let Some(app) = APP.get() {
@@ -842,7 +992,8 @@ fn spawn(id: &str, initial_prompt: Option<&str>) -> Result<(), String> {
         e.live.status = if code == 0 || e.stopping { "off" } else { "err" }.into();
         e.live.since = now();
         e.live.exit_code = Some(code);
-        e.live.tool.clear();
+        state::clear_tools(e);
+        e.interrupt_requested = false;
         e.live.task = None;
         e.queue.clear();
         e.compacting = false;
@@ -938,8 +1089,8 @@ fn dispatch(req: &Value) -> Result<Value, String> {
             Ok(json!({ "ok": true }))
         }
         "focus" => focus(&id, req["ref"].as_str().unwrap_or(""), req["cwd"].as_str().unwrap_or("")),
-        "peers" => peers(&id),
-        "send" => send(&id, req["to"].as_str().unwrap_or(""), req["text"].as_str().unwrap_or("")),
+        "peers" => collab::peers(&id),
+        "send" | "scope" | "request" | "requests" | "reply" => collab::dispatch(&id, req),
         op => Err(format!("未知操作 {op}")),
     }
 }
@@ -994,6 +1145,8 @@ fn push_message(e: &mut Entry, peer: &str, text: String) -> Act {
 
 /// 本轮提问独立于活动队列保留；长任务挤掉 prompt 活动后仍能显示摘要与完整提示。
 fn start_turn(e: &mut Entry, prompt: &str, t: i64) -> Act {
+    state::clear_tools(e);
+    e.interrupt_requested = false;
     set_status(e, "run");
     e.live.turn = t;
     e.live.turn_prompt = prompt.trim().to_string();
@@ -1006,7 +1159,7 @@ fn set_status(e: &mut Entry, st: &str) {
     if e.live.status != st {
         e.live.status = st.into();
         e.live.since = now();
-        if st == "idle" {
+        if matches!(st, "idle" | "interrupted") {
             e.idle_since = e.live.since;
         }
     }
@@ -1045,7 +1198,7 @@ fn adopt_cli_id(e: &mut Entry, p: &Value) -> bool {
 /// 返回是否需要把元数据写盘。
 fn on_session_start(e: &mut Entry, p: &Value, t: i64) -> bool {
     if matches!(p["source"].as_str(), Some("clear" | "compact" | "resume")) { e.live.metrics = None; }
-    if e.live.status == "boot" || p["source"].as_str() == Some("clear") {
+    if matches!(e.live.status.as_str(), "boot" | "interrupted") || p["source"].as_str() == Some("clear") {
         set_status(e, "idle");
     }
     if p["source"].as_str() == Some("clear") {
@@ -1081,9 +1234,42 @@ fn apply_metrics(e: &mut Entry, p: &Value, t: i64) -> bool {
 /// 状态行走独立分支，只更新遥测并广播；终端输出仍完全由真实 TUI 负责。
 fn on_statusline(id: &str, p: &Value) {
     let Ok(h) = hub() else { return };
+    // 对话记录在会话锁外增量读取，首次读取大文件时不阻塞终端、hook 与其他会话状态。
+    let tally = p["transcript_path"].as_str().and_then(|s| usage::read(Path::new(s)));
     let mut map = h.entries.lock().unwrap();
     let Some(e) = map.get_mut(id) else { return };
-    if e.proc.is_some() && !e.stopping && apply_metrics(e, p, now()) { emit_update(e); }
+    if e.proc.is_some() && !e.stopping && apply_metrics(e, p, now()) {
+        if let Some(m) = e.live.metrics.as_mut() { m.usage = tally; }
+        emit_update(e);
+    }
+}
+
+/// 只接收时间不早于现有值的计划快照；解析失败在卡片提示，不影响终端和活动计时。
+fn apply_plan(e: &mut Entry, p: &Value, t: i64) {
+    let Some(value) = p.get("flow_coding_plan") else { return };
+    let snapshot = serde_json::from_value::<PlanSnapshot>(value.clone()).unwrap_or_else(|error| PlanSnapshot {
+        captured_at: t,
+        error: Some(format!("计划快照格式错误：{error}")),
+        ..PlanSnapshot::default()
+    });
+    if e.live.plan.as_ref().is_some_and(|current| current.captured_at > snapshot.captured_at) { return; }
+    e.live.plan = Some(snapshot);
+}
+
+/// 根据明确的主会话事件更新 API 状态；通知、子代理结束及终端按键不证明恢复。
+fn apply_api_hook(e: &mut Entry, event: &str, p: &Value) {
+    if p["agent_id"].as_str().is_some() { return; }
+    if event == "StopFailure" {
+        let detail = ["last_assistant_message", "error_details", "error"].iter()
+            .filter_map(|k| p[*k].as_str()).find(|s| !s.is_empty()).unwrap_or("API 请求失败");
+        e.live.api_error = cut(detail, 500);
+        state::clear_tools(e);
+        e.live.wait_text.clear();
+        set_status(e, "apierr");
+    } else if matches!(event, "SessionStart" | "UserPromptSubmit" | "PreToolUse" | "Stop") {
+        e.live.api_error.clear();
+        if e.live.status == "apierr" { set_status(e, "run"); }
+    }
 }
 
 /// 处理一次 hook 回报，更新状态与活动并广播。
@@ -1091,18 +1277,28 @@ fn on_hook(id: &str, event: &str, p: &Value) {
     let Ok(h) = hub() else { return };
     let mut map = h.entries.lock().unwrap();
     let Some(e) = map.get_mut(id) else { return };
+    // 子代理自己的生命周期不得覆盖主回合；SubagentStop 仍用于子代理活动回报。
+    if p["agent_id"].as_str().is_some() && matches!(event, "UserPromptSubmit" | "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "PermissionRequest" | "PermissionDenied" | "Notification" | "Stop" | "StopFailure") { return; }
+    // 中断后忽略迟到工具/结束回报，直到用户真正提交新回合或重开会话。
+    if e.live.status == "interrupted" && !matches!(event, "SessionStart" | "UserPromptSubmit" | "SubagentStop" | "SessionEnd") { return; }
     let t = now();
     let mut act = None;
+    apply_plan(e, p, t);
     // PreCompact 之后到新活动为止处于压缩中，空闲回收不得介入；其它任何事件都表示压缩已结束。
     if event != "PreCompact" {
         e.compacting = false;
     }
+    apply_api_hook(e, event, p);
     let mut persist = false;
     match event {
         "SessionStart" => {
+            state::clear_tools(e);
+            e.interrupt_requested = false;
+            if p["source"].as_str() == Some("clear") { collab::input_submitted(id); }
             persist = on_session_start(e, p, t);
         }
         "UserPromptSubmit" => {
+            collab::input_submitted(id);
             act = Some(start_turn(e, p["prompt"].as_str().unwrap_or(""), t));
         }
         "PreToolUse" => {
@@ -1133,30 +1329,41 @@ fn on_hook(id: &str, event: &str, p: &Value) {
                     e.live.workers.drain(..n - WORKERS_MAX);
                 }
             } else {
-                e.live.tool = tool;
-                e.live.tool_since = t;
+                state::begin_tool(e, p, t);
+                if tool == "AskUserQuestion" {
+                    set_status(e, "wait");
+                    e.live.wait_text = cut(p["tool_input"]["questions"][0]["question"].as_str().unwrap_or("等待你回答问题"), 200);
+                }
             }
             act = Some(push_act(e, kind, text, path));
         }
-        "PostToolUse" => {
+        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => {
             let tool = p["tool_name"].as_str().unwrap_or("");
-            if tool == "Task" || tool == "Agent" {
+            let matched = if tool == "Task" || tool == "Agent" {
                 let uid = p["tool_use_id"].as_str().unwrap_or("");
-                let desc = cut(p["tool_input"]["description"].as_str().unwrap_or(""), 40);
-                let i = e.live.workers.iter().position(|w| w.running && (w.id == uid || w.desc == desc))
-                    .or_else(|| e.live.workers.iter().position(|w| w.running));
-                if let Some(i) = i {
-                    e.live.workers[i].running = false;
-                    e.live.workers[i].t1 = t;
+                if let Some(w) = e.live.workers.iter_mut().find(|w| w.running && w.id == uid) {
+                    w.running = false;
+                    w.t1 = t;
+                    true
+                } else { false }
+            } else { state::end_tool(e, p) };
+            if matched && p["is_interrupt"].as_bool() == Some(true) {
+                if state::interrupt(e) { act = Some(push_act(e, "note", "用户已中断本轮".into(), String::new())); }
+            } else if matched {
+                if e.live.status == "wait" && e.live.tool != "AskUserQuestion" {
+                    set_status(e, "run");
+                    e.live.wait_text.clear();
                 }
-            } else {
-                e.live.tool.clear();
-            }
-            if e.live.status == "wait" {
-                set_status(e, "run");
-                e.live.wait_text.clear();
+                if event != "PostToolUse" {
+                    let detail = p["error"].as_str().or(p["reason"].as_str()).unwrap_or("工具调用未完成");
+                    act = Some(push_act(e, "note", cut(&format!("{tool}：{detail}"), 160), String::new()));
+                }
             }
             e.live.beat = t;
+        }
+        "PermissionRequest" => {
+            set_status(e, "wait");
+            e.live.wait_text = format!("等待工具权限确认：{}", p["tool_name"].as_str().unwrap_or(""));
         }
         "Notification" => {
             let msg = p["message"].as_str().unwrap_or("").to_string();
@@ -1169,9 +1376,11 @@ fn on_hook(id: &str, event: &str, p: &Value) {
             }
         }
         "Stop" => {
+            collab::on_stop(id);
             set_status(e, "idle");
             e.live.done = t;
-            e.live.tool.clear();
+            state::clear_tools(e);
+            e.interrupt_requested = false;
             e.live.wait_text.clear();
             e.live.beat = t;
             for w in e.live.workers.iter_mut().filter(|w| w.running) {
@@ -1183,6 +1392,10 @@ fn on_hook(id: &str, event: &str, p: &Value) {
                 let text: Vec<String> = e.queue.drain(..).collect();
                 submit_later(id.to_string(), text.join(" ｜ "));
             }
+        }
+        "StopFailure" => {
+            // API 失败不是正常完成：不标 done、不触发协作成功、不投递下一条排队任务。
+            e.live.beat = t;
         }
         "SubagentStop" => e.live.beat = t,
         "PreCompact" => {
@@ -1298,57 +1511,6 @@ fn focus(id: &str, r: &str, cwd: &str) -> Result<Value, String> {
     Ok(json!({ "focus": nr }))
 }
 
-/// flowctl peers：同 APP 的其他会话（名称、状态、关联 Feat、当前位置）。
-fn peers(id: &str) -> Result<Value, String> {
-    let h = hub()?;
-    let map = h.entries.lock().unwrap();
-    let me = map.get(id).ok_or("会话不存在")?;
-    let list: Vec<Value> = map
-        .values()
-        .filter(|e| e.meta.id != id && e.meta.app == me.meta.app)
-        .map(|e| json!({ "title": e.meta.title, "status": e.live.status, "feat": e.meta.feat_code, "focus": e.live.focus }))
-        .collect();
-    Ok(json!(list))
-}
-
-/// flowctl send：按会话名（或 id 前缀）找到对方，空闲则立即提交，运行中 / 等确认则排队到本轮结束。
-fn send(id: &str, to: &str, text: &str) -> Result<Value, String> {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if to.is_empty() || text.is_empty() {
-        return Err("用法：send <会话名> <消息>".into());
-    }
-    let h = hub()?;
-    let mut map = h.entries.lock().unwrap();
-    let from = map.get(id).ok_or("会话不存在")?.meta.title.clone();
-    let target = map
-        .values()
-        .find(|e| e.meta.id != id && e.meta.title == to)
-        .or_else(|| map.values().find(|e| e.meta.id != id && e.meta.id.starts_with(to)))
-        .map(|e| e.meta.id.clone())
-        .ok_or_else(|| format!("没有名为「{to}」的会话"))?;
-    let msg = format!("[来自「{from}」的协作消息] {text}");
-    let e = map.get_mut(&target).unwrap();
-    let state = match e.live.status.as_str() {
-        _ if e.proc.is_none() => return Err(format!("「{to}」未运行")),
-        "idle" => {
-            submit_later(target.clone(), msg);
-            "已送达"
-        }
-        _ => {
-            e.queue.push_back(msg);
-            "对方正忙，已排队，本轮结束后送达"
-        }
-    };
-    let to_title = e.meta.title.clone();
-    let b = push_message(e, id, cut(&format!("来自「{from}」：{text}"), 80));
-    emit_act(&target, &b);
-    emit_update(e);
-    let a = push_message(map.get_mut(id).unwrap(), &target, cut(&format!("发给「{to_title}」：{text}"), 80));
-    emit_act(id, &a);
-    emit_update(&map[id]);
-    Ok(json!({ "result": state }))
-}
-
 /// flowctl 侧：把请求发给 App（读取 FLOW_AGENT_ID / PORT / TOKEN 环境变量），返回结果 JSON。
 /// 环境变量缺失说明不是在 Flow Coding 的 Agent 窗口里运行。
 pub fn client(mut req: Value) -> Result<Value, String> {
@@ -1384,6 +1546,10 @@ pub async fn agent_list() -> Result<Vec<Value>, String> {
         }
         if dirty {
             let _ = save_metas(&map);
+        }
+        // 列表读取顺带重算自动收纳（Feat 被外部关闭/重开后第一次拉列表即生效）。
+        if let Err(error) = apply_storage_sync(&mut map, None) {
+            eprintln!("同步收纳状态写盘失败: {error}");
         }
         let mut list: Vec<&Entry> = map.values().collect();
         list.sort_by_key(|e| e.meta.created);
@@ -1440,16 +1606,17 @@ fn sync_title(e: &mut Entry) -> bool {
     }
 }
 
-/// 载入时规范化元数据：独立会话补默认名，绑定会话与来源同步。返回是否有改动。
+/// 载入时规范化元数据：独立会话补默认名，绑定会话与来源同步，并重算自动收纳状态。返回是否有改动。
 fn normalize(e: &mut Entry) -> bool {
+    let mut changed = sync_storage(e, now());
     if source_of(&e.meta).0.is_empty() {
         if e.meta.title.trim().is_empty() {
             e.meta.title = "新会话".into();
-            return true;
+            changed = true;
         }
-        return false;
+        return changed;
     }
-    sync_title(e)
+    sync_title(e) || changed
 }
 
 /// 把以 path 为名称来源的会话名与来源同步（Feat 档案就地改标题等）；返回有改动的会话 id。
@@ -1465,20 +1632,22 @@ fn resync_source(map: &mut HashMap<String, Entry>, path: &Path) -> Vec<String> {
     ids
 }
 
-/// 文件变化时同步会话名（由文件监听在通知前端后调用）：Feat 档案就地改名落到主会话名。
-/// Hub 未启动（测试、启动失败）时不动。
+/// 文件变化时同步会话状态（由文件监听在通知前端后调用）：Feat 档案就地改名落到主会话名，
+/// 状态行变化落到关联会话的自动收纳（「已关闭」收纳、重开恢复）。Hub 未启动（测试、启动失败）时不动。
 pub fn source_changed(path: &Path) {
     let Ok(h) = hub() else { return };
     let mut map = h.entries.lock().unwrap();
     let ids = resync_source(&mut map, path);
-    if ids.is_empty() {
-        return;
-    }
     for id in &ids {
         emit_update(&map[id]);
     }
-    if let Err(e) = save_metas(&map) {
-        eprintln!("同步会话名写盘失败: {e}");
+    if !ids.is_empty() {
+        if let Err(e) = save_metas(&map) {
+            eprintln!("同步会话名写盘失败: {e}");
+        }
+    }
+    if let Err(e) = apply_storage_sync(&mut map, Some(path)) {
+        eprintln!("同步收纳状态写盘失败: {e}");
     }
 }
 
@@ -1527,14 +1696,17 @@ pub fn on_renamed(old: &Path, new: &Path) {
     let Ok(h) = hub() else { return };
     let mut map = h.entries.lock().unwrap();
     let ids = remap_renamed(&mut map, old, new);
-    if ids.is_empty() {
-        return;
-    }
     for id in &ids {
         emit_update(&map[id]);
     }
-    if let Err(e) = save_metas(&map) {
-        eprintln!("重命名后保存会话引用失败: {e}");
+    if !ids.is_empty() {
+        if let Err(e) = save_metas(&map) {
+            eprintln!("重命名后保存会话引用失败: {e}");
+        }
+    }
+    // 关联路径换新后按新档案重算收纳（同名档案改后缀、Feat 改名等场景）。
+    if let Err(e) = apply_storage_sync(&mut map, Some(new)) {
+        eprintln!("重命名后同步收纳状态写盘失败: {e}");
     }
 }
 
@@ -1565,6 +1737,17 @@ fn main_conflict(map: &HashMap<String, Entry>, me: &str, feat: &str, links: &[No
     Ok(())
 }
 
+/// 在已持有的会话表锁内创建记录；复用来源唯一性、来源命名和自动收纳规则，不启动进程。
+/// 返回稳定 ID；调用者负责持久化，写盘失败必须移除新记录，防止并发请求创建同图双主。
+fn insert_session(map: &mut HashMap<String, Entry>, meta: Meta) -> Result<String, String> {
+    main_conflict(map, &meta.id, &meta.feat, &meta.links)?;
+    let id = meta.id.clone();
+    let mut entry = Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false, interrupt_requested: false, tools: Vec::new() };
+    normalize(&mut entry);
+    map.insert(id.clone(), entry);
+    Ok(id)
+}
+
 /// 新建并启动会话；磁盘、ConPTY 和进程创建在阻塞线程池执行，不能占用窗口 IPC 线程。
 /// title 为空时叫「新会话」；cwd 必须存在；Feat / 流程图已有主会话时拒绝（见 main_conflict）。
 /// workflow 可选 feat/fix/perf，仅作为此次启动的首条技能指令，不写入持久化元数据；错误原样返回前端重试。
@@ -1580,16 +1763,21 @@ pub async fn agent_create(title: String, cwd: String, app: String, feat: String,
         let id = new_uuid();
         let t = now();
         let title = if title.trim().is_empty() { "新会话".to_string() } else { title.trim().to_string() };
-        let meta = Meta { id: id.clone(), title, cwd, app, feat, feat_code, links, pinned, pin_at: if pinned { t } else { 0 }, created: t, started: false, cli_session_id: String::new(), archived_at: 0 };
-        {
+        let meta = Meta { id: id.clone(), title, cwd, app, feat, feat_code, links, pinned, pin_at: if pinned { t } else { 0 }, created: t, started: false, cli_session_id: String::new(), archived_at: 0, stored_at: 0, storage_override: None };
+        let stored = {
             let mut map = h.entries.lock().unwrap();
-            main_conflict(&map, &id, &meta.feat, &meta.links)?;
-            let mut entry = Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false };
-            normalize(&mut entry);
-            map.insert(id.clone(), entry);
-            save_metas(&map)?;
+            insert_session(&mut map, meta)?;
+            let stored = map[&id].meta.stored_at > 0;
+            if let Err(error) = save_metas(&map) {
+                map.remove(&id);
+                return Err(error);
+            }
+            stored
+        };
+        // 关联的 Feat 已关闭时新建即落收纳，不启动 CLI；启用后由 agent_start 拉起。
+        if !stored {
+            spawn(&id, initial_prompt.as_deref())?;
         }
-        spawn(&id, initial_prompt.as_deref())?;
         let map = h.entries.lock().unwrap();
         Ok(view(&map[&id], true))
     }).await.map_err(|e| format!("创建 Agent 任务失败: {e}"))?
@@ -1602,6 +1790,15 @@ pub async fn agent_start(id: String) -> Result<(), String> {
         STARTUP.wait(STARTUP_TIMEOUT)?;
         spawn(&id, None)
     }).await.map_err(|e| format!("启动 Agent 任务失败: {e}"))?
+}
+
+/// 用最新配置重新开启所选会话，等待旧进程退出后续接原对话，不退出应用。
+#[tauri::command]
+pub async fn agent_restart(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        STARTUP.wait(STARTUP_TIMEOUT)?;
+        restart::restart_session(&id)
+    }).await.map_err(|e| format!("重新开启 Agent 任务失败: {e}"))?
 }
 
 /// 结束会话进程（对话历史保留，可再续接）。
@@ -1624,7 +1821,11 @@ pub fn agent_write(id: String, data: String) -> Result<(), String> {
     let mut map = hub()?.entries.lock().unwrap();
     let e = map.get_mut(&id).ok_or("会话不存在")?;
     write_proc(e, &data)?;
-    if e.live.status == "idle" {
+    if matches!(data.as_str(), "\x1b" | "\x03") && matches!(e.live.status.as_str(), "boot" | "run" | "wait" | "apierr") {
+        e.interrupt_requested = true;
+    }
+    collab::on_input(&id, &data);
+    if matches!(e.live.status.as_str(), "idle" | "interrupted") {
         e.idle_since = now();
     }
     Ok(())
@@ -1665,8 +1866,9 @@ pub fn agent_buffer(id: String) -> Result<Value, String> {
 /// 全部通过才提交，任何一步失败都不留半改的 patch。
 /// - 关联（feat/links）变化会重算名称归属，绑定来源的会话名随来源同步；
 /// - 绑定来源的会话名锁定：title patch 只能提交与来源一致的名字，否则整个 patch 拒绝；
-/// - 独立会话（无 Feat、无关联节点）名称可自由修改。
-fn apply_patch(map: &mut HashMap<String, Entry>, id: &str, patch: &Value) -> Result<(), String> {
+/// - 独立会话（无 Feat、无关联节点）名称可自由修改；
+/// - 关联变化后重算自动收纳：返回值表示本次是否新进入收纳（持久化后由调用方停进程）。
+fn apply_patch(map: &mut HashMap<String, Entry>, id: &str, patch: &Value) -> Result<bool, String> {
     let assoc = patch.get("feat").is_some() || patch.get("links").is_some();
     let mut next = {
         let cur = &map.get(id).ok_or("会话不存在")?.meta;
@@ -1702,24 +1904,121 @@ fn apply_patch(map: &mut HashMap<String, Entry>, id: &str, patch: &Value) -> Res
         e.meta.pinned = p;
         e.meta.pin_at = if p { now() } else { 0 };
     }
-    Ok(())
+    // 关联变化可能影响自动收纳（改挂到已关闭 Feat、或换到未关闭档案）。
+    let stored_at = e.meta.stored_at;
+    Ok(sync_storage(e, now()) && stored_at == 0)
 }
 
 /// 修改会话：名称、置顶、关联 Feat 与节点（patch 中出现的字段才改）。
 /// 改关联后与其他会话争同一个 Feat / 图的主会话时拒绝；绑定来源的会话名跟随来源不可单改。
-/// 任何校验失败整个 patch 都不生效。
+/// 任何校验失败整个 patch 都不生效。新进入收纳时先持久化再停进程并广播。
 #[tauri::command]
 pub fn agent_update(id: String, patch: Value) -> Result<Value, String> {
     let mut map = hub()?.entries.lock().unwrap();
-    apply_patch(&mut map, &id, &patch)?;
-    let v = view(&map[&id], false);
-    emit_update(&map[&id]);
-    save_metas(&map)?;
-    Ok(v)
+    let prev_stored = map.get(&id).ok_or("会话不存在")?.meta.stored_at;
+    let shelved = apply_patch(&mut map, &id, &patch)?;
+    if let Err(error) = save_metas(&map) {
+        map.get_mut(&id).unwrap().meta.stored_at = prev_stored;
+        return Err(error);
+    }
+    let e = map.get_mut(&id).unwrap();
+    if shelved {
+        stop_entry(e);
+    }
+    emit_update(e);
+    Ok(view(e, false))
 }
 
-/// 归档保留 180 天；仅以归档时间计算，创建时间和普通空闲时间不会触发记录删除。
-const ARCHIVE_RETENTION_MS: i64 = 180 * 24 * 60 * 60 * 1000;
+/// 保留天数换算毫秒；清扫线程与过期判定共用同一口径。
+fn retention_ms(days: u32) -> i64 {
+    days as i64 * 24 * 60 * 60 * 1000
+}
+
+/// 停止会话的托管进程（置停止标记走 killer，与手动停止同口径）；
+/// 无进程时推进 gen 使尚未装入会话表的启动失效，避免随后复活。调用方持有会话表锁。
+fn stop_entry(e: &mut Entry) {
+    e.stopping = true;
+    if let Some(p) = e.proc.as_mut() {
+        let _ = p.killer.kill();
+    } else {
+        e.gen += 1;
+    }
+}
+
+/// 会话的自动收纳依据：关联 Feat 的状态行以「已关闭」开头时应收纳。
+/// 未关联 Feat 一定不自动收纳；档案缺失或读不到返回 None，调用方保持现状（不擅自解除收纳）。
+fn feat_closed(m: &Meta) -> Option<bool> {
+    if m.feat.is_empty() {
+        return Some(false);
+    }
+    let text = std::fs::read_to_string(&m.feat).ok()?;
+    let status = crate::feat::parse_md(&text, &crate::feat::id_from_name(Path::new(&m.feat))).1;
+    Some(status.trim_start_matches(['*', ' ']).starts_with("已关闭"))
+}
+
+/// 重算单条的收纳状态：手动覆盖优先，否则跟随关联 Feat 的已关闭状态。
+/// 归档优先于收纳：已归档条目不重算，收纳状态留给取消归档时恢复。
+/// 返回 stored_at 是否变化；本函数只改元数据，进程停止与写盘由调用方统一落实。
+fn sync_storage(e: &mut Entry, at: i64) -> bool {
+    if e.meta.archived_at > 0 {
+        return false;
+    }
+    let want = match e.meta.storage_override {
+        Some(v) => v,
+        None => match feat_closed(&e.meta) {
+            Some(closed) => closed,
+            None => return false,
+        },
+    };
+    if want && e.meta.stored_at == 0 {
+        e.meta.stored_at = at;
+        true
+    } else if !want && e.meta.stored_at != 0 {
+        e.meta.stored_at = 0;
+        true
+    } else {
+        false
+    }
+}
+
+/// 重算一批条目的收纳状态并落实：feat 为 Some 时只算关联该档案的会话，None 为全部。
+/// 先持久化（失败回滚内存中的 stored_at，不留下未保存的收纳结果），
+/// 再停止新收纳会话的进程并广播每条变化；无变化时不写盘不广播。
+fn apply_storage_sync(map: &mut HashMap<String, Entry>, feat: Option<&Path>) -> Result<(), String> {
+    let at = now();
+    let key = feat.map(|p| path_key(&p.to_string_lossy()));
+    let mut changed: Vec<(String, i64)> = Vec::new();
+    for e in map.values_mut() {
+        if let Some(k) = &key {
+            if e.meta.feat.is_empty() || path_key(&e.meta.feat) != *k {
+                continue;
+            }
+        }
+        let prev = e.meta.stored_at;
+        if sync_storage(e, at) {
+            changed.push((e.meta.id.clone(), prev));
+        }
+    }
+    if changed.is_empty() {
+        return Ok(());
+    }
+    if let Err(error) = save_metas(map) {
+        for (id, prev) in changed {
+            if let Some(e) = map.get_mut(&id) {
+                e.meta.stored_at = prev;
+            }
+        }
+        return Err(error);
+    }
+    for (id, _) in &changed {
+        let e = map.get_mut(id).unwrap();
+        if e.meta.stored_at > 0 {
+            stop_entry(e);
+        }
+        emit_update(e);
+    }
+    Ok(())
+}
 
 /// 在内存中切换归档状态；重复归档不延长保留期，恢复前校验主会话唯一，失败不修改元数据。
 fn archive_entry(map: &mut HashMap<String, Entry>, id: &str, archived: bool, at: i64) -> Result<(), String> {
@@ -1737,27 +2036,81 @@ fn archive_entry(map: &mut HashMap<String, Entry>, id: &str, archived: bool, at:
 }
 
 /// 归档结束托管进程并保留关联与历史；取消归档只恢复列表，不自动启动 CLI。
-/// 写盘失败回退归档状态，保证不会显示一次未保存的归档结果。
+/// 取消归档后按当前策略重算收纳状态（关联 Feat 已关闭或曾手动收纳的恢复为收纳，不启动进程）。
+/// 写盘失败回退归档与收纳状态，保证不会显示一次未保存的结果。
 #[tauri::command]
 pub fn agent_archive(id: String, archived: bool) -> Result<Value, String> {
     let mut map = hub()?.entries.lock().unwrap();
-    let previous = map.get(&id).ok_or("会话不存在")?.meta.archived_at;
+    let (previous_archived, previous_stored) = {
+        let e = map.get(&id).ok_or("会话不存在")?;
+        (e.meta.archived_at, e.meta.stored_at)
+    };
     archive_entry(&mut map, &id, archived, now())?;
+    if !archived {
+        let _ = sync_storage(map.get_mut(&id).unwrap(), now());
+    }
     if let Err(error) = save_metas(&map) {
-        map.get_mut(&id).unwrap().meta.archived_at = previous;
+        let e = map.get_mut(&id).unwrap();
+        e.meta.archived_at = previous_archived;
+        e.meta.stored_at = previous_stored;
         return Err(error);
     }
     let e = map.get_mut(&id).unwrap();
     if archived {
-        e.stopping = true;
-        if let Some(p) = e.proc.as_mut() { let _ = p.killer.kill(); }
-        else { e.gen += 1; } // 失效尚未装入会话表的启动；立即取消归档也不会复活旧启动。
+        stop_entry(e);
     }
     emit_update(e);
     Ok(view(e, false))
 }
 
-/// 删除记录的共用路径：先保存，失败则完整恢复内存；成功后结束进程并广播删除，CLI 原始历史保留。
+/// 应用一次手动收纳选择；与自动规则一致时恢复跟随，否则保留明确覆盖，不触碰进程和磁盘。
+fn set_manual_storage(e: &mut Entry, stored: bool, at: i64) {
+    e.meta.storage_override = match feat_closed(&e.meta) {
+        Some(auto) if auto == stored => None,
+        _ => Some(stored),
+    };
+    let _ = sync_storage(e, at);
+}
+
+/// 手动收纳/启用会话：设置 storage_override 并据此重算 stored_at；
+/// 请求与自动状态一致时清除覆盖恢复跟随。启用（stored=false）恢复来源占用前先校验主会话唯一。
+/// 与归档互斥：已归档会话先取消归档。写盘失败回滚覆盖与收纳时间，收纳后停止进程并广播。
+#[tauri::command]
+pub fn agent_store(id: String, stored: bool) -> Result<Value, String> {
+    let mut map = hub()?.entries.lock().unwrap();
+    {
+        let e = map.get(&id).ok_or("会话不存在")?;
+        if e.meta.archived_at > 0 {
+            return Err("会话已归档，请先取消归档".into());
+        }
+        if !stored {
+            main_conflict(&map, &id, &e.meta.feat, &e.meta.links)?;
+        }
+    }
+    let (prev_stored_at, prev_override) = {
+        let e = map.get(&id).unwrap();
+        (e.meta.stored_at, e.meta.storage_override)
+    };
+    {
+        let e = map.get_mut(&id).unwrap();
+        set_manual_storage(e, stored, now());
+    }
+    if let Err(error) = save_metas(&map) {
+        let e = map.get_mut(&id).unwrap();
+        e.meta.stored_at = prev_stored_at;
+        e.meta.storage_override = prev_override;
+        return Err(error);
+    }
+    let e = map.get_mut(&id).unwrap();
+    if e.meta.stored_at > 0 {
+        stop_entry(e);
+    }
+    emit_update(e);
+    Ok(view(e, false))
+}
+
+/// 删除记录的共用路径：仅供归档到期清理内部使用，先保存，失败则完整恢复内存；
+/// 成功后结束进程并广播删除，CLI 原始历史保留。收纳与活跃记录不走这里。
 fn remove_entries(map: &mut HashMap<String, Entry>, ids: &[String]) -> Result<(), String> {
     let removed: Vec<Entry> = ids.iter().filter_map(|id| map.remove(id)).collect();
     if removed.is_empty() { return Ok(()); }
@@ -1774,15 +2127,17 @@ fn remove_entries(map: &mut HashMap<String, Entry>, ids: &[String]) -> Result<()
     Ok(())
 }
 
-/// 取已归档满 180 天的记录 ID；未归档和归档时间晚于当前时间的记录均保留。
-fn expired_archives(map: &HashMap<String, Entry>, at: i64) -> Vec<String> {
-    map.values().filter(|e| e.meta.archived_at > 0 && at - e.meta.archived_at >= ARCHIVE_RETENTION_MS).map(|e| e.meta.id.clone()).collect()
+/// 取已归档满保留天数的记录 ID；未归档和归档时间晚于当前时间的记录均保留；
+/// 收纳与活跃记录（archived_at == 0）永远不会进入清理列表。
+fn expired_archives(map: &HashMap<String, Entry>, at: i64, retention: i64) -> Vec<String> {
+    if retention <= 0 { return Vec::new(); }
+    map.values().filter(|e| e.meta.archived_at > 0 && at - e.meta.archived_at >= retention).map(|e| e.meta.id.clone()).collect()
 }
 
-/// 从列表直接删除会话（运行中先结束进程）；Claude Code 的对话记录保留在它自己的目录。
+/// 兼容旧前端：直接删除已不允许，统一转为归档；归档记录由后台按保留天数到期清理。
 #[tauri::command]
 pub fn agent_remove(id: String) -> Result<(), String> {
-    remove_entries(&mut hub()?.entries.lock().unwrap(), &[id])
+    agent_archive(id, true).map(|_| ())
 }
 
 /// 设置页展示用：当前启动项，以及按它实际会用的 claude 路径（找不到时为错误文本）。
@@ -1791,7 +2146,7 @@ fn settings_view(set: &ClaudeSettings) -> Value {
         Ok(e) => (e.path().to_string_lossy().into_owned(), String::new()),
         Err(e) => (String::new(), e),
     };
-    json!({ "claudePath": set.claude_path, "extraArgs": set.extra_args, "idleHours": set.idle_hours, "found": found, "error": error })
+    json!({ "claudePath": set.claude_path, "extraArgs": set.extra_args, "viewMode": set.view_mode, "bypassPermissions": set.bypass_permissions, "idleHours": set.idle_hours, "found": found, "error": error })
 }
 
 /// 读取 Claude Code 启动项（设置页打开时调用）。
@@ -1803,11 +2158,16 @@ pub fn agent_get_settings() -> Result<Value, String> {
 /// 保存 Claude Code 启动项：路径非空时必须是存在的文件，额外参数必须能拆分；校验不过不写盘。
 /// 只影响之后启动或续接的会话，正在运行的会话不变；idle_hours 保留现状（由 agent_set_lifecycle 维护）。
 #[tauri::command]
-pub fn agent_set_settings(claude_path: String, extra_args: String) -> Result<Value, String> {
+pub fn agent_set_settings(claude_path: String, extra_args: String, view_mode: Option<String>, bypass_permissions: Option<bool>) -> Result<Value, String> {
     let _guard = SETTINGS_WRITE.lock().unwrap();
     let mut set = load_settings().unwrap_or_default();
     set.claude_path = claude_path.trim().to_string();
     set.extra_args = extra_args.trim().to_string();
+    if let Some(mode) = view_mode {
+        valid_view_mode(&mode)?;
+        set.view_mode = mode;
+    }
+    if let Some(bypass) = bypass_permissions { set.bypass_permissions = bypass; }
     if !set.claude_path.is_empty() && !Path::new(&set.claude_path).is_file() {
         return Err(format!("文件不存在：{}", set.claude_path));
     }
@@ -1816,36 +2176,45 @@ pub fn agent_set_settings(claude_path: String, extra_args: String) -> Result<Val
     Ok(settings_view(&set))
 }
 
-/// 空闲自动结束策略：读取当前的 idle_hours（0 = 不自动结束）。
+/// 生命周期策略：读取当前的 idle_hours（0 = 不自动结束）与 archive_retention_days（0 = 不自动清理）。
 #[tauri::command]
 pub fn agent_get_lifecycle() -> Result<Value, String> {
-    Ok(json!({ "idleHours": load_settings()?.idle_hours }))
+    let set = load_settings()?;
+    Ok(json!({ "idleHours": set.idle_hours, "archiveRetentionDays": set.archive_retention_days }))
 }
 
-/// 设置 CLI 连续空闲多少小时后自动结束进程：0 关闭，上限 8760 小时（约一年），允许小数。
-/// 由后端清扫线程按各会话持续空闲起点（进入 idle / idle 中最后一次输入）判定，Agent 窗口关闭后仍生效。
+/// 设置 CLI 连续空闲多少小时后自动结束进程：0 关闭，上限 8760 小时（约一年），允许小数；
+/// 可选同时设置归档记录保留天数（0 = 不自动清理，上限 36500 天），缺省保留当前值。
+/// 由后端清扫线程按各会话持续空闲起点（进入 idle / idle 中最后一次输入）与归档时间判定，
+/// Agent 窗口关闭后仍生效。
 #[tauri::command]
-pub fn agent_set_lifecycle(idle_hours: f64) -> Result<Value, String> {
+pub fn agent_set_lifecycle(idle_hours: f64, archive_retention_days: Option<u32>) -> Result<Value, String> {
     let idle_hours = valid_idle_hours(idle_hours)?;
+    let retention = archive_retention_days.map(valid_archive_retention_days).transpose()?;
     let _guard = SETTINGS_WRITE.lock().unwrap();
     let mut set = load_settings()?;
     set.idle_hours = idle_hours;
+    if let Some(d) = retention {
+        set.archive_retention_days = d;
+    }
     crate::write_atomic(&dir()?.join("settings.json"), &serde_json::to_string_pretty(&set).unwrap())?;
     if let Ok(h) = hub() {
         h.idle_hours.store(idle_hours.to_bits(), Ordering::Relaxed);
+        h.archive_retention_days.store(set.archive_retention_days as u64, Ordering::Relaxed);
     }
-    Ok(json!({ "idleHours": set.idle_hours }))
+    Ok(json!({ "idleHours": set.idle_hours, "archiveRetentionDays": set.archive_retention_days }))
 }
 
-/// 空闲到期判定：必须是持续 idle 满阈值的会话。
+/// 空闲到期判定：必须是持续 idle 或已中断满阈值的会话；队列和活跃子代理仍阻止回收。
 /// 不算空闲：boot/run/wait（含正在执行工具）、有子任务在跑、有排队协作消息、压缩中、已标记停止。
 /// 空闲起点只看进入 idle 的时间与 idle 中的用户终端输入；终端输出（TUI 重绘）不算活跃。
 fn idle_expired(e: &Entry, now_ms: i64, limit_ms: i64) -> bool {
-    e.live.status == "idle"
+    matches!(e.live.status.as_str(), "idle" | "interrupted")
         && !e.stopping
         && !e.compacting
         && e.live.tool.is_empty()
         && e.queue.is_empty()
+        && !collab::pending(&e.meta.id)
         && !e.live.workers.iter().any(|w| w.running)
         && now_ms - e.idle_since >= limit_ms
 }
@@ -1868,20 +2237,24 @@ fn reap_idle(map: &mut HashMap<String, Entry>, now_ms: i64, limit_ms: i64) -> Ve
     hit
 }
 
-/// 后台每 30 秒回收超时空闲进程，并清理归档满 180 天的记录；关闭空闲回收不影响归档清理。
+/// 后台每 30 秒回收超时空闲进程，并清理归档满保留天数的记录；两个开关互不影响，
+/// 保留天数为 0 时不做归档清理。收纳与活跃记录不在清理范围。
 fn idle_sweeper() {
     loop {
         std::thread::sleep(Duration::from_secs(30));
         let Ok(h) = hub() else { return };
         let hours = f64::from_bits(h.idle_hours.load(Ordering::Relaxed));
+        let retention = retention_ms(h.archive_retention_days.load(Ordering::Relaxed) as u32);
         let mut map = h.entries.lock().unwrap();
         let at = now();
         if hours > 0.0 {
             reap_idle(&mut map, at, (hours * 3_600_000.0) as i64);
         }
-        let expired = expired_archives(&map, at);
-        if let Err(error) = remove_entries(&mut map, &expired) {
-            eprintln!("清理归档 Agent 失败: {error}");
+        if retention > 0 {
+            let expired = expired_archives(&map, at, retention);
+            if let Err(error) = remove_entries(&mut map, &expired) {
+                eprintln!("清理归档 Agent 失败: {error}");
+            }
         }
     }
 }
@@ -2059,18 +2432,205 @@ mod tests {
         assert!(archive_entry(&mut map, "missing", true, 3000).is_err());
     }
 
-    /// 180 天边界按归档时间计算：未归档、刚归档、未来时间与差 1 毫秒的记录均不清理。
+    /// 保留天数边界按归档时间计算：未归档、刚归档、收纳、未来时间与差 1 毫秒的记录均不清理。
     #[test]
     fn archived_retention_boundary() {
-        let at = ARCHIVE_RETENTION_MS + 1000;
+        let retention = retention_ms(180);
+        let at = retention + 1000;
         let mut map = HashMap::new();
         for (id, archived_at) in [("expired", 1000), ("recent", 1001), ("active", 0), ("future", at + 1)] {
             let mut e = entry(id, id, String::new(), Vec::new());
             e.meta.archived_at = archived_at;
             map.insert(id.into(), e);
         }
-        assert_eq!(expired_archives(&map, at), vec!["expired".to_string()]);
-        assert!(expired_archives(&map, 1000).is_empty());
+        // 收纳记录（stored_at > 0 但未归档）不属于清理范围
+        let mut stored = entry("stored", "stored", String::new(), Vec::new());
+        stored.meta.stored_at = 1;
+        map.insert("stored".into(), stored);
+        assert_eq!(expired_archives(&map, at, retention), vec!["expired".to_string()]);
+        assert!(expired_archives(&map, 1000, retention).is_empty());
+        assert!(expired_archives(&map, at, retention_ms(0)).is_empty(), "0 天表示不自动清理");
+        // 自定义保留天数：1 天即到期
+        assert_eq!(expired_archives(&map, 1000 + retention_ms(1), retention_ms(1)), vec!["expired".to_string()]);
+    }
+
+    /// 自动收纳：只有关联 Feat 状态以「已关闭」开头才收纳；已废弃与进行中不收，未关联不收。
+    /// Feat 重开（状态不再是已关闭）且无手动覆盖时自动恢复；档案缺失/读不到保持现状。
+    #[test]
+    fn storage_follows_feat_closed() {
+        let app = fixture("store");
+        let feat = app.join("docs/feat/Feat_261106_9_甲.md");
+        let fs = feat.to_string_lossy().into_owned();
+        let mut e = entry("s", "甲", fs.clone(), vec![]);
+        // 开发中 → 不收纳
+        std::fs::write(&feat, "# Feat_261106_9 甲\n\n> 状态：开发中\n").unwrap();
+        assert!(!sync_storage(&mut e, 1000) && e.meta.stored_at == 0);
+        // 已关闭 → 自动收纳
+        std::fs::write(&feat, "# Feat_261106_9 甲\n\n> 状态：已关闭\n").unwrap();
+        assert!(sync_storage(&mut e, 2000) && e.meta.stored_at == 2000);
+        assert!(!sync_storage(&mut e, 3000), "重复同步不动收纳时间");
+        // 已废弃不触发自动收纳（只认已关闭）：当前已收纳的会恢复
+        std::fs::write(&feat, "# Feat_261106_9 甲\n\n> 状态：已废弃\n").unwrap();
+        assert!(sync_storage(&mut e, 4000) && e.meta.stored_at == 0);
+        // 已关闭（带附加说明）同样算关闭
+        std::fs::write(&feat, "# Feat_261106_9 甲\n\n> 状态：已关闭（已发布 v1）\n").unwrap();
+        assert!(sync_storage(&mut e, 5000));
+        // 重开（已关闭 → 测试中）自动恢复
+        std::fs::write(&feat, "# Feat_261106_9 甲\n\n> 状态：测试中\n").unwrap();
+        assert!(sync_storage(&mut e, 6000) && e.meta.stored_at == 0);
+        // 档案消失：保持当前状态，不擅自收也不擅自放
+        std::fs::remove_file(&feat).unwrap();
+        assert!(!sync_storage(&mut e, 7000) && e.meta.stored_at == 0);
+        e.meta.stored_at = 100;
+        assert!(!sync_storage(&mut e, 8000) && e.meta.stored_at == 100, "档案读不到不解除既有收纳");
+        // 未关联 Feat：永不自动收纳
+        let mut free = entry("f", "自由", String::new(), vec![]);
+        assert!(!sync_storage(&mut free, 9000) && free.meta.stored_at == 0);
+    }
+
+    /// 手动覆盖优先于自动状态：Some(true) 在 Feat 未关闭时也收纳；Some(false) 在已关闭时也启用；
+    /// 覆盖期间自动状态变化不影响。归档优先：已归档条目不重算。
+    #[test]
+    fn storage_override_beats_auto() {
+        let app = fixture("ovr");
+        let feat = app.join("docs/feat/Feat_261106_8_乙.md");
+        std::fs::write(&feat, "# Feat_261106_8 乙\n\n> 状态：开发中\n").unwrap();
+        let mut e = entry("s", "乙", feat.to_string_lossy().into_owned(), vec![]);
+        e.meta.storage_override = Some(true);
+        assert!(sync_storage(&mut e, 1000) && e.meta.stored_at == 1000, "手动收纳不依赖 Feat 状态");
+        e.meta.storage_override = Some(false);
+        assert!(sync_storage(&mut e, 2000) && e.meta.stored_at == 0);
+        std::fs::write(&feat, "# Feat_261106_8 乙\n\n> 状态：已关闭\n").unwrap();
+        e.meta.storage_override = Some(false);
+        assert!(!sync_storage(&mut e, 3000) && e.meta.stored_at == 0, "手动启用期间 Feat 关闭也不收");
+        e.meta.storage_override = None;
+        assert!(sync_storage(&mut e, 4000) && e.meta.stored_at == 4000, "撤掉覆盖恢复跟随");
+        // 归档优先：已归档条目不重算收纳
+        e.meta.stored_at = 0;
+        e.meta.archived_at = 1;
+        e.meta.storage_override = None;
+        assert!(!sync_storage(&mut e, 5000) && e.meta.stored_at == 0);
+    }
+
+    /// agent_store 语义（不经过全局 Hub）：与自动一致清覆盖、启用前查主会话冲突、归档拒绝。
+    /// 直接验证内部决策：feat_closed + storage_override 归一化。
+    #[test]
+    fn store_override_normalization() {
+        let app = fixture("stn");
+        let feat = app.join("docs/feat/Feat_261106_7_丙.md");
+        std::fs::write(&feat, "# Feat_261106_7 丙\n\n> 状态：已关闭\n").unwrap();
+        let e_meta = || Meta { id: "s".into(), title: "丙".into(), cwd: String::new(), app: String::new(), feat: feat.to_string_lossy().into_owned(), feat_code: String::new(), links: vec![], pinned: false, pin_at: 0, created: 0, started: false, cli_session_id: String::new(), archived_at: 0, stored_at: 0, storage_override: None };
+        // Feat 已关闭 → 自动态是收纳：store(true) 与自动一致回落 None（跟随）；store(false) 留下 Some(false) 覆盖。
+        for stored in [true, false] {
+            let m = { let mut m = e_meta(); m.storage_override = match feat_closed(&m) { Some(a) if a == stored => None, _ => Some(stored) }; m };
+            assert_eq!(m.storage_override, if stored { None } else { Some(false) }, "stored={stored}");
+        }
+    }
+
+    /// 取消归档按策略恢复收纳：关联 Feat 已关闭时回到收纳状态而不是活跃列表。
+    #[test]
+    fn unarchive_restores_stored_state() {
+        let app = fixture("uar");
+        let feat = app.join("docs/feat/Feat_261106_6_丁.md");
+        std::fs::write(&feat, "# Feat_261106_6 丁\n\n> 状态：已关闭\n").unwrap();
+        let mut e = entry("s", "丁", feat.to_string_lossy().into_owned(), vec![]);
+        e.meta.archived_at = 111;
+        // 归档期间 Feat 已关闭：不重算；取消归档后恢复为收纳
+        let mut map: HashMap<String, Entry> = [e].into_iter().map(|e| (e.meta.id.clone(), e)).collect();
+        archive_entry(&mut map, "s", false, 2000).unwrap();
+        assert!(sync_storage(map.get_mut("s").unwrap(), 3000));
+        assert!(map["s"].meta.stored_at > 0 && map["s"].meta.archived_at == 0);
+    }
+
+    /// 启用前的来源冲突：另一会话已占用同一 Feat 时启用被拒（沿用 main_conflict 口径，
+    /// 收纳中的会话本身占用名额，防止重复主人）。
+    #[test]
+    fn stored_session_reserves_ownership() {
+        let app = fixture("sow");
+        let feat = app.join("docs/feat/Feat_261106_5_戊.md");
+        std::fs::write(&feat, "# Feat_261106_5 戊\n\n> 状态：已关闭\n").unwrap();
+        let fs = feat.to_string_lossy().into_owned();
+        let mut owner = entry("o", "戊", fs.clone(), vec![]);
+        owner.meta.stored_at = 100;
+        let map: HashMap<String, Entry> = [owner].into_iter().map(|e| (e.meta.id.clone(), e)).collect();
+        // 收纳中的 o 仍占用该 Feat：新会话争同一档案被拒
+        assert!(main_conflict(&map, "new", &fs, &[]).unwrap_err().starts_with("DUP:o:"));
+        // 归档后释放：同名档案可再认领
+        let mut map = map;
+        archive_entry(&mut map, "o", true, 200).unwrap();
+        assert!(main_conflict(&map, "new", &fs, &[]).is_ok());
+    }
+
+    /// 旧版 sessions.json（缺 stored_at/storage_override）反序列化为未收纳且跟随自动；
+    /// 持久化后新字段写回并能原样读回。
+    #[test]
+    fn legacy_meta_storage_defaults() {
+        let legacy: Vec<Meta> = serde_json::from_str(r#"[{"id":"a","title":"t","cwd":"","app":"","created":1,"archived_at":0}]"#).unwrap();
+        assert_eq!((legacy[0].stored_at, legacy[0].storage_override), (0, None));
+        let mut m = legacy[0].clone();
+        m.stored_at = 123;
+        m.storage_override = Some(true);
+        let back: Vec<Meta> = serde_json::from_str(&serde_json::to_string_pretty(&vec![m]).unwrap()).unwrap();
+        assert_eq!((back[0].stored_at, back[0].storage_override), (123, Some(true)));
+    }
+
+    /// 收纳落实语义：进入收纳的会话先持久化再停进程（stopping 标记 + killer 生效，按正常停止口径），
+    /// 未收纳的不受影响；写盘失败回滚内存不残留未保存状态。
+    #[cfg(windows)]
+    #[test]
+    fn store_stops_live_process_after_persist() {
+        crate::paths::test_home();
+        let app = fixture("ssp");
+        let feat = app.join("docs/feat/Feat_261106_4_己.md");
+        std::fs::write(&feat, "# Feat_261106_4 己\n\n> 状态：已关闭\n").unwrap();
+        // 用独立 cmd /c pause 验证真实进程回收，不启动 Claude
+        let pty = portable_pty::native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut cmd = CommandBuilder::new("cmd.exe");
+        cmd.args(["/d", "/c", "pause"]);
+        let mut child = pty.slave.spawn_command(cmd).unwrap();
+        drop(pty.slave);
+        let killer = child.clone_killer();
+        let writer = pty.master.take_writer().unwrap();
+        let mut e = entry("s", "己", feat.to_string_lossy().into_owned(), vec![]);
+        e.proc = Some(Proc { master: pty.master, writer, killer });
+        let other = entry("o", "别的", String::new(), vec![]);
+        let mut map: HashMap<String, Entry> = [e, other].into_iter().map(|e| (e.meta.id.clone(), e)).collect();
+        let f = dir().unwrap().join("sessions.json");
+        let backup = std::fs::read_to_string(&f).ok();
+        apply_storage_sync(&mut map, None).unwrap();
+        assert!(map["s"].meta.stored_at > 0 && map["s"].stopping, "收纳先持久化后置停止标记");
+        assert_eq!(map["o"].meta.stored_at, 0, "未关联已关闭 Feat 的不受影响");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || { let _ = tx.send(child.wait().is_ok()); });
+        assert!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), "收纳后进程确已退出");
+        match backup {
+            Some(t) => std::fs::write(&f, t).unwrap(),
+            None => drop(std::fs::remove_file(&f)),
+        }
+    }
+
+
+    /// 计划快照按采集时间更新，不改变活动心跳；旧快照不能覆盖新任务，错误后可恢复。
+    #[test]
+    fn plan_snapshots_preserve_order_and_lifecycle() {
+        let mut e = entry("plan", "任务计划", String::new(), Vec::new());
+        e.live.beat = 100;
+        e.idle_since = 200;
+        let payload = json!({"flow_coding_plan":{"tasks":[{"id":"1","subject":"验证侧栏","status":"pending"}],"captured_at":1000,"updated_at":500,"error":null}});
+        apply_plan(&mut e, &payload, 2000);
+        assert_eq!((e.live.beat, e.idle_since), (100, 200));
+        assert_eq!(e.live.plan.as_ref().unwrap().tasks[0].subject, "验证侧栏");
+        let mut old = payload.clone();
+        old["flow_coding_plan"]["captured_at"] = json!(900);
+        old["flow_coding_plan"]["tasks"] = json!([]);
+        apply_plan(&mut e, &old, 2000);
+        assert_eq!(e.live.plan.as_ref().unwrap().tasks.len(), 1);
+        apply_plan(&mut e, &json!({"flow_coding_plan":"invalid"}), 3000);
+        assert!(e.live.plan.as_ref().unwrap().error.is_some());
+        let mut restored = payload;
+        restored["flow_coding_plan"]["captured_at"] = json!(4000);
+        apply_plan(&mut e, &restored, 4000);
+        assert!(e.live.plan.as_ref().unwrap().error.is_none());
     }
 
     /// 当前上下文只统计输入及缓存读写；输出和累计值不参与占用，模型/档位保持 CLI 原值。
@@ -2183,11 +2743,39 @@ mod tests {
         assert_eq!(e.live.turn, 0);
     }
 
+    /// API 重试与最终失败不计成功；只有主回合进展清错，通知和子代理结束均不清错。
+    #[test]
+    fn api_error_hooks_require_main_progress() {
+        let mut e = entry("api", "错误状态", String::new(), Vec::new());
+        e.live.done = 10;
+        e.queue.push_back("待处理协作".into());
+        apply_api_hook(&mut e, "StopFailure", &json!({"error":"server_error", "error_details":"504 gateway timeout", "last_assistant_message":"API Error: 504"}));
+        assert_eq!(e.live.status, "apierr");
+        assert_eq!(e.live.api_error, "API Error: 504");
+        assert_eq!(e.live.done, 10);
+        assert_eq!(e.queue.len(), 1);
+        for event in ["Notification", "SubagentStop", "PostToolUse", "SessionEnd", "Unknown"] {
+            apply_api_hook(&mut e, event, &json!({}));
+            assert_eq!(e.live.status, "apierr", "{event}");
+        }
+        apply_api_hook(&mut e, "PreToolUse", &json!({"agent_id":"child"}));
+        assert_eq!(e.live.status, "apierr");
+        for event in ["PreToolUse", "UserPromptSubmit", "Stop", "SessionStart"] {
+            apply_api_hook(&mut e, event, &json!({}));
+            assert!(e.live.api_error.is_empty());
+            assert_eq!(e.live.status, "run");
+            apply_api_hook(&mut e, "StopFailure", &json!({"error":"rate_limit"}));
+            assert_eq!(e.live.api_error, "rate_limit");
+        }
+        let settings = cli_settings("flowctl.exe", "default").unwrap();
+        assert!(settings["hooks"]["StopFailure"].is_array());
+    }
+
     /// 状态行使用会话私有设置和已有本地通道，原有 hooks 全部保留，不额外请求模型。
     #[test]
     fn hooks_include_statusline_metrics() {
         crate::paths::test_home();
-        let path = hooks_file("E:/Flow App/flowctl.exe").unwrap();
+        let path = hooks_file("E:/Flow App/flowctl.exe", "default").unwrap();
         let p: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(p["statusLine"]["command"], "\"E:/Flow App/flowctl.exe\" agent-hook StatusLine");
         assert!(p["hooks"]["SessionStart"].is_array());
@@ -2236,8 +2824,8 @@ mod tests {
     }
 
     /// 构造一个会话条目（测试用；不经过全局 Hub，避免并行测试冲突）。
-    fn entry(id: &str, title: &str, feat: String, links: Vec<NodeRef>) -> Entry {
-        Entry { meta: Meta { id: id.into(), title: title.into(), cwd: String::new(), app: String::new(), feat, feat_code: String::new(), links, pinned: false, pin_at: 0, created: 0, started: false, cli_session_id: String::new(), archived_at: 0 }, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false }
+    pub(super) fn entry(id: &str, title: &str, feat: String, links: Vec<NodeRef>) -> Entry {
+        Entry { meta: Meta { id: id.into(), title: title.into(), cwd: String::new(), app: String::new(), feat, feat_code: String::new(), links, pinned: false, pin_at: 0, created: 0, started: false, cli_session_id: String::new(), archived_at: 0, stored_at: 0, storage_override: None }, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false, interrupt_requested: false, tools: Vec::new() }
     }
 
     /// 独立的临时 APP 目录（docs/flow + docs/feat），避免并行测试互相覆盖。
@@ -2407,7 +2995,7 @@ mod tests {
         assert!(metas[0].links.is_empty() && !metas[0].pinned && !metas[0].started);
         let mut map: HashMap<String, Entry> = metas
             .into_iter()
-            .map(|m| (m.id.clone(), Entry { meta: m, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false }))
+            .map(|m| (m.id.clone(), Entry { meta: m, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false, interrupt_requested: false, tools: Vec::new() }))
             .collect();
         assert!(normalize(map.get_mut("a").unwrap()));
         assert_eq!(map["a"].meta.title, "新会话");
@@ -2428,8 +3016,8 @@ mod tests {
     /// 协作活动在即时事件和缓冲回放中保留相同 peer，普通活动不携带对方身份。
     #[test]
     fn message_peer_survives_buffer() {
-        let meta = Meta { id: "sender".into(), title: "同名".into(), cwd: String::new(), app: String::new(), feat: String::new(), feat_code: String::new(), links: vec![], pinned: false, pin_at: 0, created: 0, started: false, cli_session_id: String::new(), archived_at: 0 };
-        let mut e = Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false };
+        let meta = Meta { id: "sender".into(), title: "同名".into(), cwd: String::new(), app: String::new(), feat: String::new(), feat_code: String::new(), links: vec![], pinned: false, pin_at: 0, created: 0, started: false, cli_session_id: String::new(), archived_at: 0, stored_at: 0, storage_override: None };
+        let mut e = Entry { meta, live: idle_live(), acts: VecDeque::new(), queue: VecDeque::new(), proc: None, buf: String::new(), seq: 0, gen: 0, stopping: false, idle_since: 0, compacting: false, interrupt_requested: false, tools: Vec::new() };
         let a = push_message(&mut e, "exact-peer-id", "协作消息".into());
         assert_eq!(a.peer, "exact-peer-id");
         assert_eq!(e.acts.back().unwrap().peer, a.peer);
@@ -2437,37 +3025,104 @@ mod tests {
         assert!(push_act(&mut e, "read", "file".into(), String::new()).peer.is_empty());
     }
 
-    /// 空闲超时设置：默认 1 小时；旧版 settings.json 缺字段按 1 小时；set_lifecycle 校验范围并写盘；
-    /// set_settings 只改启动项，保留现有 idle_hours。文件级测试集中在这里，避免并行测试抢同一个 settings.json。
+    /// 空闲超时与归档保留设置：默认 1 小时 / 180 天；旧版 settings.json 缺字段按默认迁移；
+    /// set_lifecycle 校验范围并写盘，archive_retention_days 缺省保留当前值；
+    /// set_settings 只改启动项，保留现有生命周期设置。文件级测试集中在这里，避免并行测试抢同一个 settings.json。
     #[test]
     fn lifecycle_settings_defaults_and_merge() {
         let _ = crate::paths::test_home();
         let f = dir().unwrap().join("settings.json");
         let backup = std::fs::read_to_string(&f).ok();
-        // 文件不存在 → 默认 1 小时
+        // 文件不存在 → 默认 1 小时 / 180 天
         let _ = std::fs::remove_file(&f);
         assert_eq!(ClaudeSettings::default().idle_hours, 1.0);
-        assert_eq!(agent_get_lifecycle().unwrap()["idleHours"], 1.0);
-        // 旧版文件缺 idle_hours → 迁移默认 1 小时
+        assert_eq!(ClaudeSettings::default().archive_retention_days, 180);
+        let got = agent_get_lifecycle().unwrap();
+        assert_eq!((got["idleHours"].as_f64().unwrap(), got["archiveRetentionDays"].as_u64().unwrap()), (1.0, 180));
+        // 旧版文件缺 idle_hours / archive_retention_days → 迁移默认
         std::fs::write(&f, r#"{"claude_path":"","extra_args":"--model opus"}"#).unwrap();
         let set = load_settings().unwrap();
-        assert_eq!((set.idle_hours, set.extra_args.as_str()), (1.0, "--model opus"));
+        assert_eq!((set.idle_hours, set.extra_args.as_str(), set.archive_retention_days), (1.0, "--model opus", 180));
+        assert_eq!(set.view_mode, "default", "旧版配置保持标准视图");
+        assert!(!set.bypass_permissions, "旧版配置默认不开启跳过权限确认");
         // set_lifecycle：接受 0（关闭）、小数、上限；拒绝负值、超上限、非有限值
-        assert_eq!(agent_set_lifecycle(2.5).unwrap()["idleHours"], 2.5);
-        assert_eq!(agent_set_lifecycle(0.0).unwrap()["idleHours"], 0.0);
-        assert!(agent_set_lifecycle(8760.0).is_ok());
+        assert_eq!(agent_set_lifecycle(2.5, None).unwrap()["idleHours"], 2.5);
+        assert_eq!(agent_set_lifecycle(0.0, None).unwrap()["idleHours"], 0.0);
+        assert!(agent_set_lifecycle(8760.0, None).is_ok());
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.5, 8760.5] {
-            assert!(agent_set_lifecycle(bad).is_err(), "{bad}");
+            assert!(agent_set_lifecycle(bad, None).is_err(), "{bad}");
         }
         assert_eq!(load_settings().unwrap().idle_hours, 8760.0, "失败的 set_lifecycle 不得写盘");
-        // set_settings 只改启动项，保留 idle_hours
-        agent_set_settings(String::new(), "--model opus".into()).unwrap();
+        // 归档保留天数：0（不清理）、自定义值、边界；超上限拒绝且不写盘
+        assert_eq!(agent_set_lifecycle(8760.0, Some(0)).unwrap()["archiveRetentionDays"], 0);
+        assert_eq!(agent_set_lifecycle(8760.0, Some(30)).unwrap()["archiveRetentionDays"], 30);
+        assert!(agent_set_lifecycle(8760.0, Some(36500)).is_ok());
+        assert!(agent_set_lifecycle(8760.0, Some(36501)).is_err());
+        assert_eq!(load_settings().unwrap().archive_retention_days, 36500, "失败的保留天数不得写盘");
+        // 省略 archive_retention_days 时保留当前值
+        assert_eq!(agent_set_lifecycle(1.0, None).unwrap()["archiveRetentionDays"], 36500);
+        // set_settings 只改启动项，保留生命周期设置
+        agent_set_settings(String::new(), "--model opus".into(), None, None).unwrap();
         let set = load_settings().unwrap();
-        assert_eq!((set.idle_hours, set.extra_args.as_str()), (8760.0, "--model opus"));
+        assert_eq!((set.idle_hours, set.extra_args.as_str(), set.archive_retention_days), (1.0, "--model opus", 36500));
+        assert_eq!(agent_set_settings(String::new(), "--model opus".into(), Some("focus".into()), Some(true)).unwrap()["viewMode"], "focus");
+        let saved = std::fs::read_to_string(&f).unwrap();
+        assert!(agent_set_settings(String::new(), String::new(), Some("invalid".into()), Some(false)).is_err());
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), saved, "无效显示模式不得写盘");
+        agent_set_lifecycle(2.0, Some(180)).unwrap();
+        assert_eq!(load_settings().unwrap().view_mode, "focus", "生命周期保存不覆盖显示模式");
+        agent_set_settings(String::new(), String::new(), None, None).unwrap();
+        assert_eq!(load_settings().unwrap().view_mode, "focus", "旧调用保留已选模式");
+        assert!(agent_get_settings().unwrap()["bypassPermissions"].as_bool().unwrap());
+        assert!(load_settings().unwrap().bypass_permissions, "生命周期及旧调用不覆盖跳过确认设置");
+        agent_set_settings(String::new(), String::new(), Some("default".into()), Some(false)).unwrap();
+        assert!(!load_settings().unwrap().bypass_permissions);
+        assert_eq!(load_settings().unwrap().view_mode, "default");
         match backup {
             Some(t) => std::fs::write(&f, t).unwrap(),
             None => drop(std::fs::remove_file(&f)),
         }
+    }
+
+    #[test]
+    fn bypass_permissions_session_args() {
+        let mut set = ClaudeSettings::default();
+        assert!(session_extra_args(&set).unwrap().is_empty());
+        set.extra_args = "--model opus --permission-mode acceptEdits --permission-mode=plan".into();
+        let original = split_args(&set.extra_args).unwrap();
+        assert_eq!(session_extra_args(&set).unwrap(), original);
+        set.bypass_permissions = true;
+        assert_eq!(session_extra_args(&set).unwrap(), ["--permission-mode", "bypassPermissions", "--model", "opus"]);
+        set.extra_args = "--model opus -- --permission-mode plan".into();
+        assert_eq!(session_extra_args(&set).unwrap(), ["--permission-mode", "bypassPermissions", "--model", "opus", "--", "--permission-mode", "plan"]);
+        set.extra_args = "--model \"not closed".into();
+        assert!(session_extra_args(&set).is_err());
+    }
+
+    #[test]
+    fn view_mode_preserves_hooks_and_statusline() {
+        for mode in ["default", "focus"] {
+            let p = cli_settings("E:/Flow App/flowctl.exe", mode).unwrap();
+            assert_eq!(p["viewMode"], mode);
+            assert_eq!(p["statusLine"]["command"], "\"E:/Flow App/flowctl.exe\" agent-hook StatusLine");
+            for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "PreCompact"] {
+                assert!(p["hooks"][event].is_array(), "{event}");
+            }
+        }
+        assert!(cli_settings("flowctl.exe", "../focus").is_err());
+    }
+
+    #[test]
+    fn view_mode_sets_only_child_renderer_environment() {
+        let mut cmd = CommandBuilder::new("claude.exe");
+        cmd.env("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
+        cmd.env("FLOW_AGENT_ID", "keep-session");
+        terminal_view_env(&mut cmd, "focus");
+        assert_eq!(cmd.get_env("CLAUDE_CODE_NO_FLICKER"), Some(std::ffi::OsStr::new("1")));
+        assert!(cmd.get_env("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN").is_none());
+        assert_eq!(cmd.get_env("FLOW_AGENT_ID"), Some(std::ffi::OsStr::new("keep-session")));
+        terminal_view_env(&mut cmd, "default");
+        assert_eq!(cmd.get_env("CLAUDE_CODE_NO_FLICKER"), Some(std::ffi::OsStr::new("0")));
     }
 
     /// UUID 校验：标准形态才采信。

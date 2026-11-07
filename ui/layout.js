@@ -116,7 +116,6 @@ window.Split = (() => {
       });
       placeSplitter(sa, mode === 'row' ? 'x' : 'y', mode === 'row' ? '2' : '1', mode === 'row' ? '1' : '2', docked[0], docked[1], key, 0, n);
     }
-    renderMenu();
   }
 
   /** 拖动分隔条：按两侧栏当前像素尺寸换算新的权重，两栏之和不变，各自不小于 MIN。 */
@@ -252,23 +251,6 @@ window.Split = (() => {
     layout();
   }
 
-  /** 布局菜单的选中状态。 */
-  function renderMenu() {
-    document.querySelectorAll('[data-layout-mode]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.layoutMode === pref.mode)));
-  }
-
-  /** 布局菜单：点按钮展开，点外部或 Esc 收起。 */
-  function initMenu() {
-    const btn = $('btn-layout'), menu = $('layout-menu');
-    const setOpen = (open) => { menu.hidden = !open; btn.setAttribute('aria-expanded', String(open)); };
-    btn.onclick = () => setOpen(menu.hidden);
-    document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !e.target.closest('#layout-menu, #btn-layout')) setOpen(false); });
-    menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setOpen(false); btn.focus(); } });
-    menu.querySelectorAll('[data-layout-mode]').forEach((b) => {
-      b.onclick = () => { pref.mode = b.dataset.layoutMode; save(); layout(); };
-    });
-  }
-
   /** 绑定分隔条、标题栏、悬浮按钮与尺寸手柄；窗口尺寸变化时把悬浮栏限制回主区。 */
   function init() {
     const split = $('split-a');
@@ -283,11 +265,19 @@ window.Split = (() => {
     }
     window.addEventListener('resize', () => layout());
     window.addEventListener('storage', (e) => { if (e.key === 'fc-force-split') layout(); });
-    initMenu();
     layout();
   }
 
   return {
+    /** 设置页沿用原有排布偏好，不重置栏顺序、分隔比例或悬浮位置。 */
+    mode: () => pref.mode,
+    setMode(mode) {
+      if (!MODES.includes(mode)) return false;
+      pref.mode = mode;
+      save();
+      layout();
+      return true;
+    },
     /** 记录实际打开的内容并更新布局（flow / feat）。 */
     show(k) { opened[k] = true; layout(); },
     /** 清除实际内容；是否保留空位由强制拆分和首页规则决定。 */

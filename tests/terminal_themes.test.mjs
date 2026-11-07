@@ -10,6 +10,8 @@ function setup() {
   const storage = new Map(), handlers = {}, system = {};
   const root = { dataset: { theme: 'dark' } }, style = {};
   const context = vm.createContext({
+    // 实际页面由 agent_core.js 提供，storage 监听器同时处理跟随设置。
+    FOLLOW_KEY: 'fc-agent-follow', follow: true,
     window: { addEventListener: (name, handler) => { handlers[name] = handler; } },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     document: { documentElement: root },

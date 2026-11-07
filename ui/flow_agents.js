@@ -21,6 +21,7 @@
   var lastTag = '';       // 主窗口当前 Feat（fc-highlight 的 tag）
   var sessions = {};      // id → 会话视图（acts 为最近活动）
   var graph = null, layer = null, badge = null;
+  var zoomPreview = null;  // 正式坐标提交前，画布 CSS 缩放预览的比例与原点
   var glows = {};         // 节点 id → 发光框元素
   var suppress = { node: '', t: 0 };  // 刚被 Agent 窗口定位的节点：随后的选中事件不再回传
   var show = localStorage.getItem('fc-agent-overlay') !== '0';
@@ -104,7 +105,33 @@
   function bounds(id) {
     var cell = graph.model.getCell(id);
     var st = cell && graph.view.getState(cell);
-    return st ? { x: st.x, y: st.y, w: st.width, h: st.height, rho: /rhombus/.test(st.style && st.style.shape || graph.model.getStyle(cell) || '') } : null;
+    if (!st) return null;
+    var b = { x: st.x, y: st.y, w: st.width, h: st.height, rho: /rhombus/.test(st.style && st.style.shape || graph.model.getStyle(cell) || '') };
+    if (zoomPreview) {
+      var z = zoomPreview;
+      b.x = z.x + (b.x - z.x) * z.factor;
+      b.y = z.y + (b.y - z.y) * z.factor;
+      b.w *= z.factor;
+      b.h *= z.factor;
+    }
+    return b;
+  }
+
+  /** 缩放预览只移动现有元素，保留字号、动画、气泡与点击目标。 */
+  function positionOverlays() {
+    layer.querySelectorAll('.fca-dock,.fca-glow,.fca-ripple').forEach(function (el) {
+      var b = bounds(el.dataset.node);
+      if (!b) return;
+      if (el.classList.contains('fca-dock')) {
+        el.style.left = (b.rho ? b.x + b.w * .76 : b.x + b.w).toFixed(1) + 'px';
+        el.style.top = (b.rho ? b.y + b.h * .2 : b.y).toFixed(1) + 'px';
+      } else {
+        el.style.left = (b.x - 4) + 'px';
+        el.style.top = (b.y - 4) + 'px';
+        el.style.width = (b.w + 8) + 'px';
+        el.style.height = (b.h + 8) + 'px';
+      }
+    });
   }
 
   /** 重画机器人：按节点分组，worker 跟在父会话后面。 */
@@ -176,7 +203,7 @@
       var b = bounds(n);
       if (!b) return;
       var g = glows[n];
-      if (!g) { g = glows[n] = document.createElement('div'); layer.insertBefore(g, layer.firstChild); }
+      if (!g) { g = glows[n] = document.createElement('div'); g.dataset.node = n; layer.insertBefore(g, layer.firstChild); }
       g.className = 'fca-glow' + (mark[n] ? ' ' + mark[n] : '');
       g.style.cssText = 'left:' + (b.x - 4) + 'px;top:' + (b.y - 4) + 'px;width:' + (b.w + 8) + 'px;height:' + (b.h + 8) + 'px';
       g._t = touch[n];
@@ -207,6 +234,7 @@
     if (!b || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     var r = document.createElement('div');
     r.className = 'fca-ripple';
+    r.dataset.node = node;
     r.style.cssText = 'left:' + (b.x - 4) + 'px;top:' + (b.y - 4) + 'px;width:' + (b.w + 8) + 'px;height:' + (b.h + 8) + 'px;--hk:' + (KC[kind] || KC.read);
     layer.appendChild(r);
     setTimeout(function () { r.remove(); }, 1000);
@@ -329,6 +357,23 @@
     });
     var redraw = 0;
     var schedule = function () { if (!redraw) redraw = requestAnimationFrame(function () { redraw = 0; render(); }); };
+    // lazyZoom 会先 CSS 预览，稍后才提交 SCALE；在同一任务末尾读取最终原点，
+    // 兼容滚轮连缩时 draw.io 在 zoomPreview 之后再次修正缩放原点。
+    var previewPending = false;
+    var syncPreview = function () {
+      if (previewPending) return;
+      previewPending = true;
+      queueMicrotask(function () {
+        previewPending = false;
+        var pane = graph.view.modelCoordinates ? graph.view.getCanvas() : graph.view.getDrawPane();
+        var scale = /^scale\(([^)]+)\)$/.exec(pane.style.transform);
+        var origin = pane.style.transformOrigin.split(' ').map(parseFloat);
+        zoomPreview = scale ? { factor: Number(scale[1]), x: origin[0], y: origin[1] } : null;
+        positionOverlays();
+      });
+    };
+    graph.addListener('zoomPreview', syncPreview);
+    graph.addListener('zoomPreviewComplete', syncPreview);
     graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, schedule);
     graph.view.addListener(mxEvent.SCALE, schedule);
     graph.view.addListener(mxEvent.TRANSLATE, schedule);

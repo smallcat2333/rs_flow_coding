@@ -12,6 +12,7 @@ AgentMetrics.init(() => { if (active !== 'OV') fitTerm(active, true); });
 function attnItems() {
   const items = [], ss = list();
   ss.filter((s) => vs(s) === 'wait').forEach((s) => items.push(`<button class="ai-btn v-wait" data-open="${s.id}">${bot()}${esc(s.title)} 等你确认 <span data-tk="${s.id}">${timeText(s)}</span></button>`));
+  ss.filter((s) => vs(s) === 'apierr').forEach((s) => items.push(`<button class="ai-btn v-apierr" data-open="${s.id}" title="${esc(s.api_error || '')}">${bot()}${esc(s.title)} API 错误</button>`));
   ss.filter((s) => vs(s) === 'err').forEach((s) => items.push(`<button class="ai-btn v-err" data-open="${s.id}">${bot()}${esc(s.title)} 异常退出，点击重试</button>`));
   ss.filter((s) => vs(s) === 'stall').forEach((s) => items.push(`<button class="ai-btn v-stall" data-open="${s.id}">${bot()}${esc(s.title)} 已 <span data-tk="${s.id}">${timeText(s)}</span> 没有新活动</button>`));
   conflicts().forEach((c) => items.push(`<button class="ai-btn cf" data-open="${c.ss[0].id}">${c.ss.map((s) => esc(s.title)).join(' 和 ')} 都改了 ${esc(base(c.path))}</button>`));
@@ -19,14 +20,17 @@ function attnItems() {
 }
 /** 仅保留正在运行或由用户发起启动的会话；待命、停止及归档会话不恢复为页签。 */
 function renderTabs() {
-  openTabs = openTabs.filter((id) => S.has(id) && !S.get(id).archived_at && (S.get(id).running || startingSessions.has(id)));
+  openTabs = openTabs.filter((id) => S.has(id) && !S.get(id).archived_at && !S.get(id).stored_at && (S.get(id).running || startingSessions.has(id)));
   if (active !== 'OV' && !openTabs.includes(active)) active = 'OV';
-  const n = attnItems().length;
-  $('#tabs').innerHTML = `<button class="tab${active === 'OV' ? ' on' : ''}" data-tab="OV" role="tab" aria-selected="${active === 'OV'}">${ICON.graph}<span class="tl">总览</span>${n ? `<b class="cnt" title="${n} 项需要你处理">${n}</b>` : ''}</button>`
+  const n = attnItems().length, tabs = $('#tabs');
+  const scroll = tabs.querySelector('.session-tabs')?.scrollLeft || 0;
+  tabs.innerHTML = `<button class="tab${active === 'OV' ? ' on' : ''}" data-tab="OV" role="tab" aria-selected="${active === 'OV'}">${ICON.graph}<span class="tl">总览</span>${n ? `<b class="cnt" title="${n} 项需要你处理">${n}</b>` : ''}</button><div class="session-tabs" role="presentation">`
     + openTabs.map((id) => {
       const s = S.get(id), wr = (s.workers || []).filter((w) => w.running).length;
-      return `<button class="tab v-${vs(s)}${active === id ? ' on' : ''}" data-tab="${id}" role="tab" aria-selected="${active === id}" title="${esc(s.title + '：' + stText(s))}">${bot()}<span class="tl">${esc(s.title)}</span>${wr ? `<span class="wc" title="${wr} 个 worker 运行中">+${wr}</span>` : ''}<span class="x" data-close="${id}" title="关闭页签（会话保留）">${ICON.x}</span></button>`;
-    }).join('') + `<button class="tab-add" data-act="new" title="新建会话">${ICON.plus}</button>`;
+      return `<button class="tab v-${vs(s)}${active === id ? ' on' : ''}" data-tab="${id}" role="tab" aria-selected="${active === id}" title="${esc(s.title + '：' + stText(s) + (s.api_error ? '\n' + s.api_error : ''))}">${bot()}<span class="tl">${esc(s.title)}</span>${wr ? `<span class="wc" title="${wr} 个 worker 运行中">+${wr}</span>` : ''}<span class="x" data-close="${id}" title="关闭页签（会话保留）">${ICON.x}</span></button>`;
+    }).join('') + `<button class="tab-add" data-act="new" title="新建会话">${ICON.plus}</button></div>`;
+  tabs.querySelector('.session-tabs').scrollLeft = scroll;
+  tabs.scrollLeft = 0;
   saveTabs();
 }
 function activate(id) {
@@ -42,9 +46,19 @@ function markSeen() {
   if (s && s.done > s.seen && document.hasFocus()) invoke('agent_seen', { id: s.id }).catch(() => {});
 }
 window.addEventListener('focus', markSeen);
+async function sessionAction(id, action) {
+  try {
+    const value = action === 'store' || action === 'enable'
+      ? await invoke('agent_store', { id, stored: action === 'store' })
+      : await invoke('agent_archive', { id, archived: action === 'archive' });
+    upsert(value); refreshAll();
+    toast(`${value.title}：${{ store: '已收纳', enable: '已启用', archive: '已归档', restore: '已取消归档' }[action]}`);
+  } catch (error) { toast(String(error)); }
+}
 function openSession(id) {
   if (!S.has(id)) return;
-  if (S.get(id).archived_at) { toast('会话已归档，请在主窗口侧栏取消归档后打开'); return; }
+  if (S.get(id).archived_at) { toast('会话已归档', '取消归档', () => sessionAction(id, 'restore')); return; }
+  if (S.get(id).stored_at) { toast('会话已收纳，启用后可继续对话', '启用', () => sessionAction(id, 'enable')); return; }
   startSession(id);
   if (!openTabs.includes(id)) openTabs.push(id);
   activate(id);
@@ -65,54 +79,78 @@ function closeTab(id) {
 function renderPane() {
   const ov = active === 'OV';
   $('#ov').hidden = !ov;
+  $('#sessionBody').hidden = ov;
   $('#terms').hidden = ov;
-  if (ov) { $('#head').innerHTML = ''; AgentMetrics.render(null); renderOverview(); return; }
+  if (ov) { $('#head').innerHTML = ''; $('#headLinks').innerHTML = ''; AgentMetrics.render(null); renderOverview(); return; }
   renderHead(S.get(active));
   showTerm(active);
 }
-/** 会话头：名称（双击改名）、Feat、APP、状态、停止 / 归档 / 删除；第二行是关联节点、同 APP 会话。 */
+/** 会话头放在右侧信息栏：顶部为名称（双击改名）与停止 / 收纳 / 归档图标，其下一节为 Feat、关联节点与同 APP 会话。 */
 function renderHead(s) {
   AgentMetrics.render(s);
   if ($('#head .sh1 h2 input') || document.activeElement === $('#hdLink')) return;  // 正在改名或搜索关联时不重绘
-  const v = vs(s), f = s.feat && featEntry(s.feat);
+  const f = s.feat && featEntry(s.feat), src = sourceOf(s);
   const peers = list().filter((x) => x !== s && x.app === s.app && x.running);
   const sel = mainSel?.node && !refsOf(s).some((r) => key(r.flow) === key(mainSel.path) && r.node === mainSel.node) ? mainSel : null;
-  $('#head').innerHTML = `<header class="sh">
-    <div class="sh1"><span class="v-${v}">${bot()}</span><h2 class="${sourceOf(s).locked ? 'name-locked' : ''}" title="${esc(s.title)}${sourceOf(s).locked ? '（名称跟随来源，不能单独修改）' : '（双击改名）'}">${esc(s.title)}</h2>${sourceBadge(s)}
-      ${s.feat ? `<button class="lnk" data-feat="${s.id}" title="在主窗口打开 ${esc(f?.title || s.feat)}">${esc(s.feat_code || base(s.feat))}</button>${f ? `<span class="stage feat-state ${window.FeatState(f.status).tone}" title="${esc(f.status)}">${esc(f.status)}</span>` : ''}` : '<span class="stage">未关联 Feat</span>'}
-      <span class="sapp" title="${esc(s.cwd)}">${esc(s.app)}</span><span class="grow"></span>
-      <span class="sst v-${v}">${stText(s)} <span data-tk="${s.id}">${esc(timeText(s))}</span></span>
-      ${s.running ? `<button class="btn" data-act="stop" title="结束 Claude Code 进程，对话历史保留">${ICON.stop}<span>停止</span></button>` : ''}
-      <button class="btn" data-act="archive" title="结束进程并归档，保留 180 天">${ICON.archive}<span>归档</span></button><button class="btn danger" data-act="remove" title="直接删除会话记录（Claude Code 的对话记录保留）">${ICON.trash}<span>删除</span></button></div>
-    <div class="sh2">${refsOf(s).map((r) => `<span class="ref${r.cur ? ' cur' : ''}" data-ref="${esc(r.flow)}" data-node="${esc(r.node)}" title="${r.cur ? '当前位置（flowctl focus）' : '关联节点'}，点击在主窗口定位">${r.cur ? '● ' : ''}${esc(refLabel(r))}${r.cur ? '' : `<span class="rx" data-unlink="${esc(r.flow)}" data-unnode="${esc(r.node)}" title="取消关联">×</span>`}</span>`).join('')}
-      ${sel ? `<button class="ref" data-linksel="1" title="把主窗口选中的节点关联到这个会话">＋ ${esc(flowName(sel.path))}#${esc(sel.node)}</button>` : ''}
-      <button class="ref" data-addlink="1">＋ 关联</button>
-      <input id="hdLink" class="search" style="flex:0 1 220px;height:22px" placeholder="搜索流程图或 Feat" autocomplete="off" hidden>
-      <div class="drop" id="hdDrop" hidden></div>
-      <span class="grow"></span>
-      ${peers.map((p) => `<button class="ref" data-open="${p.id}" title="同 APP 会话，可用 flowctl send 互发消息">同 APP：${esc(p.title)}</button>`).join('')}
-      <span class="muted" title="${esc(s.id)}">会话 ${esc(s.id.slice(0, 8))}</span></div>
-  </header>`;
+  const act = (name, label, tip) => `<button class="am-act" data-act="${name}" aria-label="${label}" title="${label}：${tip}">${ICON[name]}</button>`;
+  $('#head').innerHTML = `<div class="sh1"><h2 class="${src.locked ? 'name-locked' : ''}" title="${esc(s.title)}${src.locked ? '（名称跟随来源，不能单独修改）' : '（双击改名）'}">${esc(s.title)}</h2>
+      <div class="am-acts">${s.running ? act('stop', '停止', '结束 Claude Code 进程，对话历史保留') : ''}${act('store', '收纳', '结束进程并收纳，保留会话供下次启用')}${act('archive', '归档', '结束进程并归档，按设置中的保留期限清理')}</div></div>
+    <div class="am-sub">${sourceBadge(s)}<span class="sapp" title="${esc(s.cwd)}">${esc(s.app)}</span><span class="am-sid" title="${esc(s.id)}">${esc(s.id.slice(0, 8))}</span></div>`;
+  const refRow = (r) => `<span class="ref${r.cur ? ' cur' : ''}" data-ref="${esc(r.flow)}" data-node="${esc(r.node)}" title="${esc(refLabel(r))}：${r.cur ? '当前位置（flowctl focus）' : '关联节点'}，点击在主窗口定位"><i class="ref-dot" aria-hidden="true"></i><span class="ref-t">${esc(refLabel(r))}</span>${r.cur ? '<span class="ref-tag">当前</span>' : `<span class="rx" data-unlink="${esc(r.flow)}" data-unnode="${esc(r.node)}" title="取消关联" role="button" aria-label="取消关联 ${esc(refLabel(r))}">${ICON.x}</span>`}</span>`;
+  $('#headLinks').innerHTML = `<dl class="am-props">
+      <dt>Feat</dt><dd class="am-feat">${s.feat ? `<button class="lnk" data-feat="${s.id}" title="在主窗口打开 ${esc(f?.title || s.feat)}">${esc(s.feat_code || base(s.feat))}</button>${f ? `<span class="stage feat-state ${window.FeatState(f.status).tone}" title="${esc(f.status)}">${esc(f.status)}</span>` : ''}` : '<span class="am-none">未关联</span>'}</dd>
+      <dt>节点</dt><dd class="sh2">${refsOf(s).map(refRow).join('') || (sel ? '' : '<span class="am-none">未关联</span>')}${sel ? `<button class="ref ref-add" data-linksel="1" title="把主窗口选中的节点关联到这个会话">${ICON.plus}<span class="ref-t">${esc(flowName(sel.path))}#${esc(sel.node)}</span></button>` : ''}<input id="hdLink" class="search" placeholder="搜索流程图或 Feat" autocomplete="off" hidden><div class="drop" id="hdDrop" hidden></div></dd>
+      ${peers.length ? `<dt>同 APP</dt><dd class="sh2">${peers.map((p) => `<button class="ref peer v-${vs(p)}" data-open="${p.id}" title="${esc(p.title)}：${esc(stText(p))}，可用 flowctl send 互发消息">${bot()}<span class="ref-t">${esc(p.title)}</span></button>`).join('')}</dd>` : ''}
+    </dl>`;
 }
 function termTheme() { return window.TerminalThemes.resolve(); }
 /** 仅更新调色板，不重建终端或回放输出，保留选择、滚动位置与输入。 */
 function applyTerminalTheme() {
   const theme = termTheme();
-  $('#terms').style.setProperty('--t-bg', theme.background);
+  $('#pane').style.setProperty('--t-bg', theme.background);
   for (const x of terms.values()) x.term.options.theme = theme;
 }
+/** 剪贴板文件以 Claude Code 的 @ 引用插入；路径转为正斜杠，含空格的路径加引号。 */
+function clipboardFileRefs(paths) {
+  return paths.map((path) => {
+    const p = path.replace(/\\/g, '/');
+    return '@' + (/\s/.test(p) ? JSON.stringify(p) : p);
+  }).join(' ') + ' ';
+}
+/** 捕获 xterm 的粘贴事件：图像交给 CLI 原生 Alt+V，文件插入引用，文本保留括号粘贴。 */
+function bindTerminalPaste(id, term, el) {
+  let queue = Promise.resolve();
+  el.addEventListener('paste', (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!S.get(id)?.running) { toast('会话未运行，无法粘贴'); return; }
+    // ClipboardEvent 的数据只在事件中可读；异步 IPC 前保存文本和浏览器识别的图像类型。
+    const text = event.clipboardData.getData('text/plain');
+    const hasImage = Array.from(event.clipboardData.items).some((item) => item.type.startsWith('image/'));
+    const clipboard = invoke('agent_clipboard');
+    // 提前挂错误处理，避免前一次粘贴未完成时后一次 IPC 拒绝成为未处理异常。
+    clipboard.catch(() => {});
+    queue = queue.then(async () => {
+      const content = await clipboard;
+      if (!S.get(id)?.running) throw new Error('会话已停止');
+      if (content.kind === 'files') term.paste(clipboardFileRefs(content.paths));
+      else if (content.kind === 'image' || hasImage) await invoke('agent_write', { id, data: '\x1bv' });
+      else if (text) term.paste(text);
+    }).catch((error) => toast('粘贴失败：' + String(error)));
+  }, true);
+}
 /** 创建会话终端：回放保留的输出，键盘输入写回 PTY；未运行时按 Enter 启动 / 续接。 */
-function ensureTerm(id) {
+function ensureTerm(id, host = $('#terms')) {
   let t = terms.get(id);
   if (t) return t;
   // 先显示再 open：xterm 打开时测量字符尺寸，隐藏的容器量出来是 0，之后无法正确排版
   const el = document.createElement('div');
   el.className = 'term';
-  for (const x of terms.values()) x.el.hidden = true;
-  $('#terms').hidden = false;
-  $('#terms').appendChild(el);
+  for (const x of terms.values()) if (x.el.parentNode === host) x.el.hidden = true;
+  host.hidden = false;
+  host.appendChild(el);
   const theme = termTheme();
-  $('#terms').style.setProperty('--t-bg', theme.background);
+  $('#pane').style.setProperty('--t-bg', theme.background);
   const term = new Terminal({
     fontFamily: window.TerminalThemes.FONT, fontSize: 13, lineHeight: 1.15,
     cursorBlink: true, allowProposedApi: true, scrollback: 8000, minimumContrastRatio: 4.5, theme,
@@ -122,6 +160,7 @@ function ensureTerm(id) {
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.open(el);
+  term.loadAddon(new AgentImeAddon());
   t = { term, fit, el, seq: -1, pending: [], gen: 0, cols: 0, rows: 0 };
   terms.set(id, t);
   term.onData((d) => {
@@ -129,6 +168,7 @@ function ensureTerm(id) {
     if (s?.running) invoke('agent_write', { id, data: d }).catch(() => {});
     else if (d === '\r') startSession(id);
   });
+  bindTerminalPaste(id, term, el);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
     if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'c' && term.hasSelection()) {
@@ -172,9 +212,28 @@ function updateMask(id) {
   mask.innerHTML = connecting ? '<span>正在连接 CLI…</span>'
     : `<span>${esc(error)}</span><button class="btn primary" data-act="start">重试</button>`;
 }
+/**
+ * 把会话唯一的终端实例挂到指定容器（会话页签或总览下方操作区），不新建 xterm、不重放输出。
+ * 移动前后保留视口行号，挂载后按新尺寸重排；同一容器内只显示这一个终端。
+ */
+function mountTerm(id, host) {
+  const t = ensureTerm(id, host);
+  if (t.el.parentNode !== host) {
+    const y = t.term.buffer.active.viewportY, bottom = y >= t.term.buffer.active.baseY;
+    host.appendChild(t.el);
+    t.restore = bottom ? -1 : y;
+  }
+  for (const [k, x] of terms) if (x.el.parentNode === host) x.el.hidden = k !== id;
+  return t;
+}
+/** 重排后恢复移动前的滚动位置：原本在底部的继续跟随最新输出。 */
+function restoreScroll(t) {
+  if (t.restore == null) return;
+  if (t.restore < 0) t.term.scrollToBottom(); else t.term.scrollToLine(t.restore);
+  t.restore = null;
+}
 function showTerm(id) {
-  const t = ensureTerm(id);
-  for (const [k, x] of terms) x.el.hidden = k !== id;
+  const t = mountTerm(id, $('#terms'));
   updateMask(id);
   fitTerm(id);
   t.term.focus();
@@ -185,6 +244,7 @@ function fitTerm(id, force) {
   const t = terms.get(id), s = S.get(id);
   if (!t || t.el.hidden || !t.el.clientWidth) return;
   try { t.fit.fit(); } catch (e) { return; }
+  restoreScroll(t);
   const { cols, rows } = t.term;
   if (s?.running && (force || cols !== t.cols || rows !== t.rows)) {
     t.cols = cols;
@@ -219,18 +279,29 @@ listen('md-changed', async () => { await loadApps(); AgentOverview.invalidate();
 listen('catalog-changed', async () => { await loadApps(); AgentOverview.invalidate(); refreshAll(); });
 
 // ---------------- 主窗口联动 ----------------
-/** 主窗口选中节点或打开 Feat：找直接关联的会话 → 5 分钟内处理过它的会话 → 节点所属 Feat 的会话 → 提示新建。 */
+/** 自动跟随只切到已运行的会话；待命记录不启动，同一会话不重复抢回终端焦点。 */
+function followSession(id) {
+  if (S.get(id).running && active !== id) openSession(id);
+}
+
+/** 页面按唯一来源匹配；节点沿用直接关联、近期处理与 Feat 的优先级，跟随关闭时保留当前会话。 */
 async function onMainSelect(p) {
   if (!apps.length) await loadApps();
   let label, go;
   const a = appOfPath(p.path);
-  if (p.feat) {
-    const fe = a?.feats.find((f) => f.id === p.feat);
-    mainSel = { path: p.path, featPath: fe?.path || '' };
-    label = fe ? `${fe.id} ${fe.title}` : p.feat;
-    const cand = fe ? list().filter((s) => key(s.feat) === key(fe.path)).sort(byUrgency) : [];
-    go = () => (cand.length ? openSession(cand[0].id)
-      : fe && toast(`${label} 还没有会话`, '新建', () => createFromSource({ root: a.root, feat: { id: fe.id, title: fe.title, path: fe.path } })));
+  if (p.page === 'feat' || p.feat) {
+    const fe = p.page === 'feat' ? featEntry(p.path) : a?.feats.find((f) => f.id === p.feat);
+    const featPath = p.page === 'feat' ? p.path : fe?.path || '';
+    mainSel = { path: p.path, featPath };
+    label = fe ? `${fe.id} ${fe.title}` : p.feat || base(p.path);
+    const cand = featPath ? list().filter((s) => key(s.feat) === key(featPath)).sort(byUrgency) : [];
+    go = () => (cand.length ? followSession(cand[0].id)
+      : !p.page && fe && toast(`${label} 还没有会话`, '新建', () => createFromSource({ root: a.root, feat: { id: fe.id, title: fe.title, path: fe.path } })));
+  } else if (p.page === 'flow') {
+    mainSel = { path: p.path, node: '' };
+    label = flowName(p.path);
+    const cand = list().filter((s) => { const src = sourceOf(s); return src.kind === 'flow' && key(src.path) === key(p.path); }).sort(byUrgency);
+    go = () => { if (cand.length) followSession(cand[0].id); };
   } else {
     mainSel = { path: p.path, node: p.node };
     label = `${flowName(p.path)}#${p.node}`;
@@ -241,9 +312,12 @@ async function onMainSelect(p) {
     const tags = p.tags || [];
     const byFeat = list().filter((s) => s.feat_code && tags.includes(s.feat_code) && a && key(s.feat).startsWith(key(a.root))).sort(byUrgency);
     go = () => {
-      if (direct.length) return openSession(direct[0].id);
-      if (hot) { toast(`${label} 没有直接关联的会话，切到刚处理过它的「${hot.s.title}」`); return openSession(hot.s.id); }
-      if (byFeat.length) return openSession(byFeat[0].id);
+      if (direct.length) return followSession(direct[0].id);
+      if (hot) {
+        if (hot.s.running) toast(`${label} 没有直接关联的会话，切到刚处理过它的「${hot.s.title}」`);
+        return followSession(hot.s.id);
+      }
+      if (byFeat.length) return followSession(byFeat[0].id);
       const fe = a?.feats.find((f) => tags.includes(f.id));
       toast(`${label} 还没有会话`, '新建', () => createFromSource({ root: a?.root, links: [{ flow: p.path, node: p.node }], feat: fe ? { id: fe.id, title: fe.title, path: fe.path } : null }));
     };
@@ -284,8 +358,7 @@ function refreshAll() {
   requestAnimationFrame(() => {
     refreshQueued = false;
     const previous = active;
-    renderMix(); renderToday(); renderLanes(); renderTabs(); renderRows(); renderTicker();
-    if (active !== previous) renderPane();
+    renderMix(); renderToday(); renderLanes(); renderTabs(); renderRows();    if (active !== previous) renderPane();
     else if (active === 'OV') renderOverview();
     else if (S.has(active)) { renderHead(S.get(active)); updateMask(active); }
   });
@@ -293,7 +366,7 @@ function refreshAll() {
 listen('agent-update', (e) => {
   const was = S.get(e.payload.id);
   upsert(e.payload);
-  if (e.payload.archived_at && active === e.payload.id) activate('OV');
+  if ((e.payload.archived_at || e.payload.stored_at) && active === e.payload.id) activate('OV');
   if (was && !was.running && e.payload.running) requestAnimationFrame(() => fitTerm(e.payload.id, true));
   if (e.payload.id === active) markSeen();
   refreshAll();
@@ -304,8 +377,7 @@ listen('agent-act', (e) => {
   s.acts.push(a);
   if (s.acts.length > 300) s.acts.shift();
   addTick(s, a);
-  renderTicker();
-  if (a.kind === 'edit' || a.kind === 'msg' || a.kind === 'worker') refreshAll();
+   if (a.kind === 'edit' || a.kind === 'msg' || a.kind === 'worker') refreshAll();
   AgentOverview.activity(s, a);
 });
 listen('agent-removed', (e) => {
@@ -339,6 +411,8 @@ listen('agent-focus', (e) => openFocusedSession(e.payload.id));
 listen('agent-prefill', (e) => createFromSource(e.payload));
 listen('agent-main-select', (e) => onMainSelect(e.payload));
 window.addEventListener('storage', (e) => {
+  if (e.key === null || e.key === FOLLOW_KEY) follow = localStorage.getItem(FOLLOW_KEY) !== '0';
+  if (e.key === null || e.key === 'fc-agent-summary') document.documentElement.dataset.agentSummary = String(localStorage.getItem('fc-agent-summary') === '1');
   if (e.key !== null && e.key !== 'fc-theme' && e.key !== window.TerminalThemes.KEY) return;
   if (e.key === null || e.key === 'fc-theme') {
     const t = localStorage.getItem('fc-theme') || 'auto';
@@ -359,10 +433,10 @@ $('#lanes').addEventListener('mousemove', (e) => {
   if (!tr) return hideTip();
   const L = laneEls.find((x) => x.el === tr.parentElement);
   if (!L) return hideTip();
-  const r = tr.getBoundingClientRect(), tAt = now() - (r.right - e.clientX) * laneGeom.mpp;
+  const r = tr.getBoundingClientRect(), n = now(), tAt = n - (r.right - e.clientX) * laneGeom.mpp;
   let best = null, bd = Infinity;
   for (const a of L.o.s.acts) {
-    if (L.o.w ? a.worker !== L.o.w.id : a.worker) continue;
+    if (a.t < n - LANE_WINDOW || a.t > n || (L.o.w ? a.worker !== L.o.w.id : a.worker)) continue;
     const d = Math.abs(a.t - tAt);
     if (d < bd) { bd = d; best = a; }
   }
@@ -374,16 +448,17 @@ $('#lanes').addEventListener('mousemove', (e) => {
 });
 $('#lanes').addEventListener('mouseleave', hideTip);
 $('#mix').addEventListener('click', (e) => { const u = e.target.closest('[data-open]'); if (u) openSession(u.dataset.open); });
-$('#follow').checked = follow;
-$('#followText').textContent = follow ? '跟随主窗口' : '已锁定';
-$('#follow').addEventListener('change', (e) => {
-  follow = e.target.checked;
-  localStorage.setItem(FOLLOW_KEY, follow ? '1' : '0');
-  $('#followText').textContent = follow ? '跟随主窗口' : '已锁定';
-});
 
 const rowsEl = $('#rows');
 rowsEl.addEventListener('click', async (e) => {
+  const group = e.target.closest('[data-session-group]');
+  if (group) {
+    const name = group.dataset.sessionGroup;
+    if (expandedGroups.has(name)) expandedGroups.delete(name); else expandedGroups.add(name);
+    renderRows(); return;
+  }
+  const action = e.target.closest('[data-session-action]');
+  if (action) { await sessionAction(action.dataset.id, action.dataset.sessionAction); return; }
   const pin = e.target.closest('[data-pin]');
   if (pin) {
     const s = S.get(pin.dataset.pin), was = s.pinned;
@@ -504,13 +579,12 @@ $('#pane').addEventListener('click', async (e) => {
   const fe = t.closest('[data-feat]');
   if (fe) { openFeatInMain(S.get(fe.dataset.feat)); return; }
   if (t.closest('[data-linksel]') && s && mainSel?.node) { patchSession(s.id, { links: [...(s.links || []), { flow: mainSel.path, node: mainSel.node }] }); return; }
-  if (t.closest('[data-addlink]') && s) { openLinkSearch(s); return; }
+  if (t.closest('[data-addlink]') && s) { e.preventDefault(); $('#headLinks').closest('details').open = true; openLinkSearch(s); return; }
   const act = t.closest('[data-act]');
   if (act && s) {
     if (act.dataset.act === 'start') startSession(s.id);
     if (act.dataset.act === 'stop') invoke('agent_stop', { id: s.id }).catch((err) => toast(String(err)));
-    if (act.dataset.act === 'archive') invoke('agent_archive', { id: s.id, archived: true }).catch((err) => toast(String(err)));
-    if (act.dataset.act === 'remove') invoke('agent_remove', { id: s.id }).catch((err) => toast(String(err)));
+    if (act.dataset.act === 'archive' || act.dataset.act === 'store') sessionAction(s.id, act.dataset.act);
   }
 });
 $('#pane').addEventListener('dblclick', (e) => {
@@ -534,11 +608,14 @@ $('#pane').addEventListener('dblclick', (e) => {
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); $('#q').select(); }
 });
-new ResizeObserver(() => {
+const paneResizeObserver = new ResizeObserver(() => {
   const tr = $('#lanes .track');
   if (tr && tr.clientWidth !== laneGeom.w) renderLanes();
   if (active !== 'OV') fitTerm(active);
-}).observe(document.body);
+});
+paneResizeObserver.observe(document.body);
+paneResizeObserver.observe($('.left'));
+paneResizeObserver.observe($('#terms'));
 
 // ---------------- 启动 ----------------
 (async () => {
@@ -553,8 +630,7 @@ new ResizeObserver(() => {
     return;
   }
   const params = new URLSearchParams(location.search), focus = params.get('focus'), prefill = params.get('new');
-  renderMix(); renderToday(); renderLanes(); renderTicker();
-  if (focus && S.has(focus)) openFocusedSession(focus);
+  renderMix(); renderToday(); renderLanes();  if (focus && S.has(focus)) openFocusedSession(focus);
   else { renderTabs(); renderPane(); renderRows(); }
   appsReady.then(() => {
     refreshAll();
